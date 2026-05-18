@@ -87,6 +87,7 @@ public class NrNsaBandwidthColumnHook {
             propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
+            // iterValueMethod intentionally omitted — not needed; we use property.get(key) directly.
 
             eField  = bbClass.getField("e");
             hMethod = bbClass.getMethod("h", int.class);
@@ -190,7 +191,7 @@ public class NrNsaBandwidthColumnHook {
                         if (pair != null && pair.second != null) {
                             intraRow  = (int) pair.second;
                             isSource0 = (pair.first != null && sources != null
-                                    && pair.first == sources[0]);
+                                    && sources.length > 0 && pair.first == sources[0]);
                         }
                     } catch (Exception e) {
                         Log.w(TAG, "NrNsaBandwidthColumnHook: h(position) failed: " + e);
@@ -203,6 +204,13 @@ public class NrNsaBandwidthColumnHook {
                     if (TAG_BW_INJECTED.equals(row.getTag())) {
                         TextView existing = (TextView) row.getChildAt(2);
                         existing.setText(bwText);
+                        // Refresh color: grey (from PCI ref) for "-", white for actual values
+                        if (!"-".equals(bwText)) {
+                            existing.setTextColor(0xFFFFFFFF);
+                        } else {
+                            TextView refView = (TextView) row.getChildAt(3);
+                            existing.setTextColor(refView.getTextColors());
+                        }
                         return result;
                     }
 
