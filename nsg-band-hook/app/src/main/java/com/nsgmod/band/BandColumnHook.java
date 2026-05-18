@@ -261,7 +261,7 @@ public class BandColumnHook {
 
                     row.addView(bandView, 1);
 
-                    float[] weights = {0.05f, 0.10f, 0.10f, 0.10f, 0.21f, 0.21f, 0.21f};
+                    float[] weights = {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f};
                     for (int i = 0; i < row.getChildCount() && i < weights.length; i++) {
                         LinearLayout.LayoutParams clp =
                                 (LinearLayout.LayoutParams) row.getChildAt(i).getLayoutParams();
@@ -333,7 +333,7 @@ public class BandColumnHook {
 
                 ll.addView(bandLabel, 1);
 
-                float[] weights = {0.05f, 0.10f, 0.10f, 0.10f, 0.21f, 0.21f, 0.21f};
+                float[] weights = {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f};
                 for (int j = 0; j < ll.getChildCount() && j < weights.length; j++) {
                     LinearLayout.LayoutParams clp = (LinearLayout.LayoutParams) ll.getChildAt(j).getLayoutParams();
                     clp.weight = weights[j];
@@ -358,7 +358,7 @@ public class BandColumnHook {
         if (!(v instanceof LinearLayout)) return null;
         LinearLayout ll = (LinearLayout) v;
         if (ll.getOrientation() == LinearLayout.HORIZONTAL
-                && (ll.getChildCount() == 6 || ll.getChildCount() == 7)) {
+                && (ll.getChildCount() == 6 || ll.getChildCount() == 7 || ll.getChildCount() == 8)) {
             return ll;
         }
         if (ll.getOrientation() == LinearLayout.VERTICAL && ll.getChildCount() > 0) {
@@ -366,7 +366,7 @@ public class BandColumnHook {
             if (first instanceof LinearLayout) {
                 LinearLayout inner = (LinearLayout) first;
                 if (inner.getOrientation() == LinearLayout.HORIZONTAL
-                        && (inner.getChildCount() == 6 || inner.getChildCount() == 7)) {
+                        && (inner.getChildCount() == 6 || inner.getChildCount() == 7 || inner.getChildCount() == 8)) {
                     return inner;
                 }
             }
