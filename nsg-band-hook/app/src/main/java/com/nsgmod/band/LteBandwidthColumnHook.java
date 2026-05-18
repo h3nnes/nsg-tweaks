@@ -23,9 +23,11 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   Workspace.j → Workspace singleton
  *   Workspace.a → short moduleIndex
  *   Workspace.c → DataSource
+ *   Workspace.g → long current cursor time (replay position; -1 if live/unset)
  *   DataSource.getProperty(key, moduleIndex) → Property
- *   Property.b(Long.MAX_VALUE) → Property$Iterator (latest value)
- *   Property$Iterator.value() → Integer (3GPP lte-BandwidthDL enum)
+ *   Property.b(cursorTime) → Property$Iterator positioned at cursor
+ *   Property$Iterator.key() → long sample key at that position
+ *   Property.get(key)       → Object value (matches NSG k8.b.f() pattern)
  *
  * Keys:
  *   LTE::Serving_Cell::LTE_Bandwidth_PCell_DL          (intraRow == 0)
@@ -46,15 +48,18 @@ public class LteBandwidthColumnHook {
     private final ClassLoader loader;
 
     // Workspace reflection
-    private Field wsSingleton;   // Workspace.j → Workspace (static)
-    private Field wsModuleIndex; // Workspace.a → short
-    private Field wsDataSource;  // Workspace.c → DataSource
+    private Field wsSingleton;    // Workspace.j → Workspace (static)
+    private Field wsModuleIndex;  // Workspace.a → short
+    private Field wsDataSource;   // Workspace.c → DataSource
+    private Field wsCurrentTime;  // Workspace.g → long (replay cursor; -1 = live/unset)
 
     // Property reflection
     private Method dsGetProperty;   // DataSource.getProperty(String, int) → Property
     private Method propIterMethod;  // Property.b(long) → Property$Iterator
+    private Method propGetMethod;   // Property.get(long key) → Object  (NSG-native pattern)
     private Method iterEndMethod;   // Property$Iterator.end() → boolean
-    private Method iterValueMethod; // Property$Iterator.value() → Object
+    private Method iterKeyMethod;   // Property$Iterator.key() → long
+    private Method iterValueMethod; // Property$Iterator.value() → Object (kept as fallback)
 
     // Adapter reflection
     private Field  eField;  // a8.b$b.e → per-source array
@@ -79,10 +84,13 @@ public class LteBandwidthColumnHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
+            wsCurrentTime  = wsClass.getField("g");  // long replay cursor
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
+            propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
+            iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
 
             eField  = bbClass.getField("e");
@@ -125,13 +133,20 @@ public class LteBandwidthColumnHook {
             Object dataSource  = wsDataSource.get(ws);
             if (dataSource == null) return null;
 
+            // Use replay cursor time so values track the playback position.
+            // wsCurrentTime (Workspace.g) is -1 when live; fall back to Long.MAX_VALUE.
+            long cursorTime = wsCurrentTime.getLong(ws);
+            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+
             Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
             if (property == null) return null;
 
-            Object iterator = propIterMethod.invoke(property, Long.MAX_VALUE);
+            Object iterator = propIterMethod.invoke(property, queryTime);
             if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
 
-            Object value = iterValueMethod.invoke(iterator);
+            // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
+            long   sampleKey = (long) iterKeyMethod.invoke(iterator);
+            Object value     = propGetMethod.invoke(property, sampleKey);
             if (!(value instanceof Integer)) return null;
 
             return bwEnumToString((Integer) value);

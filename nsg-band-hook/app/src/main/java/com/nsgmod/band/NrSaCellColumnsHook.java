@@ -27,9 +27,9 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   [0] Serving  [1] ARFCN  [2] PCI  [3] BW  [4] Beam  [5] RSRP  [6] RSRQ  [7] SINR
  *
  * Data path (same as LteBandwidthColumnHook):
- *   Workspace.j → singleton; .a → moduleIndex; .c → DataSource
+ *   Workspace.j → singleton; .a → moduleIndex; .c → DataSource; .g → cursor time
  *   DataSource.getProperty(key, moduleIndex) → Property
- *   Property.b(Long.MAX_VALUE) → Iterator; .value() → Object
+ *   Property.b(cursorTime) → Iterator; .key() → long; Property.get(key) → Object
  *
  * Adapter row→source mapping:
  *   a8.d$b.g(int position) → Pair<a8.d.a source, Integer intraRow>
@@ -53,10 +53,13 @@ public class NrSaCellColumnsHook {
     private Field  wsSingleton;
     private Field  wsModuleIndex;
     private Field  wsDataSource;
+    private Field  wsCurrentTime;  // Workspace.g → long (replay cursor; -1 = live/unset)
     private Method dsGetProperty;
     private Method propIterMethod;
+    private Method propGetMethod;   // Property.get(long key) → Object
     private Method iterEndMethod;
-    private Method iterValueMethod;
+    private Method iterKeyMethod;   // Property$Iterator.key() → long
+    private Method iterValueMethod; // kept as fallback
 
     // Adapter reflection — a8.d$b
     private Field  sourcesField; // actual bytecode name "d"  (JADX: f135d) — a8.d.a[]
@@ -81,10 +84,13 @@ public class NrSaCellColumnsHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
+            wsCurrentTime  = wsClass.getField("g");  // long replay cursor
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
+            propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
+            iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
 
             sourcesField = dbClass.getField("d");   // a8.d.a[] sources
@@ -141,15 +147,20 @@ public class NrSaCellColumnsHook {
             Object dataSource  = wsDataSource.get(ws);
             if (dataSource == null) return null;
 
+            // Use replay cursor time so values track the playback position.
+            // wsCurrentTime (Workspace.g) is -1 when live; fall back to Long.MAX_VALUE.
+            long cursorTime = wsCurrentTime.getLong(ws);
+            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+
             Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
             if (property == null) return null;
 
-            Object iterator = propIterMethod.invoke(property, Long.MAX_VALUE);
+            Object iterator = propIterMethod.invoke(property, queryTime);
             if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
 
-            // For SCell keys the iterator may return an array/indexed value;
-            // for PCell and ARFCN it returns the scalar directly.
-            Object value = iterValueMethod.invoke(iterator);
+            // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
+            long   sampleKey = (long) iterKeyMethod.invoke(iterator);
+            Object value     = propGetMethod.invoke(property, sampleKey);
             if (value == null) return null;
 
             // ARFCN property returns Integer[] (one value per cell); index by scellIndex

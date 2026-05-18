@@ -23,10 +23,12 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   Workspace.j            → Workspace singleton (enum)
  *   Workspace.a            → short moduleIndex
  *   Workspace.c            → DataSource
- *   new Property(DataSource, String key, int moduleIndex)
- *   Property.b(Long.MAX_VALUE) → Property$Iterator (reverse from latest)
+ *   Workspace.g            → long replay cursor (-1 when live)
+ *   DataSource.getProperty(key, moduleIndex) → Property
+ *   Property.b(cursorTime) → Property$Iterator positioned at cursor
  *   Property$Iterator.end()   → boolean
- *   Property$Iterator.value() → Object (Integer for band)
+ *   Property$Iterator.key()   → long sample key
+ *   Property.get(key)         → Object (Integer for band; Object[] for SCell band)
  *
  * Keys:
  *   NR5G::Serving_Cell::NR_Band          — PCell (intraRow=0); value is scalar Integer
@@ -54,12 +56,15 @@ public class BandColumnHook {
     private Field wsSingleton;   // Workspace.j  → Workspace (static)
     private Field wsModuleIndex; // Workspace.a  → short
     private Field wsDataSource;  // Workspace.c  → DataSource
+    private Field wsCurrentTime; // Workspace.g  → long replay cursor (-1 = live)
 
     // Property reflection
     private Method dsGetProperty;       // DataSource.getProperty(String, int) → Property
     private Method propIterMethod;      // Property.b(long) → Property$Iterator
+    private Method propGetMethod;       // Property.get(long key) → Object
     private Method iterEndMethod;       // Property$Iterator.end() → boolean
-    private Method iterValueMethod;     // Property$Iterator.value() → Object
+    private Method iterKeyMethod;       // Property$Iterator.key() → long
+    private Method iterValueMethod;     // Property$Iterator.value() → Object (kept, unused)
 
     // Adapter reflection
     private Field  eField;  // a8.b$b.e → per-source array
@@ -84,10 +89,13 @@ public class BandColumnHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
+            wsCurrentTime  = wsClass.getField("g");  // long replay cursor
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
+            propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
+            iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod= iterClass.getMethod("value");
 
             eField  = bbClass.getField("e");
@@ -130,10 +138,18 @@ public class BandColumnHook {
                 Log.w(TAG, "readBand: no property for key=" + key + " moduleIndex=" + moduleIndex);
                 return null;
             }
-            Object iterator = propIterMethod.invoke(property, Long.MAX_VALUE);
+
+            // Use replay cursor time so values track playback position.
+            // Workspace.g is -1 when live; fall back to Long.MAX_VALUE in that case.
+            long cursorTime = wsCurrentTime.getLong(ws);
+            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+
+            Object iterator = propIterMethod.invoke(property, queryTime);
             if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
 
-            Object value = iterValueMethod.invoke(iterator);
+            // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
+            long   sampleKey = (long) iterKeyMethod.invoke(iterator);
+            Object value     = propGetMethod.invoke(property, sampleKey);
             if (value == null) return null;
 
             // SCell band property returns Object[] (one entry per SCell); PCell returns scalar.
