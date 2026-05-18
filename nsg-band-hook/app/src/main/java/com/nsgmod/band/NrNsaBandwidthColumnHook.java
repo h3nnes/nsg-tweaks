@@ -37,6 +37,9 @@ public class NrNsaBandwidthColumnHook {
     private static final int MAX_SCELLS = 4;
 
     private static final String TAG_BW_INJECTED = "nsg_nsa_bw_injected";
+    // Keyed tag slot — distinct from BandColumnHook's BAND_TAG_KEY so both hooks track
+    // injection state independently on the same View without overwriting each other.
+    private static final int BW_TAG_KEY = "nsg_nsa_bw_injected".hashCode();
 
     // Final 8-column weights: [Serving, Band, BW, PCI, Beam, RSRP, RSRQ, SINR]
     private static final float[] FINAL_WEIGHTS = {0.03f, 0.12f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f};
@@ -123,7 +126,10 @@ public class NrNsaBandwidthColumnHook {
             }
 
             Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
-            if (property == null) return null;
+            if (property == null) {
+                Log.w(TAG, "NrNsaBandwidthColumnHook: no property for key=" + key + " moduleIndex=" + moduleIndex);
+                return null;
+            }
 
             long cursorTime = wsCurrentTime.getLong(ws);
             long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
@@ -181,7 +187,7 @@ public class NrNsaBandwidthColumnHook {
                     if (row == null) return result;
 
                     // Resolve (isSource0, intraRow)
-                    boolean isSource0 = true;
+                    boolean isSource0 = false; // default false: neighbour rows must not read serving-cell data
                     int     intraRow  = position;
                     try {
                         Object   adapter = chain.getThisObject();
@@ -201,7 +207,7 @@ public class NrNsaBandwidthColumnHook {
                     if (bwText == null) bwText = "-";
 
                     // Already injected — refresh text at child[2]
-                    if (TAG_BW_INJECTED.equals(row.getTag())) {
+                    if (TAG_BW_INJECTED.equals(row.getTag(BW_TAG_KEY))) {
                         TextView existing = (TextView) row.getChildAt(2);
                         existing.setText(bwText);
                         // Refresh color: grey (from PCI ref) for "-", white for actual values
@@ -242,7 +248,7 @@ public class NrNsaBandwidthColumnHook {
                         row.getChildAt(i).setLayoutParams(clp);
                     }
 
-                    row.setTag(TAG_BW_INJECTED);
+                    row.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
                     Log.d(TAG, "NrNsaBandwidthColumnHook: injected BW col pos=" + position + " bw=" + bwText);
                     return result;
                 }
@@ -294,7 +300,7 @@ public class NrNsaBandwidthColumnHook {
                 LinearLayout ll = (LinearLayout) child;
                 // Header row has 7 children after BandColumnHook ran (Band already injected)
                 if (ll.getOrientation() != LinearLayout.HORIZONTAL || ll.getChildCount() != 7) continue;
-                if (TAG_BW_INJECTED.equals(ll.getTag())) return;
+                if (TAG_BW_INJECTED.equals(ll.getTag(BW_TAG_KEY))) return;
 
                 TextView bwLabel = new TextView(listView.getContext());
                 bwLabel.setText("BW");
@@ -314,7 +320,7 @@ public class NrNsaBandwidthColumnHook {
                     ll.getChildAt(j).setLayoutParams(clp);
                 }
 
-                ll.setTag(TAG_BW_INJECTED);
+                ll.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
                 Log.i(TAG, "NrNsaBandwidthColumnHook: injectBwHeader done at child " + i);
                 return;
             }

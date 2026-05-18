@@ -48,6 +48,9 @@ public class BandColumnHook {
     private static final int MAX_SCELLS = 4;
 
     private static final String TAG_BAND_INJECTED = "nsg_band_injected";
+    // Keyed tag slot — distinct from NrNsaBandwidthColumnHook's slot so the two hooks
+    // can independently track injection state on the same View without overwriting each other.
+    private static final int BAND_TAG_KEY = "nsg_band_injected".hashCode();
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -200,7 +203,7 @@ public class BandColumnHook {
                     if (row == null) return result;
 
                     // Resolve (isSource0, intraRow) via adapter.h(position)
-                    boolean isSource0 = true;
+                    boolean isSource0 = false; // default false: neighbour rows must not read serving-cell data
                     int     intraRow  = position;
                     try {
                         Object   adapter = chain.getThisObject();
@@ -222,7 +225,7 @@ public class BandColumnHook {
                     if (band != null) bandText = String.valueOf(band);
 
                     // Already injected — just refresh text in child[1]
-                    if (TAG_BAND_INJECTED.equals(row.getTag())) {
+                    if (TAG_BAND_INJECTED.equals(row.getTag(BAND_TAG_KEY))) {
                         TextView existing = (TextView) row.getChildAt(1);
                         existing.setText(bandText);
                         // Re-apply colour: white for real band numbers, PCI colour for "-".
@@ -269,7 +272,7 @@ public class BandColumnHook {
                         row.getChildAt(i).setLayoutParams(clp);
                     }
 
-                    row.setTag(TAG_BAND_INJECTED);
+                    row.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
                     Log.d(TAG, "injected Band col pos=" + position + " band=" + bandText);
                     return result;
                 }
@@ -320,7 +323,7 @@ public class BandColumnHook {
                 if (!(child instanceof LinearLayout)) continue;
                 LinearLayout ll = (LinearLayout) child;
                 if (ll.getOrientation() != LinearLayout.HORIZONTAL || ll.getChildCount() != 6) continue;
-                if (TAG_BAND_INJECTED.equals(ll.getTag())) return;
+                if (TAG_BAND_INJECTED.equals(ll.getTag(BAND_TAG_KEY))) return;
 
                 TextView bandLabel = new TextView(listView.getContext());
                 bandLabel.setText("Band");
@@ -340,7 +343,7 @@ public class BandColumnHook {
                     ll.getChildAt(j).setLayoutParams(clp);
                 }
 
-                ll.setTag(TAG_BAND_INJECTED);
+                ll.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
                 Log.i(TAG, "injectBandHeader: done at child " + i);
                 return;
             }
