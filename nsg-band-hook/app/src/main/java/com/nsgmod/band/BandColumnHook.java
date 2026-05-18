@@ -357,6 +357,9 @@ public class BandColumnHook {
     private LinearLayout findHorizontalRow(View v) {
         if (!(v instanceof LinearLayout)) return null;
         LinearLayout ll = (LinearLayout) v;
+        // 8 children: NrNsaBandwidthColumnHook has already injected BW — the row carries
+        // TAG_BAND_INJECTED, so getView will refresh the text and return early without
+        // re-applying weights. We still need to return the row so that tag check works.
         if (ll.getOrientation() == LinearLayout.HORIZONTAL
                 && (ll.getChildCount() == 6 || ll.getChildCount() == 7 || ll.getChildCount() == 8)) {
             return ll;
@@ -365,6 +368,8 @@ public class BandColumnHook {
             View first = ll.getChildAt(0);
             if (first instanceof LinearLayout) {
                 LinearLayout inner = (LinearLayout) first;
+                // 8 children: same as above — row was already processed; early-return path
+                // in getView handles it via TAG_BAND_INJECTED without reaching the weights loop.
                 if (inner.getOrientation() == LinearLayout.HORIZONTAL
                         && (inner.getChildCount() == 6 || inner.getChildCount() == 7 || inner.getChildCount() == 8)) {
                     return inner;
