@@ -201,7 +201,8 @@ public class NrSaCsiSnrRowHook {
                         // carriers == 2: 1 SCell — SNR at row 14, inject before RBs at 15
                         // carriers >= 3: 2+ SCells — SNR at row 20, inject before RBs at 22
                         // row param is used to compute insertRow = ceil(row)
-                        float row = (carriers != null && carriers >= 3) ? 21.5f : 14.5f;
+                        // +2.0 (carriers==2) or +4.0 (carriers>=3) to account for SS-RSRP and CSI-RSRP rows injected before us
+                        float row = (carriers != null && carriers >= 3) ? 25.5f : 16.5f;
                         injectCsiSnrRow(k2aArg, row, carriers != null ? carriers : 2);
                     }
                     return chain.proceed();

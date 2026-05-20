@@ -19,11 +19,11 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   - h8.b.o0() intercept sets a ThreadLocal with the carrier count
  *   - v6.b.k0(k2.a) intercept injects the new rows into the builder
  *
- * Row positions (per path):
- *   Path A k0()  carriers==2 : 64Q at 23, Phy.Thput at 24 → insert at 24, shift by 2.0f
- *   Path B l0()  carriers>=4 : 64Q at 38, Phy.Thput at 40 → insert at 39, shift by 2.0f
+ * Row positions (per path, after NrSaRsrpRowHook +2/+4 and NrSaCsiSnrRowHook +1/+2 shifts):
+ *   Path A k0()  carriers==2 : 64Q at 23, Phy.Thput at 27 → insert at 27, shift by 2.0f
+ *   Path B l0()  carriers>=4 : 64Q at 38, Phy.Thput at 45 → insert at 45, shift by 2.0f
  *   Path C inline carriers==3 : 64Q label at 38 h=2.0, bar at 38.3 h=1.4
- *                               → insert at 40 (=38+2), shift by 4.0f (2 rows × 2.0f)
+ *                               → insert at 46 (=38+2+4+2), shift by 4.0f (2 rows × 2.0f)
  *
  * Property keys (flat namespace — PCell variants for 16QAM/QPSK don't exist in NSG):
  *   16QAM DL : NR5G::Downlink_Measurements::NR_ModUsage_16QAM_DL
@@ -207,19 +207,19 @@ public class NrSaModUsageRowHook {
             boolean isInline3 = (carriers == 3);
             boolean isPathA   = (carriers == 2);
 
-            // insertRow = Phy.Thput row AFTER NrSaCsiSnrRowHook has already shifted things.
+            // insertRow = Phy.Thput row AFTER NrSaRsrpRowHook and NrSaCsiSnrRowHook have already shifted things.
             //
             // Original (pre-hook) Phy.Thput positions:
-            //   Path A carriers==2 : 24  — CSI SNR injects at row 15, shift ≥15 by 1.0  → 25
-            //   Path B carriers>=4 : 40  — CSI SNR injects at row 22, shift ≥22 by 1.0  → 41
-            //   Path C carriers==3 : 40  — CSI SNR injects at row 22, shift ≥22 by 2.0  → 42
+            //   Path A carriers==2 : 24  — RSRP +2.0, CSI SNR +1.0  → 27
+            //   Path B carriers>=4 : 40  — RSRP +4.0, CSI SNR +1.0  → 45
+            //   Path C carriers==3 : 40  — RSRP +4.0, CSI SNR +2.0  → 46
             float insertRow;
             if (isPathA) {
-                insertRow = 25.0f;  // 24 + 1 (CSI SNR shift of 1.0 at row 15)
+                insertRow = 27.0f;  // 24 + 1 (CSI SNR) + 2 (SS-RSRP+CSI-RSRP rows)
             } else if (isInline3) {
-                insertRow = 42.0f;  // 40 + 2 (CSI SNR shift of 2.0 at row 22)
+                insertRow = 46.0f;  // 40 + 2 (CSI SNR) + 4 (SS-RSRP+CSI-RSRP rows)
             } else {
-                insertRow = 41.0f;  // 40 + 1 (CSI SNR shift of 1.0 at row 22)
+                insertRow = 45.0f;  // 40 + 1 (CSI SNR) + 4 (SS-RSRP+CSI-RSRP rows)
             }
             float labelHeight = isInline3 ? 2.0f : 1.0f;
             float barHeight   = isInline3 ? 1.4f : 1.0f;
