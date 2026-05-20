@@ -5,6 +5,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.text.Editable;
 import android.text.Layout;
+import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.TextWatcher;
 import android.text.style.BackgroundColorSpan;
@@ -141,6 +142,8 @@ public class SignalingSearchHook {
         String lastFullText = "";
         /** True when search was capped at 200 results. Shown as "(max)" in count label. */
         boolean capped = false;
+        /** Previous currentIndex, used by reapplySpans to only swap two spans. */
+        int previousIndex = -1;
     }
 
     // -----------------------------------------------------------------------
@@ -197,6 +200,7 @@ public class SignalingSearchHook {
                         state.currentIndex = 0;
                         state.capped = false;
                         state.lastFullText = "";   // CRITICAL: force re-read of text at next search
+                        state.previousIndex = -1;
 
                         // Guard: only build and add the search bar UI once (views are reused)
                         if (SEARCH_BAR_TAG.equals(frame.getTag(SEARCH_BAR_TAG.hashCode()))) {
@@ -342,19 +346,26 @@ public class SignalingSearchHook {
                             @Override
                             public void run() {
                                 if (state.matches.isEmpty()) return;
-                                String fullText = state.lastFullText;
-                                SpannableStringBuilder ssb = new SpannableStringBuilder(fullText);
-                                for (int i = 0; i < state.matches.size(); i++) {
-                                    int[] m = state.matches.get(i);
-                                    int bgColor = (i == state.currentIndex) ? 0xFFFF8C00 : 0xFFFFFF00;
-                                    ssb.setSpan(new BackgroundColorSpan(bgColor),
-                                            m[0], m[1],
-                                            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                                    ssb.setSpan(new ForegroundColorSpan(Color.BLACK),
-                                            m[0], m[1],
+                                android.text.Spanned spanned = (android.text.Spanned) msgTextView.getText();
+                                if (!(spanned instanceof Spannable)) return;
+                                Spannable sp = (Spannable) spanned;
+
+                                // Only recolor the two spans that changed: old current → yellow, new current → orange
+                                int[] indices = (state.previousIndex >= 0 && state.previousIndex != state.currentIndex)
+                                        ? new int[]{state.previousIndex, state.currentIndex}
+                                        : new int[]{state.currentIndex};
+
+                                for (int idx : indices) {
+                                    if (idx < 0 || idx >= state.matches.size()) continue;
+                                    int[] m = state.matches.get(idx);
+                                    int bgColor = (idx == state.currentIndex) ? 0xFFFF8C00 : 0xFFFFFF00;
+                                    BackgroundColorSpan[] existing = sp.getSpans(m[0], m[1], BackgroundColorSpan.class);
+                                    for (BackgroundColorSpan s : existing) sp.removeSpan(s);
+                                    sp.setSpan(new BackgroundColorSpan(bgColor), m[0], m[1],
                                             android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                                 }
-                                msgTextView.setText(ssb);
+                                state.previousIndex = state.currentIndex;
+
                                 countTv.setText((state.currentIndex + 1) + " / "
                                         + state.matches.size()
                                         + (state.capped ? " (max)" : ""));
@@ -486,6 +497,7 @@ public class SignalingSearchHook {
                                                     state.matches = finalResults;
                                                     state.capped = capped;
                                                     state.currentIndex = 0;
+                                                    state.previousIndex = -1;
 
                                                     // Build spannable
                                                     SpannableStringBuilder ssb = new SpannableStringBuilder(fullText);
