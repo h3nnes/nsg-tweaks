@@ -65,11 +65,12 @@ public class NrSaRsrpRowHook {
     private Field veF; // text   (JADX: f8116f)
     private Field veG; // align  (JADX: f8117g)
     private Field veH; // span
-    private Field veI; // color  (JADX: f8118i)
 
-    // v6.f bar data-binding field + color field
-    private Field vfF8120g; // g (JADX: f8120g)
+    // v6.f bar data-binding field + color fields
+    private Field vfF8120g; // g (JADX: f8120g) — data binding
+    private Field vfF8121i; // i (JADX: f8121i) — manual-range mode flag (must be true to prevent LegendManager override)
     private Field vfF8122j; // j (JADX: f8122j) — bar color int
+    private Field vfF8123k; // k (JADX: f8123k) — max value for manual-range mode
 
     // com.qtrun.sys.b / a — property binding
     private Class<?> sysBClass;
@@ -107,13 +108,15 @@ public class NrSaRsrpRowHook {
             veF = veClass.getField("f");
             veG = veClass.getField("g");
             veH = veClass.getField("h");
-            veI = veClass.getDeclaredField("i");
-            veI.setAccessible(true);
 
             vfF8120g = vfClass.getDeclaredField("g");
             vfF8120g.setAccessible(true);
+            vfF8121i = vfClass.getDeclaredField("i");
+            vfF8121i.setAccessible(true);
             vfF8122j = vfClass.getDeclaredField("j");
             vfF8122j.setAccessible(true);
+            vfF8123k = vfClass.getDeclaredField("k");
+            vfF8123k.setAccessible(true);
 
             sysBClass = loader.loadClass("com.qtrun.sys.b");
             Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
@@ -253,7 +256,16 @@ public class NrSaRsrpRowHook {
     private void setSCellBarColor(Object bar, int scellIndex) {
         if (bar == null || scellIndex < 0 || scellIndex >= SCELL_COLORS.length) return;
         try {
+            // f8121i must be true to prevent LegendManager from overwriting f4142n in e().
+            // Without it, the else-branch in e() calls progressTextView.h(legendColor, progress)
+            // which overwrites f4142n regardless of f8122j.
+            // f8123k is the manual-range max; RSRP values are negative so any positive value
+            // means the bar fill will clamp to 0 (empty bar) — text color still applies.
+            vfF8121i.set(bar, true);
             vfF8122j.set(bar, SCELL_COLORS[scellIndex]);
+            vfF8123k.set(bar, 1.0f);
+            Log.d(TAG, "NrSaRsrpRowHook: setSCellBarColor scell=" + scellIndex
+                    + " color=0x" + Integer.toHexString(SCELL_COLORS[scellIndex]));
         } catch (Exception e) {
             Log.w(TAG, "NrSaRsrpRowHook: setSCellBarColor failed: " + e);
         }
