@@ -264,10 +264,13 @@ public class SignalingShareHook {
                                 LinearLayout.LayoutParams.MATCH_PARENT);
                         int gap4dp = Math.round(4 * ctx.getResources().getDisplayMetrics().density);
                         btnLp.setMargins(0, 0, gap4dp, 0);  // right margin = gap between Share and Copy
+                        btnLp.gravity = Gravity.CENTER_VERTICAL;
                         shareBtn.setLayoutParams(btnLp);
-                        copyBtn.setLayoutParams(new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(
                                 LinearLayout.LayoutParams.WRAP_CONTENT,
-                                LinearLayout.LayoutParams.WRAP_CONTENT));
+                                LinearLayout.LayoutParams.WRAP_CONTENT);
+                        copyLp.gravity = Gravity.CENTER_VERTICAL;
+                        copyBtn.setLayoutParams(copyLp);
 
                         // Make Copy button visible (was "invisible" in XML)
                         copyBtn.setVisibility(View.VISIBLE);
