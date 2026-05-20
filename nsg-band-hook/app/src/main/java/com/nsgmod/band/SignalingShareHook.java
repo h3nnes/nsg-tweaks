@@ -258,10 +258,10 @@ public class SignalingShareHook {
                                     copyBtn.getBackground().getConstantState().newDrawable());
                         }
 
-                        // Both buttons get wrap_content in the LinearLayout
+                        // Share: wrap width, MATCH_PARENT height so it matches Copy button height
                         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
                                 LinearLayout.LayoutParams.WRAP_CONTENT,
-                                LinearLayout.LayoutParams.WRAP_CONTENT);
+                                LinearLayout.LayoutParams.MATCH_PARENT);
                         int gap4dp = Math.round(4 * ctx.getResources().getDisplayMetrics().density);
                         btnLp.setMargins(0, 0, gap4dp, 0);  // right margin = gap between Share and Copy
                         shareBtn.setLayoutParams(btnLp);
