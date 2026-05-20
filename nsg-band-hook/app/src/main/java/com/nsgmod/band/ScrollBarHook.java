@@ -152,8 +152,11 @@ public class ScrollBarHook {
                             return result;
                         }
 
-                        // Guard: only apply once per ScrollView instance
-                        if (SEEKBAR_TAG.equals(scrollView.getTag())) {
+                        // Add SeekBar on top of everything in the FrameLayout
+                        final FrameLayout frame = (FrameLayout) contentView;
+
+                        // Guard: only apply once per FrameLayout instance
+                        if (SEEKBAR_TAG.equals(frame.getTag(SEEKBAR_TAG.hashCode()))) {
                             return result;
                         }
 
@@ -210,9 +213,6 @@ public class ScrollBarHook {
                                 scrollView.scrollTo(0, scrollY);
                             }
                         });
-
-                        // Add SeekBar on top of everything in the FrameLayout
-                        final FrameLayout frame = (FrameLayout) contentView;
                         frame.addView(seekBar);
 
                         // Layout listener: position SeekBar flush to right edge, spanning
@@ -236,11 +236,19 @@ public class ScrollBarHook {
                                         // FrameLayout by SignalingShareHook). Its bottom edge
                                         // gives the true top offset for the SeekBar.
                                         int topOffset = 0;
+                                        // Share/Copy container bottom
                                         Object shareCopyTag = frame.getTag(
                                                 "nsg_share_copy_container".hashCode());
                                         if (shareCopyTag instanceof View) {
                                             int bottom = ((View) shareCopyTag).getBottom();
-                                            if (bottom > 0) topOffset = bottom;
+                                            if (bottom > 0) topOffset = Math.max(topOffset, bottom);
+                                        }
+                                        // Search bar height (from SignalingSearchHook, may be 0 if not loaded)
+                                        Object searchBarHTag = frame.getTag(
+                                                "nsg_search_bar_height".hashCode());
+                                        if (searchBarHTag instanceof Integer) {
+                                            int sbH = (Integer) searchBarHTag;
+                                            if (sbH > 0) topOffset = Math.max(topOffset, sbH);
                                         }
 
                                         int frameH = frame.getHeight();
@@ -265,8 +273,8 @@ public class ScrollBarHook {
                                     }
                                 });
 
-                        // Mark as done on the ScrollView
-                        scrollView.setTag(SEEKBAR_TAG);
+                        // Mark as done on the FrameLayout
+                        frame.setTag(SEEKBAR_TAG.hashCode(), SEEKBAR_TAG);
 
                         Log.d(TAG, "ScrollBarHook: SeekBar overlay added to popup");
                     } catch (Exception e) {

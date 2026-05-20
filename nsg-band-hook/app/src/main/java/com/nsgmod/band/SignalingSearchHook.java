@@ -215,6 +215,7 @@ public class SignalingSearchHook {
                         int barPadH = Math.round(4 * density);
                         int barPadV = Math.round(4 * density);
                         searchBar.setPadding(barPadH, barPadV, barPadH, barPadV);
+                        searchBar.setMinimumHeight(Math.round(48 * density));
 
                         // Pin to the top of the FrameLayout
                         FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(
@@ -507,6 +508,8 @@ public class SignalingSearchHook {
                                                 .removeOnGlobalLayoutListener(this);
                                         int barH = searchBar.getHeight();
                                         if (barH <= 0) return;
+
+                                        frame.setTag("nsg_search_bar_height".hashCode(), barH);
 
                                         // Push ScrollView content below the search bar
                                         scrollView.setPadding(
