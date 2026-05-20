@@ -181,11 +181,11 @@ public class SignalingSearchHook {
                             return result;
                         }
 
-                        // Guard: only add the search bar once per popup instance
-                        if (SEARCH_BAR_TAG.equals(scrollView.getTag())) {
+                        // Guard: only add the search bar once per FrameLayout instance
+                        if (SEARCH_BAR_TAG.equals(frame.getTag(SEARCH_BAR_TAG.hashCode()))) {
                             return result;
                         }
-                        scrollView.setTag(SEARCH_BAR_TAG);
+                        frame.setTag(SEARCH_BAR_TAG.hashCode(), SEARCH_BAR_TAG);
 
                         android.content.Context ctx = frame.getContext();
                         final float density = ctx.getResources().getDisplayMetrics().density;
@@ -356,10 +356,8 @@ public class SignalingSearchHook {
                             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
                             @Override
                             public void afterTextChanged(Editable s) {
-                                // Clear all spans — restore plain text
-                                if (!state.lastFullText.isEmpty()) {
-                                    msgTextView.setText(state.lastFullText);
-                                }
+                                // Only reset state; do NOT call msgTextView.setText here — that is
+                                // extremely slow on long messages. Spans will be cleared when search runs.
                                 state.matches.clear();
                                 state.currentIndex = 0;
                                 state.capped = false;
@@ -413,9 +411,16 @@ public class SignalingSearchHook {
                                 if (query.isEmpty()) return;
 
                                 final boolean caseSensitive = state.caseSensitive;
-                                // Get plain text (toString() strips any existing spans)
-                                final String fullText = msgTextView.getText() != null
-                                        ? msgTextView.getText().toString() : "";
+                                // Use cached plain text if available (avoids reading potentially-spanned TextView)
+                                // toString() on a Spannable does strip spans, but state.lastFullText is cheaper
+                                // when already populated (e.g. after a previous search in this popup).
+                                final String fullText;
+                                if (!state.lastFullText.isEmpty()) {
+                                    fullText = state.lastFullText;
+                                } else {
+                                    fullText = msgTextView.getText() != null
+                                            ? msgTextView.getText().toString() : "";
+                                }
 
                                 // Disable buttons during search
                                 nextBtn.setEnabled(false);

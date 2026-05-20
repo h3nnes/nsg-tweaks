@@ -251,6 +251,10 @@ public class ScrollBarHook {
                                             if (sbH > 0) topOffset = Math.max(topOffset, sbH);
                                         }
 
+                                        // Extra gap so the SeekBar does not visually touch the buttons above
+                                        int extraGapPx = Math.round(8 * frame.getContext().getResources().getDisplayMetrics().density);
+                                        topOffset += extraGapPx;
+
                                         int frameH = frame.getHeight();
                                         if (frameH <= 0) return; // not laid out yet
 
