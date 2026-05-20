@@ -181,11 +181,30 @@ public class SignalingSearchHook {
                             return result;
                         }
 
-                        // Guard: only add the search bar once per FrameLayout instance
+                        // Retrieve or create per-popup SearchState
+                        final int STATE_TAG = "nsg_search_state".hashCode();
+                        SearchState existingState = null;
+                        Object stateTag = frame.getTag(STATE_TAG);
+                        if (stateTag instanceof SearchState) {
+                            existingState = (SearchState) stateTag;
+                        }
+                        final SearchState state = existingState != null ? existingState : new SearchState();
+
+                        // Always reset state on every open — NSG reuses the same view hierarchy
+                        // and asynchronously replaces the TextView text after onItemClick returns,
+                        // so any cached text from the previous open is now stale.
+                        state.matches.clear();
+                        state.currentIndex = 0;
+                        state.capped = false;
+                        state.lastFullText = "";   // CRITICAL: force re-read of text at next search
+
+                        // Guard: only build and add the search bar UI once (views are reused)
                         if (SEARCH_BAR_TAG.equals(frame.getTag(SEARCH_BAR_TAG.hashCode()))) {
+                            // UI already present — nothing more to do; state is already reset above.
                             return result;
                         }
                         frame.setTag(SEARCH_BAR_TAG.hashCode(), SEARCH_BAR_TAG);
+                        frame.setTag(STATE_TAG, state);
 
                         android.content.Context ctx = frame.getContext();
                         final float density = ctx.getResources().getDisplayMetrics().density;
@@ -196,9 +215,6 @@ public class SignalingSearchHook {
                             Log.w(TAG, "SignalingSearchHook: message TextView not found");
                             return result;
                         }
-
-                        // --- Per-popup search state ---
-                        final SearchState state = new SearchState();
 
                         // --- Background worker for async search ---
                         HandlerThread workerThread = new HandlerThread("nsg-search-worker");
