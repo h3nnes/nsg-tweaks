@@ -308,7 +308,7 @@ public class SettingsToggleHook {
 
             if (keyField != null) { keyField.set(sw2, PREF_KEY_CELL_MODS); }
             if (titleField != null) { titleField.set(sw2, "NSGMod: Cell table mods"); }
-            if (summaryField != null) { summaryField.set(sw2, "Add extra columns/rows to LTE, NR-NSA and NR-SA cell tables (not SA CA matrix)"); }
+            if (summaryField != null) { summaryField.set(sw2, "Add extra columns/rows to LTE, NR-NSA and NR-SA cell tables"); }
 
             try {
                 Field iconSpaceField = prefBaseCls.getDeclaredField("C");
