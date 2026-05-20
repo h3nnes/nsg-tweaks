@@ -177,7 +177,6 @@ public class NrSaModUsageRowHook {
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    if (!SettingsToggleHook.cellModsEnabled()) return chain.proceed();
                     Object  k2aArg   = chain.getArg(0);
                     Integer carriers = carrierCountInO0.get();
                     boolean inO0     = carriers != null;
