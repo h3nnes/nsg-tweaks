@@ -6,6 +6,9 @@ import androidx.annotation.NonNull;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
@@ -36,6 +39,15 @@ public class NrSaCsiSnrRowHook {
     private static final String TAG = "NSGBandHook";
 
     static final ThreadLocal<Integer> carrierCountInO0 = new ThreadLocal<>();
+
+    /**
+     * Maps k2.a builder instances created inside h8.b.o0() to their carrier count.
+     * Populated by the v6.b.k0 hook (which fires inside o0()).
+     * Used by NrSaCellColorHook to identify SA CA Matrix builders when v6.b.I() fires later.
+     * WeakHashMap so k2.a objects are not prevented from being GC'd.
+     */
+    static final Map<Object, Integer> saK2aCarriers =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -198,6 +210,8 @@ public class NrSaCsiSnrRowHook {
                             + " carriers=" + carriers
                             + " k2a=" + (k2aArg != null ? k2aArg.getClass().getName() : "null"));
                     if (inO0 && k2aArg != null) {
+                        // Record this k2.a as belonging to the SA CA Matrix screen
+                        saK2aCarriers.put(k2aArg, carriers);
                         // carriers == 2: 1 SCell — SNR at row 14, inject before RBs at 15
                         // carriers >= 3: 2+ SCells — SNR at row 20, inject before RBs at 22
                         // row param is used to compute insertRow = ceil(row)
