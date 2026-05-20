@@ -54,13 +54,22 @@ public class NrSaRsrpRowHook {
     private Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e  (label)
     private Method k2aSMethod; // s(float row, float h, float col, float w) → v6.f  (bar)
 
+    // SCell colors (index 0=SCell1, 1=SCell2, 2=SCell3)
+    private static final int[] SCELL_COLORS = {
+        0xFF9C27B0, // SCell1 — violet
+        0xFF00BCD4, // SCell2 — turquoise
+        0xFFFFEB3B, // SCell3 — yellow
+    };
+
     // v6.e label fields (actual bytecode names)
     private Field veF; // text   (JADX: f8116f)
     private Field veG; // align  (JADX: f8117g)
     private Field veH; // span
+    private Field veI; // color  (JADX: f8118i)
 
-    // v6.f bar data-binding field
+    // v6.f bar data-binding field + color field
     private Field vfF8120g; // g (JADX: f8120g)
+    private Field vfF8122j; // j (JADX: f8122j) — bar color int
 
     // com.qtrun.sys.b / a — property binding
     private Class<?> sysBClass;
@@ -98,9 +107,13 @@ public class NrSaRsrpRowHook {
             veF = veClass.getField("f");
             veG = veClass.getField("g");
             veH = veClass.getField("h");
+            veI = veClass.getDeclaredField("i");
+            veI.setAccessible(true);
 
             vfF8120g = vfClass.getDeclaredField("g");
             vfF8120g.setAccessible(true);
+            vfF8122j = vfClass.getDeclaredField("j");
+            vfF8122j.setAccessible(true);
 
             sysBClass = loader.loadClass("com.qtrun.sys.b");
             Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
@@ -237,6 +250,15 @@ public class NrSaRsrpRowHook {
         }
     }
 
+    private void setSCellBarColor(Object bar, int scellIndex) {
+        if (bar == null || scellIndex < 0 || scellIndex >= SCELL_COLORS.length) return;
+        try {
+            vfF8122j.set(bar, SCELL_COLORS[scellIndex]);
+        } catch (Exception e) {
+            Log.w(TAG, "NrSaRsrpRowHook: setSCellBarColor failed: " + e);
+        }
+    }
+
     /**
      * Path A: carriers==2 (1 SCell), single-height rows (h=1.0, barOffset=0, barH=1.0).
      *
@@ -279,6 +301,7 @@ public class NrSaRsrpRowHook {
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 1);
             vfF8120g.set(ssSCell0Bar, prop);
+            setSCellBarColor(ssSCell0Bar, 0); // SCell1 = violet
         }
 
         // CSI-RSRP label
@@ -347,6 +370,7 @@ public class NrSaRsrpRowHook {
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 1);
             vfF8120g.set(ssSCell0Bar, prop);
+            setSCellBarColor(ssSCell0Bar, 0); // SCell1 = violet
         }
 
         // SS-RSRP SCell[1] bar — second sub-row in col=65
@@ -357,6 +381,7 @@ public class NrSaRsrpRowHook {
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 2);
             vfF8120g.set(ssSCell1Bar, prop);
+            setSCellBarColor(ssSCell1Bar, 1); // SCell2 = turquoise
         }
 
         // CSI-RSRP label
@@ -423,6 +448,7 @@ public class NrSaRsrpRowHook {
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 1);
             vfF8120g.set(ssSCell0Bar, prop);
+            setSCellBarColor(ssSCell0Bar, 0); // SCell1 = violet
         }
 
         // SS-RSRP SCell[1] bar — col=65 sub-row 0
@@ -433,6 +459,7 @@ public class NrSaRsrpRowHook {
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 2);
             vfF8120g.set(ssSCell1Bar, prop);
+            setSCellBarColor(ssSCell1Bar, 1); // SCell2 = turquoise
         }
 
         // SS-RSRP SCell[2] bar — col=65 sub-row 1
@@ -443,6 +470,7 @@ public class NrSaRsrpRowHook {
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 3);
             vfF8120g.set(ssSCell2Bar, prop);
+            setSCellBarColor(ssSCell2Bar, 2); // SCell3 = yellow
         }
 
         // CSI-RSRP label
