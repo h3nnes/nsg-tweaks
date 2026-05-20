@@ -260,6 +260,48 @@ public class SettingsToggleHook {
         }
         children.add(sw);
 
+        // Attach PreferenceManager and parent to sw — required for pref persistence and state
+        try {
+            Class<?> prefMgrType = prefManager.getClass();
+            Method attachMethod = null;
+            outer:
+            for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+                for (Method m : c.getDeclaredMethods()) {
+                    Class<?>[] p = m.getParameterTypes();
+                    if (p.length == 1 && p[0].isAssignableFrom(prefMgrType)
+                            && m.getReturnType() == void.class) {
+                        attachMethod = m;
+                        break outer;
+                    }
+                }
+            }
+            if (attachMethod != null) {
+                attachMethod.setAccessible(true);
+                attachMethod.invoke(sw, prefManager);
+            } else {
+                Log.w(TAG, "attach method o() not found on Preference for sw");
+            }
+
+            Field parentField = null;
+            outer2:
+            for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+                for (Field f : c.getDeclaredFields()) {
+                    if (f.getType() == prefGroupCls) {
+                        parentField = f;
+                        break outer2;
+                    }
+                }
+            }
+            if (parentField != null) {
+                parentField.setAccessible(true);
+                parentField.set(sw, prefScreen);
+            } else {
+                Log.w(TAG, "parent field J not found on Preference for sw");
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "failed to attach preference manager to sw: " + t);
+        }
+
         // --- Second toggle: Cell table mods ---
         if (findPref != null && findPref.invoke(prefScreen, PREF_KEY_CELL_MODS) == null) {
             Object sw2 = swCtor.newInstance(ctorArgs);
@@ -288,6 +330,48 @@ public class SettingsToggleHook {
             }
 
             children.add(sw2);
+
+            // Attach PreferenceManager and parent to sw2 — required for pref persistence and state
+            try {
+                Class<?> prefMgrType = prefManager.getClass();
+                Method attachMethod2 = null;
+                outer3:
+                for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+                    for (Method m : c.getDeclaredMethods()) {
+                        Class<?>[] p = m.getParameterTypes();
+                        if (p.length == 1 && p[0].isAssignableFrom(prefMgrType)
+                                && m.getReturnType() == void.class) {
+                            attachMethod2 = m;
+                            break outer3;
+                        }
+                    }
+                }
+                if (attachMethod2 != null) {
+                    attachMethod2.setAccessible(true);
+                    attachMethod2.invoke(sw2, prefManager);
+                } else {
+                    Log.w(TAG, "attach method o() not found on Preference for sw2");
+                }
+
+                Field parentField2 = null;
+                outer4:
+                for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+                    for (Field f : c.getDeclaredFields()) {
+                        if (f.getType() == prefGroupCls) {
+                            parentField2 = f;
+                            break outer4;
+                        }
+                    }
+                }
+                if (parentField2 != null) {
+                    parentField2.setAccessible(true);
+                    parentField2.set(sw2, prefScreen);
+                } else {
+                    Log.w(TAG, "parent field J not found on Preference for sw2");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "failed to attach preference manager to sw2: " + t);
+            }
         }
 
         // Notify the RecyclerView adapter that the preference list changed
