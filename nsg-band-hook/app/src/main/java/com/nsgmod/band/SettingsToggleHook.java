@@ -1,6 +1,7 @@
 package com.nsgmod.band;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -28,6 +29,23 @@ public class SettingsToggleHook {
     private static final String TAG          = "NSGBandHook_Settings";
     static final String  PREFS_FILE   = "nsgmod_prefs";
     static final String  PREF_KEY     = "nsgmod.subscriber_bypass";
+    static final String  PREF_KEY_CELL_MODS = "nsgmod.cell_mods_enabled";
+
+    /** Returns true when the cell-table modifications toggle is enabled (default: true). */
+    public static boolean cellModsEnabled() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            android.app.Application app =
+                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app == null) return true;
+            SharedPreferences prefs = app.getSharedPreferences(
+                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+            return prefs.getBoolean(PREF_KEY_CELL_MODS, true); // default ON
+        } catch (Throwable t) {
+            android.util.Log.w("NSGBandHook_Settings", "cellModsEnabled check failed: " + t);
+            return true; // fail open — keep mods active
+        }
+    }
     private static final String FRAGMENT_CLS = "t7.u";
 
     private final XposedInterface xposed;
@@ -241,6 +259,36 @@ public class SettingsToggleHook {
             return;
         }
         children.add(sw);
+
+        // --- Second toggle: Cell table mods ---
+        if (findPref != null && findPref.invoke(prefScreen, PREF_KEY_CELL_MODS) == null) {
+            Object sw2 = swCtor.newInstance(ctorArgs);
+
+            if (keyField != null) { keyField.set(sw2, PREF_KEY_CELL_MODS); }
+            if (titleField != null) { titleField.set(sw2, "NSGMod: Cell table mods"); }
+            if (summaryField != null) { summaryField.set(sw2, "Add extra columns/rows to LTE and NR cell tables"); }
+
+            try {
+                Field iconSpaceField = prefBaseCls.getDeclaredField("C");
+                iconSpaceField.setAccessible(true);
+                iconSpaceField.set(sw2, false);
+            } catch (Throwable t) {
+                Log.w(TAG, "iconSpaceReserved field C not found for sw2: " + t);
+            }
+
+            for (Method m : prefBaseCls.getDeclaredMethods()) {
+                if (m.getReturnType() == void.class) {
+                    Class<?>[] p = m.getParameterTypes();
+                    if (p.length == 1 && p[0] == Object.class) {
+                        m.setAccessible(true);
+                        m.invoke(sw2, Boolean.TRUE);
+                        break;
+                    }
+                }
+            }
+
+            children.add(sw2);
+        }
 
         // Notify the RecyclerView adapter that the preference list changed
         // n() = notifyHierarchyChanged in decompiled source

@@ -202,6 +202,7 @@ public class LteBandwidthColumnHook {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result   = chain.proceed();
+                    if (!SettingsToggleHook.cellModsEnabled()) return result;
                     int    position = (int) chain.getArg(0);
                     View   rowView  = (View) result;
                     if (rowView == null) return result;
@@ -303,6 +304,7 @@ public class LteBandwidthColumnHook {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result       = chain.proceed();
+                    if (!SettingsToggleHook.cellModsEnabled()) return result;
                     View   fragmentView = (View) result;
                     if (fragmentView == null) return result;
 

@@ -156,6 +156,7 @@ public class NrSaCsiSnrRowHook {
             xposed.hook(o0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (!SettingsToggleHook.cellModsEnabled()) return chain.proceed();
                     int carriers = -1;
                     try {
                         carriers = (int) h8bCarrierCountField.get(chain.getThisObject());
@@ -191,6 +192,7 @@ public class NrSaCsiSnrRowHook {
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (!SettingsToggleHook.cellModsEnabled()) return chain.proceed();
                     Object k2aArg = chain.getArg(0);
                     Integer carriers = carrierCountInO0.get();
                     boolean inO0 = carriers != null;
