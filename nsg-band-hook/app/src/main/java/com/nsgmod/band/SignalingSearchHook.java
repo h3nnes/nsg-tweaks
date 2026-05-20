@@ -133,12 +133,14 @@ public class SignalingSearchHook {
      * Mutable state object for a single popup's search session.
      * Captured by the TextWatcher and button click listeners.
      */
-    private static class SearchState {
+     private static class SearchState {
         List<int[]> matches = new ArrayList<>(); // each entry: {start, end}
         int currentIndex = 0;
         boolean caseSensitive = false;
         /** Plain text captured at search time, used for span re-application during navigation. */
         String lastFullText = "";
+        /** True when search was capped at 200 results. Shown as "(max)" in count label. */
+        boolean capped = false;
     }
 
     // -----------------------------------------------------------------------
@@ -336,7 +338,9 @@ public class SignalingSearchHook {
                                             android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                                 }
                                 msgTextView.setText(ssb);
-                                countTv.setText((state.currentIndex + 1) + " / " + state.matches.size());
+                                countTv.setText((state.currentIndex + 1) + " / "
+                                        + state.matches.size()
+                                        + (state.capped ? " (max)" : ""));
                                 scrollToCurrent.run();
                             }
                         };
@@ -357,6 +361,7 @@ public class SignalingSearchHook {
                                 }
                                 state.matches.clear();
                                 state.currentIndex = 0;
+                                state.capped = false;
                                 countTv.setText("");
                                 nextBtn.setText("Search");
                             }
@@ -374,6 +379,7 @@ public class SignalingSearchHook {
                                     }
                                     state.matches.clear();
                                     state.currentIndex = 0;
+                                    state.capped = false;
                                     countTv.setText("");
                                     nextBtn.setText("Search");
                                 }
@@ -420,21 +426,24 @@ public class SignalingSearchHook {
                                     @Override
                                     public void run() {
                                         List<int[]> results = new ArrayList<>();
+                                        boolean cappedLocal = false;
                                         try {
                                             String searchIn = caseSensitive ? fullText : fullText.toLowerCase();
                                             String searchFor = caseSensitive ? query : query.toLowerCase();
                                             int idx = 0;
-                                            while (true) {
-                                                int pos = searchIn.indexOf(searchFor, idx);
-                                                if (pos < 0) break;
-                                                results.add(new int[]{pos, pos + searchFor.length()});
-                                                idx = pos + 1;
-                                            }
+                                             while (results.size() < 200) {
+                                                 int pos = searchIn.indexOf(searchFor, idx);
+                                                 if (pos < 0) break;
+                                                 results.add(new int[]{pos, pos + searchFor.length()});
+                                                 idx = pos + 1;
+                                             }
+                                             cappedLocal = results.size() == 200;
                                         } catch (Exception ex) {
                                             Log.w(TAG, "SignalingSearchHook: search error: " + ex);
                                         }
 
                                         final List<int[]> finalResults = results;
+                                        final boolean capped = cappedLocal;
                                         msgTextView.post(new Runnable() {
                                             @Override
                                             public void run() {
@@ -453,6 +462,7 @@ public class SignalingSearchHook {
 
                                                     state.lastFullText = fullText;
                                                     state.matches = finalResults;
+                                                    state.capped = capped;
                                                     state.currentIndex = 0;
 
                                                     // Build spannable
@@ -468,7 +478,9 @@ public class SignalingSearchHook {
                                                                 android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                                                     }
                                                     msgTextView.setText(ssb);
-                                                    countTv.setText("1 / " + state.matches.size());
+                                                    String countLabel = "1 / " + state.matches.size()
+                                                            + (capped ? " (max)" : "");
+                                                    countTv.setText(countLabel);
                                                     nextBtn.setText("\u25BA");
                                                     scrollToCurrent.run();
                                                 } catch (Exception ex) {
