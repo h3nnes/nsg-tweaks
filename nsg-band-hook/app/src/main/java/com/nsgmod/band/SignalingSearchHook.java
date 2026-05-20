@@ -426,12 +426,27 @@ public class SignalingSearchHook {
                                         searchBar.getViewTreeObserver()
                                                 .removeOnGlobalLayoutListener(this);
                                         int barH = searchBar.getHeight();
-                                        if (barH > 0) {
-                                            scrollView.setPadding(
-                                                    scrollView.getPaddingLeft(),
-                                                    barH,
-                                                    scrollView.getPaddingRight(),
-                                                    scrollView.getPaddingBottom());
+                                        if (barH <= 0) return;
+
+                                        // Push ScrollView content below the search bar
+                                        scrollView.setPadding(
+                                                scrollView.getPaddingLeft(),
+                                                barH,
+                                                scrollView.getPaddingRight(),
+                                                scrollView.getPaddingBottom());
+
+                                        // Push Share+Copy container below the search bar.
+                                        // SignalingShareHook stored the container reference
+                                        // as a keyed tag on the FrameLayout.
+                                        Object tag = frame.getTag("nsg_share_copy_container".hashCode());
+                                        if (tag instanceof View) {
+                                            View shareCopyContainer = (View) tag;
+                                            ViewGroup.MarginLayoutParams lp =
+                                                    (ViewGroup.MarginLayoutParams) shareCopyContainer.getLayoutParams();
+                                            if (lp != null) {
+                                                lp.topMargin = barH;
+                                                shareCopyContainer.setLayoutParams(lp);
+                                            }
                                         }
                                     }
                                 });

@@ -287,6 +287,12 @@ public class SignalingShareHook {
 
                         frameLayout.addView(container);
 
+                        // Store container reference so SignalingSearchHook can push it
+                        // below the search bar once the search bar's height is known.
+                        frameLayout.setTag(
+                                "nsg_share_copy_container".hashCode(),
+                                container);
+
                         // Wire up Share button click
                         shareBtn.setOnClickListener(new View.OnClickListener() {
                             @Override
