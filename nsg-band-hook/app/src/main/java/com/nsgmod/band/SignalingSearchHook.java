@@ -1,0 +1,472 @@
+package com.nsgmod.band;
+
+import android.graphics.Color;
+import android.text.Editable;
+import android.text.Layout;
+import android.text.SpannableStringBuilder;
+import android.text.TextWatcher;
+import android.text.style.BackgroundColorSpan;
+import android.text.style.ForegroundColorSpan;
+import android.util.Log;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.PopupWindow;
+import android.widget.ScrollView;
+import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
+
+import io.github.libxposed.api.XposedInterface;
+import io.github.libxposed.api.XposedInterface.Hooker;
+
+/**
+ * Hooks NSG 4.8.4 (com.qtrun.QuickTest) to inject a search bar UI at the top
+ * of the signaling message detail popup.
+ *
+ * Hook: u7.a.onItemClick (after-hook)
+ *   - Finds the FrameLayout content view of the popup.
+ *   - Adds a semi-transparent search bar LinearLayout pinned to the top.
+ *   - Supports live search with yellow/orange highlights and prev/next navigation.
+ *   - Aa button toggles case sensitivity.
+ *   - Increases ScrollView top padding to avoid the message being hidden under the bar.
+ *   - Guarded by a String tag on the ScrollView so the bar is only added once per popup instance.
+ */
+public class SignalingSearchHook {
+
+    private static final String TAG = "NSGBandHook";
+    private static final String SEARCH_BAR_TAG = "nsg_search_bar_added";
+
+    /** Resource ID of the message TextView inside the signaling detail popup. */
+    private static final int ID_DETAIL_TEXT = 0x7f0900dc;
+
+    private final XposedInterface xposed;
+    private final ClassLoader loader;
+
+    // --- u7.a reflection ---
+    private Method onItemClickMethod;
+    private Field  u7aFieldA;
+    private Field  u7aFieldB;
+
+    // --- u7.f reflection ---
+    private Field  u7fPopupField;
+
+    private boolean reflectionReady = false;
+
+    public SignalingSearchHook(XposedInterface xposed, ClassLoader loader) {
+        this.xposed = xposed;
+        this.loader = loader;
+        initReflection();
+    }
+
+    // -----------------------------------------------------------------------
+    // Reflection
+    // -----------------------------------------------------------------------
+
+    private void initReflection() {
+        try {
+            Class<?> u7aClass = loader.loadClass("u7.a");
+            Class<?> u7fClass = loader.loadClass("u7.f");
+
+            onItemClickMethod = u7aClass.getMethod("onItemClick",
+                    android.widget.AdapterView.class,
+                    android.view.View.class,
+                    int.class,
+                    long.class);
+
+            u7aFieldA = u7aClass.getDeclaredField("a");
+            u7aFieldA.setAccessible(true);
+            u7aFieldB = u7aClass.getDeclaredField("b");
+            u7aFieldB.setAccessible(true);
+
+            u7fPopupField = findFieldByType(u7fClass, PopupWindow.class);
+            if (u7fPopupField == null) {
+                throw new NoSuchFieldException("No PopupWindow field found in u7.f");
+            }
+            u7fPopupField.setAccessible(true);
+
+            reflectionReady = true;
+            Log.i(TAG, "SignalingSearchHook: reflection ready");
+        } catch (Exception e) {
+            Log.e(TAG, "SignalingSearchHook: initReflection failed: " + e);
+        }
+    }
+
+    private static Field findFieldByType(Class<?> clazz, Class<?> targetType) {
+        for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (f.getType() == targetType) {
+                    return f;
+                }
+            }
+        }
+        return null;
+    }
+
+    // -----------------------------------------------------------------------
+    // Public entry point
+    // -----------------------------------------------------------------------
+
+    public void install() {
+        hookOnItemClick();
+    }
+
+    // -----------------------------------------------------------------------
+    // Search state — held per popup instance, captured by lambdas
+    // -----------------------------------------------------------------------
+
+    /**
+     * Mutable state object for a single popup's search session.
+     * Captured by the TextWatcher and button click listeners.
+     */
+    private static class SearchState {
+        List<int[]> matches = new ArrayList<>(); // each entry: {start, end}
+        int currentIndex = 0;
+        boolean caseSensitive = false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook
+    // -----------------------------------------------------------------------
+
+    private void hookOnItemClick() {
+        if (!reflectionReady) {
+            Log.e(TAG, "hookOnItemClick (SignalingSearchHook) skipped — reflection not ready");
+            return;
+        }
+        try {
+            xposed.hook(onItemClickMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+
+                    try {
+                        Object listener = chain.getThisObject(); // u7.a instance
+
+                        int selector = (int) u7aFieldA.get(listener);
+                        if (selector == 0) return result;
+
+                        Object fragment = u7aFieldB.get(listener);
+                        if (fragment == null) return result;
+
+                        PopupWindow popup = (PopupWindow) u7fPopupField.get(fragment);
+                        if (popup == null) return result;
+
+                        View contentView = popup.getContentView();
+                        if (!(contentView instanceof FrameLayout)) return result;
+                        final FrameLayout frame = (FrameLayout) contentView;
+
+                        // Find the ScrollView
+                        final ScrollView scrollView = findScrollView(frame);
+                        if (scrollView == null) {
+                            Log.w(TAG, "SignalingSearchHook: no ScrollView found in popup content");
+                            return result;
+                        }
+
+                        // Guard: only add the search bar once per popup instance
+                        if (SEARCH_BAR_TAG.equals(scrollView.getTag())) {
+                            return result;
+                        }
+                        scrollView.setTag(SEARCH_BAR_TAG);
+
+                        android.content.Context ctx = frame.getContext();
+                        final float density = ctx.getResources().getDisplayMetrics().density;
+
+                        // Find the message TextView
+                        final TextView msgTextView = frame.findViewById(ID_DETAIL_TEXT);
+                        if (msgTextView == null) {
+                            Log.w(TAG, "SignalingSearchHook: message TextView not found");
+                            return result;
+                        }
+
+                        // --- Per-popup search state ---
+                        final SearchState state = new SearchState();
+
+                        // ---------------------------------------------------------------
+                        // Build the search bar
+                        // ---------------------------------------------------------------
+
+                        LinearLayout searchBar = new LinearLayout(ctx);
+                        searchBar.setOrientation(LinearLayout.HORIZONTAL);
+                        searchBar.setBackgroundColor(0xCC000000); // semi-transparent dark
+                        int barPadH = Math.round(4 * density);
+                        int barPadV = Math.round(4 * density);
+                        searchBar.setPadding(barPadH, barPadV, barPadH, barPadV);
+
+                        // Pin to the top of the FrameLayout
+                        FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                FrameLayout.LayoutParams.WRAP_CONTENT);
+                        barLp.gravity = Gravity.TOP;
+                        searchBar.setLayoutParams(barLp);
+
+                        // 1. EditText (fills available width with weight=1)
+                        final EditText searchEdit = new EditText(ctx);
+                        searchEdit.setHint("Search\u2026");
+                        searchEdit.setSingleLine(true);
+                        searchEdit.setTextColor(Color.WHITE);
+                        searchEdit.setHintTextColor(0xFFAAAAAA);
+                        searchEdit.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+                        searchEdit.setBackgroundColor(0x33FFFFFF);
+                        int editPad = Math.round(4 * density);
+                        searchEdit.setPadding(editPad, editPad, editPad, editPad);
+                        LinearLayout.LayoutParams editLp = new LinearLayout.LayoutParams(
+                                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+                        searchEdit.setLayoutParams(editLp);
+
+                        // 2. Count TextView (e.g. "3 / 12")
+                        final TextView countTv = new TextView(ctx);
+                        countTv.setText("");
+                        countTv.setTextColor(Color.WHITE);
+                        countTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+                        countTv.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+                        int countWidthPx = Math.round(60 * density);
+                        LinearLayout.LayoutParams countLp = new LinearLayout.LayoutParams(
+                                countWidthPx, LinearLayout.LayoutParams.MATCH_PARENT);
+                        int countMargin = Math.round(4 * density);
+                        countLp.setMargins(countMargin, 0, countMargin, 0);
+                        countTv.setLayoutParams(countLp);
+
+                        // 3. Aa toggle button
+                        final Button aaBtn = new Button(ctx);
+                        aaBtn.setText("Aa");
+                        aaBtn.setTransformationMethod(null);
+                        aaBtn.setTextColor(Color.WHITE); // default: case-insensitive
+                        aaBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+                        aaBtn.setBackgroundColor(0x44FFFFFF);
+                        int aaBtnSize = Math.round(36 * density);
+                        LinearLayout.LayoutParams aaLp = new LinearLayout.LayoutParams(aaBtnSize, aaBtnSize);
+                        int aaMargin = Math.round(2 * density);
+                        aaLp.setMargins(aaMargin, 0, aaMargin, 0);
+                        aaBtn.setLayoutParams(aaLp);
+                        aaBtn.setPadding(0, 0, 0, 0);
+
+                        // 4. Prev button ◀
+                        final Button prevBtn = new Button(ctx);
+                        prevBtn.setText("\u25C4");
+                        prevBtn.setTransformationMethod(null);
+                        prevBtn.setTextColor(Color.WHITE);
+                        prevBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+                        prevBtn.setBackgroundColor(0x44FFFFFF);
+                        LinearLayout.LayoutParams prevLp = new LinearLayout.LayoutParams(aaBtnSize, aaBtnSize);
+                        prevLp.setMargins(aaMargin, 0, aaMargin, 0);
+                        prevBtn.setLayoutParams(prevLp);
+                        prevBtn.setPadding(0, 0, 0, 0);
+
+                        // 5. Next button ▶
+                        final Button nextBtn = new Button(ctx);
+                        nextBtn.setText("\u25BA");
+                        nextBtn.setTransformationMethod(null);
+                        nextBtn.setTextColor(Color.WHITE);
+                        nextBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+                        nextBtn.setBackgroundColor(0x44FFFFFF);
+                        LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(aaBtnSize, aaBtnSize);
+                        nextLp.setMargins(aaMargin, 0, aaMargin, 0);
+                        nextBtn.setLayoutParams(nextLp);
+                        nextBtn.setPadding(0, 0, 0, 0);
+
+                        searchBar.addView(searchEdit);
+                        searchBar.addView(countTv);
+                        searchBar.addView(aaBtn);
+                        searchBar.addView(prevBtn);
+                        searchBar.addView(nextBtn);
+
+                        frame.addView(searchBar);
+
+                        // ---------------------------------------------------------------
+                        // Search logic helpers
+                        // ---------------------------------------------------------------
+
+                        // Find all match positions for query in text
+                        // Returns list of {start, end} pairs
+                        // (declared as an array-of-one to allow use in inner classes)
+                        final Runnable[] applyHighlights = {null};
+
+                        final Runnable scrollToCurrent = new Runnable() {
+                            @Override
+                            public void run() {
+                                if (state.matches.isEmpty()) return;
+                                final int[] match = state.matches.get(state.currentIndex);
+                                msgTextView.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Layout layout = msgTextView.getLayout();
+                                        if (layout == null) return;
+                                        int line = layout.getLineForOffset(match[0]);
+                                        int y = layout.getLineTop(line);
+                                        int scrollTarget = Math.max(0, y - scrollView.getHeight() / 3);
+                                        scrollView.smoothScrollTo(0, scrollTarget);
+                                    }
+                                });
+                            }
+                        };
+
+                        applyHighlights[0] = new Runnable() {
+                            @Override
+                            public void run() {
+                                CharSequence rawText = msgTextView.getText();
+                                String fullText = rawText != null ? rawText.toString() : "";
+                                String query = searchEdit.getText() != null
+                                        ? searchEdit.getText().toString()
+                                        : "";
+
+                                if (query.isEmpty()) {
+                                    // Clear spans — restore plain text
+                                    msgTextView.setText(fullText);
+                                    countTv.setText("");
+                                    state.matches.clear();
+                                    state.currentIndex = 0;
+                                    return;
+                                }
+
+                                // Find all occurrences
+                                state.matches.clear();
+                                String searchIn = state.caseSensitive ? fullText : fullText.toLowerCase();
+                                String searchFor = state.caseSensitive ? query : query.toLowerCase();
+                                int idx = 0;
+                                while (true) {
+                                    int pos = searchIn.indexOf(searchFor, idx);
+                                    if (pos < 0) break;
+                                    state.matches.add(new int[]{pos, pos + searchFor.length()});
+                                    idx = pos + 1;
+                                }
+
+                                if (state.matches.isEmpty()) {
+                                    msgTextView.setText(fullText);
+                                    countTv.setText("0 / 0");
+                                    state.currentIndex = 0;
+                                    return;
+                                }
+
+                                // Clamp current index
+                                if (state.currentIndex >= state.matches.size()) {
+                                    state.currentIndex = 0;
+                                }
+
+                                // Build spannable
+                                SpannableStringBuilder ssb = new SpannableStringBuilder(fullText);
+                                for (int i = 0; i < state.matches.size(); i++) {
+                                    int[] m = state.matches.get(i);
+                                    int bgColor = (i == state.currentIndex) ? 0xFFFF8C00 : 0xFFFFFF00;
+                                    ssb.setSpan(new BackgroundColorSpan(bgColor),
+                                            m[0], m[1],
+                                            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                                    ssb.setSpan(new ForegroundColorSpan(Color.BLACK),
+                                            m[0], m[1],
+                                            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                                }
+                                msgTextView.setText(ssb);
+
+                                countTv.setText((state.currentIndex + 1) + " / " + state.matches.size());
+                                scrollToCurrent.run();
+                            }
+                        };
+
+                        // ---------------------------------------------------------------
+                        // Wire up controls
+                        // ---------------------------------------------------------------
+
+                        searchEdit.addTextChangedListener(new TextWatcher() {
+                            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+                            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
+                            @Override
+                            public void afterTextChanged(Editable s) {
+                                state.currentIndex = 0;
+                                applyHighlights[0].run();
+                            }
+                        });
+
+                        aaBtn.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View v) {
+                                state.caseSensitive = !state.caseSensitive;
+                                aaBtn.setTextColor(state.caseSensitive ? Color.YELLOW : Color.WHITE);
+                                state.currentIndex = 0;
+                                applyHighlights[0].run();
+                            }
+                        });
+
+                        prevBtn.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View v) {
+                                if (state.matches.isEmpty()) return;
+                                state.currentIndex = (state.currentIndex - 1 + state.matches.size())
+                                        % state.matches.size();
+                                applyHighlights[0].run();
+                            }
+                        });
+
+                        nextBtn.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View v) {
+                                if (state.matches.isEmpty()) return;
+                                state.currentIndex = (state.currentIndex + 1) % state.matches.size();
+                                applyHighlights[0].run();
+                            }
+                        });
+
+                        // ---------------------------------------------------------------
+                        // Measure search bar height, then adjust ScrollView top padding
+                        // ---------------------------------------------------------------
+                        searchBar.getViewTreeObserver().addOnGlobalLayoutListener(
+                                new ViewTreeObserver.OnGlobalLayoutListener() {
+                                    @Override
+                                    public void onGlobalLayout() {
+                                        searchBar.getViewTreeObserver()
+                                                .removeOnGlobalLayoutListener(this);
+                                        int barH = searchBar.getHeight();
+                                        if (barH > 0) {
+                                            scrollView.setPadding(
+                                                    scrollView.getPaddingLeft(),
+                                                    barH,
+                                                    scrollView.getPaddingRight(),
+                                                    scrollView.getPaddingBottom());
+                                        }
+                                    }
+                                });
+
+                        Log.d(TAG, "SignalingSearchHook: search bar added to popup");
+                    } catch (Exception e) {
+                        Log.w(TAG, "SignalingSearchHook post-processing failed: " + e);
+                    }
+
+                    return result;
+                }
+            });
+            Log.i(TAG, "SignalingSearchHook: hookOnItemClick installed");
+        } catch (Exception e) {
+            Log.e(TAG, "SignalingSearchHook: hookOnItemClick failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    private static ScrollView findScrollView(View root) {
+        if (root instanceof ScrollView) {
+            return (ScrollView) root;
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) root;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                View child = group.getChildAt(i);
+                if (child instanceof ScrollView) {
+                    return (ScrollView) child;
+                }
+            }
+        }
+        return null;
+    }
+}

@@ -26,6 +26,7 @@ public class MainHook extends XposedModule {
     new BandColumnHook(this, param.getClassLoader()).install();
     new SignalingShareHook(this, param.getClassLoader()).install();
         new ScrollBarHook(this, param.getClassLoader()).install();
+        new SignalingSearchHook(this, param.getClassLoader()).install();
         new LteBandwidthColumnHook(this, param.getClassLoader()).install();
         new NrSaRsrpRowHook(this, param.getClassLoader(),
                 NrSaCsiSnrRowHook.carrierCountInO0).install();
