@@ -231,24 +231,37 @@ public class ScrollBarHook {
                                         int parentW = frame.getWidth();
                                         if (parentW == 0) return;
 
-                                        // Use the ScrollView's own position and height so the
-                                        // SeekBar spans exactly the scrollable content area.
-                                        int svTop = scrollView.getTop();
-                                        int svH   = scrollView.getHeight();
-                                        if (svH <= 0) return; // not laid out yet
+                                        // The SeekBar should span only the area below the
+                                        // Share/Copy container (stored as a keyed tag on the
+                                        // FrameLayout by SignalingShareHook). Its bottom edge
+                                        // gives the true top offset for the SeekBar.
+                                        int topOffset = 0;
+                                        Object shareCopyTag = frame.getTag(
+                                                "nsg_share_copy_container".hashCode());
+                                        if (shareCopyTag instanceof View) {
+                                            int bottom = ((View) shareCopyTag).getBottom();
+                                            if (bottom > 0) topOffset = bottom;
+                                        }
+
+                                        int frameH = frame.getHeight();
+                                        if (frameH <= 0) return; // not laid out yet
+
+                                        int trackH = frameH - topOffset;
+                                        if (trackH <= 0) return;
 
                                         // Once we have stable dimensions, remove ourselves.
                                         frame.getViewTreeObserver().removeOnGlobalLayoutListener(this);
 
-                                        // Width = svH so after -90° rotation the track spans the ScrollView height
+                                        // Width = trackH so after -90° rotation the track spans
+                                        // exactly the area below the Share/Copy container.
                                         ViewGroup.LayoutParams slp = seekBar.getLayoutParams();
-                                        slp.width  = svH;
+                                        slp.width  = trackH;
                                         slp.height = barWidthPx;
                                         seekBar.setLayoutParams(slp);
 
-                                        // Rotation center at (parentW - barWidthPx/2, svTop + svH/2)
-                                        seekBar.setX((parentW - barWidthPx / 2f) - svH / 2f);
-                                        seekBar.setY(svTop + svH / 2f - barWidthPx / 2f);
+                                        // Rotation center at (parentW - barWidthPx/2, topOffset + trackH/2)
+                                        seekBar.setX((parentW - barWidthPx / 2f) - trackH / 2f);
+                                        seekBar.setY(topOffset + trackH / 2f - barWidthPx / 2f);
                                     }
                                 });
 

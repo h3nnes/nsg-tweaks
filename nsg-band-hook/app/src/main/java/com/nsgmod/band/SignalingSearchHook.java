@@ -258,7 +258,7 @@ public class SignalingSearchHook {
                         aaBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
                         aaBtn.setBackgroundColor(0x44FFFFFF);
                         int aaBtnSize = Math.round(36 * density);
-                        LinearLayout.LayoutParams aaLp = new LinearLayout.LayoutParams(aaBtnSize, aaBtnSize);
+                        LinearLayout.LayoutParams aaLp = new LinearLayout.LayoutParams(aaBtnSize, LinearLayout.LayoutParams.MATCH_PARENT);
                         int aaMargin = Math.round(2 * density);
                         aaLp.setMargins(aaMargin, 0, aaMargin, 0);
                         aaBtn.setLayoutParams(aaLp);
@@ -271,19 +271,19 @@ public class SignalingSearchHook {
                         prevBtn.setTextColor(Color.WHITE);
                         prevBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
                         prevBtn.setBackgroundColor(0x44FFFFFF);
-                        LinearLayout.LayoutParams prevLp = new LinearLayout.LayoutParams(aaBtnSize, aaBtnSize);
+                        LinearLayout.LayoutParams prevLp = new LinearLayout.LayoutParams(aaBtnSize, LinearLayout.LayoutParams.MATCH_PARENT);
                         prevLp.setMargins(aaMargin, 0, aaMargin, 0);
                         prevBtn.setLayoutParams(prevLp);
                         prevBtn.setPadding(0, 0, 0, 0);
 
                         // 5. Next/Search button — starts as "Search", becomes "▶" after search
                         final Button nextBtn = new Button(ctx);
-                        nextBtn.setText("Search");
+                        nextBtn.setText("S");
                         nextBtn.setTransformationMethod(null);
                         nextBtn.setTextColor(Color.WHITE);
                         nextBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
                         nextBtn.setBackgroundColor(0x44FFFFFF);
-                        LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(aaBtnSize, aaBtnSize);
+                        LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(aaBtnSize, LinearLayout.LayoutParams.MATCH_PARENT);
                         nextLp.setMargins(aaMargin, 0, aaMargin, 0);
                         nextBtn.setLayoutParams(nextLp);
                         nextBtn.setPadding(0, 0, 0, 0);
@@ -363,7 +363,7 @@ public class SignalingSearchHook {
                                 state.currentIndex = 0;
                                 state.capped = false;
                                 countTv.setText("");
-                                nextBtn.setText("Search");
+                                nextBtn.setText("S");
                             }
                         });
 
@@ -381,7 +381,7 @@ public class SignalingSearchHook {
                                     state.currentIndex = 0;
                                     state.capped = false;
                                     countTv.setText("");
-                                    nextBtn.setText("Search");
+                                    nextBtn.setText("S");
                                 }
                             }
                         });
@@ -454,8 +454,8 @@ public class SignalingSearchHook {
 
                                                     if (finalResults.isEmpty()) {
                                                         countTv.setText("0 / 0");
-                                                        nextBtn.setText("Search");
-                                                        state.matches.clear();
+                                                         nextBtn.setText("S");
+                                                         state.matches.clear();
                                                         state.currentIndex = 0;
                                                         return;
                                                     }
