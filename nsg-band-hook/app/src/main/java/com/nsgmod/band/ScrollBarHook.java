@@ -215,32 +215,40 @@ public class ScrollBarHook {
                         final FrameLayout frame = (FrameLayout) contentView;
                         frame.addView(seekBar);
 
-                        // One-shot layout listener: position SeekBar flush to right edge
+                        // Layout listener: position SeekBar flush to right edge, spanning
+                        // only the ScrollView area (i.e. below the search bar injected by
+                        // SignalingSearchHook). We use scrollView.getTop()/getHeight() so
+                        // that the SeekBar automatically starts where the ScrollView starts,
+                        // regardless of what other hooks have placed above it.
+                        // The listener is kept alive (not one-shot) until scrollView has a
+                        // non-zero top — which happens after SignalingSearchHook's own layout
+                        // listener fires and updates the ScrollView padding, triggering a
+                        // second layout pass. At that point we position and remove ourselves.
                         frame.getViewTreeObserver().addOnGlobalLayoutListener(
                                 new ViewTreeObserver.OnGlobalLayoutListener() {
                                     @Override
                                     public void onGlobalLayout() {
-                                        frame.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                                         int parentW = frame.getWidth();
-                                        int parentH = frame.getHeight();
-                                        if (parentW == 0 || parentH == 0) return;
+                                        if (parentW == 0) return;
 
-                                        // Content area excludes the FrameLayout's own padding
-                                        int padTop    = frame.getPaddingTop();
-                                        int padBottom = frame.getPaddingBottom();
-                                        int contentH  = parentH - padTop - padBottom;
-                                        if (contentH <= 0) contentH = parentH;
+                                        // Use the ScrollView's own position and height so the
+                                        // SeekBar spans exactly the scrollable content area.
+                                        int svTop = scrollView.getTop();
+                                        int svH   = scrollView.getHeight();
+                                        if (svH <= 0) return; // not laid out yet
 
-                                        // Width = contentH so after -90° rotation the track spans content height
+                                        // Once we have stable dimensions, remove ourselves.
+                                        frame.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+
+                                        // Width = svH so after -90° rotation the track spans the ScrollView height
                                         ViewGroup.LayoutParams slp = seekBar.getLayoutParams();
-                                        slp.width  = contentH;
+                                        slp.width  = svH;
                                         slp.height = barWidthPx;
                                         seekBar.setLayoutParams(slp);
 
-                                        // Center of content area is at y = padTop + contentH/2
-                                        // Position so rotation center is at (parentW - barWidthPx/2, padTop + contentH/2)
-                                        seekBar.setX((parentW - barWidthPx / 2f) - contentH / 2f);
-                                        seekBar.setY(padTop + contentH / 2f - barWidthPx / 2f);
+                                        // Rotation center at (parentW - barWidthPx/2, svTop + svH/2)
+                                        seekBar.setX((parentW - barWidthPx / 2f) - svH / 2f);
+                                        seekBar.setY(svTop + svH / 2f - barWidthPx / 2f);
                                     }
                                 });
 

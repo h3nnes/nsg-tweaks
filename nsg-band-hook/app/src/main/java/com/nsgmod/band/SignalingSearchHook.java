@@ -1,6 +1,8 @@
 package com.nsgmod.band;
 
 import android.graphics.Color;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.text.Editable;
 import android.text.Layout;
 import android.text.SpannableStringBuilder;
@@ -38,7 +40,8 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * Hook: u7.a.onItemClick (after-hook)
  *   - Finds the FrameLayout content view of the popup.
  *   - Adds a semi-transparent search bar LinearLayout pinned to the top.
- *   - Supports live search with yellow/orange highlights and prev/next navigation.
+ *   - Supports async search (to avoid freezing on long messages) with yellow/orange highlights
+ *     and prev/next navigation.
  *   - Aa button toggles case sensitivity.
  *   - Increases ScrollView top padding to avoid the message being hidden under the bar.
  *   - Guarded by a String tag on the ScrollView so the bar is only added once per popup instance.
@@ -134,6 +137,8 @@ public class SignalingSearchHook {
         List<int[]> matches = new ArrayList<>(); // each entry: {start, end}
         int currentIndex = 0;
         boolean caseSensitive = false;
+        /** Plain text captured at search time, used for span re-application during navigation. */
+        String lastFullText = "";
     }
 
     // -----------------------------------------------------------------------
@@ -192,6 +197,11 @@ public class SignalingSearchHook {
 
                         // --- Per-popup search state ---
                         final SearchState state = new SearchState();
+
+                        // --- Background worker for async search ---
+                        HandlerThread workerThread = new HandlerThread("nsg-search-worker");
+                        workerThread.start();
+                        final Handler worker = new Handler(workerThread.getLooper());
 
                         // ---------------------------------------------------------------
                         // Build the search bar
@@ -264,9 +274,9 @@ public class SignalingSearchHook {
                         prevBtn.setLayoutParams(prevLp);
                         prevBtn.setPadding(0, 0, 0, 0);
 
-                        // 5. Next button ▶
+                        // 5. Next/Search button — starts as "Search", becomes "▶" after search
                         final Button nextBtn = new Button(ctx);
-                        nextBtn.setText("\u25BA");
+                        nextBtn.setText("Search");
                         nextBtn.setTransformationMethod(null);
                         nextBtn.setTextColor(Color.WHITE);
                         nextBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
@@ -288,11 +298,6 @@ public class SignalingSearchHook {
                         // Search logic helpers
                         // ---------------------------------------------------------------
 
-                        // Find all match positions for query in text
-                        // Returns list of {start, end} pairs
-                        // (declared as an array-of-one to allow use in inner classes)
-                        final Runnable[] applyHighlights = {null};
-
                         final Runnable scrollToCurrent = new Runnable() {
                             @Override
                             public void run() {
@@ -312,49 +317,13 @@ public class SignalingSearchHook {
                             }
                         };
 
-                        applyHighlights[0] = new Runnable() {
+                        // Re-apply spans from already-found matches (no indexOf — O(N_matches) only)
+                        // Must be called on main thread.
+                        final Runnable reapplySpans = new Runnable() {
                             @Override
                             public void run() {
-                                CharSequence rawText = msgTextView.getText();
-                                String fullText = rawText != null ? rawText.toString() : "";
-                                String query = searchEdit.getText() != null
-                                        ? searchEdit.getText().toString()
-                                        : "";
-
-                                if (query.isEmpty()) {
-                                    // Clear spans — restore plain text
-                                    msgTextView.setText(fullText);
-                                    countTv.setText("");
-                                    state.matches.clear();
-                                    state.currentIndex = 0;
-                                    return;
-                                }
-
-                                // Find all occurrences
-                                state.matches.clear();
-                                String searchIn = state.caseSensitive ? fullText : fullText.toLowerCase();
-                                String searchFor = state.caseSensitive ? query : query.toLowerCase();
-                                int idx = 0;
-                                while (true) {
-                                    int pos = searchIn.indexOf(searchFor, idx);
-                                    if (pos < 0) break;
-                                    state.matches.add(new int[]{pos, pos + searchFor.length()});
-                                    idx = pos + 1;
-                                }
-
-                                if (state.matches.isEmpty()) {
-                                    msgTextView.setText(fullText);
-                                    countTv.setText("0 / 0");
-                                    state.currentIndex = 0;
-                                    return;
-                                }
-
-                                // Clamp current index
-                                if (state.currentIndex >= state.matches.size()) {
-                                    state.currentIndex = 0;
-                                }
-
-                                // Build spannable
+                                if (state.matches.isEmpty()) return;
+                                String fullText = state.lastFullText;
                                 SpannableStringBuilder ssb = new SpannableStringBuilder(fullText);
                                 for (int i = 0; i < state.matches.size(); i++) {
                                     int[] m = state.matches.get(i);
@@ -367,7 +336,6 @@ public class SignalingSearchHook {
                                             android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                                 }
                                 msgTextView.setText(ssb);
-
                                 countTv.setText((state.currentIndex + 1) + " / " + state.matches.size());
                                 scrollToCurrent.run();
                             }
@@ -377,13 +345,20 @@ public class SignalingSearchHook {
                         // Wire up controls
                         // ---------------------------------------------------------------
 
+                        // Lightweight TextWatcher: only clears results and resets button — no search
                         searchEdit.addTextChangedListener(new TextWatcher() {
                             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
                             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
                             @Override
                             public void afterTextChanged(Editable s) {
+                                // Clear all spans — restore plain text
+                                if (!state.lastFullText.isEmpty()) {
+                                    msgTextView.setText(state.lastFullText);
+                                }
+                                state.matches.clear();
                                 state.currentIndex = 0;
-                                applyHighlights[0].run();
+                                countTv.setText("");
+                                nextBtn.setText("Search");
                             }
                         });
 
@@ -392,8 +367,16 @@ public class SignalingSearchHook {
                             public void onClick(View v) {
                                 state.caseSensitive = !state.caseSensitive;
                                 aaBtn.setTextColor(state.caseSensitive ? Color.YELLOW : Color.WHITE);
-                                state.currentIndex = 0;
-                                applyHighlights[0].run();
+                                // Clear stale results — user must re-search with new sensitivity
+                                if (!state.matches.isEmpty()) {
+                                    if (!state.lastFullText.isEmpty()) {
+                                        msgTextView.setText(state.lastFullText);
+                                    }
+                                    state.matches.clear();
+                                    state.currentIndex = 0;
+                                    countTv.setText("");
+                                    nextBtn.setText("Search");
+                                }
                             }
                         });
 
@@ -403,16 +386,101 @@ public class SignalingSearchHook {
                                 if (state.matches.isEmpty()) return;
                                 state.currentIndex = (state.currentIndex - 1 + state.matches.size())
                                         % state.matches.size();
-                                applyHighlights[0].run();
+                                reapplySpans.run();
                             }
                         });
 
                         nextBtn.setOnClickListener(new View.OnClickListener() {
                             @Override
                             public void onClick(View v) {
-                                if (state.matches.isEmpty()) return;
-                                state.currentIndex = (state.currentIndex + 1) % state.matches.size();
-                                applyHighlights[0].run();
+                                if (!state.matches.isEmpty()) {
+                                    // Navigate to next match
+                                    state.currentIndex = (state.currentIndex + 1) % state.matches.size();
+                                    reapplySpans.run();
+                                    return;
+                                }
+
+                                // --- Act as "Search" button ---
+                                final String query = searchEdit.getText() != null
+                                        ? searchEdit.getText().toString() : "";
+                                if (query.isEmpty()) return;
+
+                                final boolean caseSensitive = state.caseSensitive;
+                                // Get plain text (toString() strips any existing spans)
+                                final String fullText = msgTextView.getText() != null
+                                        ? msgTextView.getText().toString() : "";
+
+                                // Disable buttons during search
+                                nextBtn.setEnabled(false);
+                                prevBtn.setEnabled(false);
+                                aaBtn.setEnabled(false);
+                                countTv.setText("Searching\u2026");
+
+                                worker.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        List<int[]> results = new ArrayList<>();
+                                        try {
+                                            String searchIn = caseSensitive ? fullText : fullText.toLowerCase();
+                                            String searchFor = caseSensitive ? query : query.toLowerCase();
+                                            int idx = 0;
+                                            while (true) {
+                                                int pos = searchIn.indexOf(searchFor, idx);
+                                                if (pos < 0) break;
+                                                results.add(new int[]{pos, pos + searchFor.length()});
+                                                idx = pos + 1;
+                                            }
+                                        } catch (Exception ex) {
+                                            Log.w(TAG, "SignalingSearchHook: search error: " + ex);
+                                        }
+
+                                        final List<int[]> finalResults = results;
+                                        msgTextView.post(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                try {
+                                                    nextBtn.setEnabled(true);
+                                                    prevBtn.setEnabled(true);
+                                                    aaBtn.setEnabled(true);
+
+                                                    if (finalResults.isEmpty()) {
+                                                        countTv.setText("0 / 0");
+                                                        nextBtn.setText("Search");
+                                                        state.matches.clear();
+                                                        state.currentIndex = 0;
+                                                        return;
+                                                    }
+
+                                                    state.lastFullText = fullText;
+                                                    state.matches = finalResults;
+                                                    state.currentIndex = 0;
+
+                                                    // Build spannable
+                                                    SpannableStringBuilder ssb = new SpannableStringBuilder(fullText);
+                                                    for (int i = 0; i < state.matches.size(); i++) {
+                                                        int[] m = state.matches.get(i);
+                                                        int bgColor = (i == state.currentIndex) ? 0xFFFF8C00 : 0xFFFFFF00;
+                                                        ssb.setSpan(new BackgroundColorSpan(bgColor),
+                                                                m[0], m[1],
+                                                                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                                                        ssb.setSpan(new ForegroundColorSpan(Color.BLACK),
+                                                                m[0], m[1],
+                                                                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                                                    }
+                                                    msgTextView.setText(ssb);
+                                                    countTv.setText("1 / " + state.matches.size());
+                                                    nextBtn.setText("\u25BA");
+                                                    scrollToCurrent.run();
+                                                } catch (Exception ex) {
+                                                    Log.w(TAG, "SignalingSearchHook: post-search UI error: " + ex);
+                                                    nextBtn.setEnabled(true);
+                                                    prevBtn.setEnabled(true);
+                                                    aaBtn.setEnabled(true);
+                                                }
+                                            }
+                                        });
+                                    }
+                                });
                             }
                         });
 
