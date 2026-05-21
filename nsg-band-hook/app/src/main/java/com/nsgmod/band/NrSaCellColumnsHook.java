@@ -37,7 +37,8 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   pair.second               → intraRow: 0=PCell, 1=SCell1, 2=SCell2 …
  *
  * Keys:
- *   ARFCN (all rows) : NR5G::Cell_Measurements::NR_Cells_ARFCN
+ *   ARFCN serving    : NR5G::Cell_Measurements::NR_Cells_ARFCN       (Integer[], index=intraRow)
+ *   ARFCN detected   : NR5G::Detected_Cells::NR_DetectedCells_ARFCN  (Integer[], index=intraRow)
  *   BW PCell         : NR5G::Serving_Cell::NR_Bandwidth_DL           (direct MHz int)
  *   BW SCell N       : NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL  (index N-1)
  */
@@ -120,9 +121,15 @@ public class NrSaCellColumnsHook {
     // Data reading
     // -----------------------------------------------------------------------
 
-    /** Read ARFCN for a row. scellIndex is the position within the cell array. */
-    private String readArfcn(int scellIndex) {
-        return readPropertyWithIndex("NR5G::Cell_Measurements::NR_Cells_ARFCN", scellIndex);
+    /** Read ARFCN for a row.
+     * @param isServing true = serving bucket (PCell/SCells); false = detected/neighbour bucket
+     * @param intraRow  bucket-relative row index (0-based)
+     */
+    private String readArfcn(boolean isServing, int intraRow) {
+        String key = isServing
+                ? "NR5G::Cell_Measurements::NR_Cells_ARFCN"
+                : "NR5G::Detected_Cells::NR_DetectedCells_ARFCN";
+        return readPropertyWithIndex(key, intraRow);
     }
 
     /**
@@ -241,7 +248,7 @@ public class NrSaCellColumnsHook {
 
                     // Read values
                     String arfcnText = "-";
-                    String arfcn = readArfcn(intraRow);
+                    String arfcn = readArfcn(isServing, intraRow);
                     if (arfcn != null) arfcnText = arfcn;
 
                     String bwText = "-";
