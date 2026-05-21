@@ -256,9 +256,11 @@ public class SignalingSearchHook {
                         searchEdit.setPadding(editPad, editPad, editPad, editPad);
                         LinearLayout.LayoutParams editLp = new LinearLayout.LayoutParams(
                                 0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-                        searchEdit.setLayoutParams(editLp);
+                         searchEdit.setLayoutParams(editLp);
+                         // Show a search/go action key on the soft keyboard instead of newline
+                         searchEdit.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);
 
-                        // 2. Count TextView (e.g. "3 / 12")
+                         // 2. Count TextView (e.g. "3 / 12")
                         final TextView countTv = new TextView(ctx);
                         countTv.setText("");
                         countTv.setTextColor(Color.WHITE);
@@ -307,9 +309,23 @@ public class SignalingSearchHook {
                         LinearLayout.LayoutParams nextLp = new LinearLayout.LayoutParams(aaBtnSize, LinearLayout.LayoutParams.MATCH_PARENT);
                         nextLp.setMargins(aaMargin, 0, aaMargin, 0);
                         nextBtn.setLayoutParams(nextLp);
-                        nextBtn.setPadding(0, 0, 0, 0);
+                         nextBtn.setPadding(0, 0, 0, 0);
 
-                        searchBar.addView(searchEdit);
+                         // Keyboard Enter / Search action key triggers the same as tapping "S"
+                         searchEdit.setOnEditorActionListener((v, actionId, event) -> {
+                             boolean isSearch = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH;
+                             boolean isEnter  = actionId == android.view.inputmethod.EditorInfo.IME_ACTION_UNSPECIFIED
+                                     && event != null
+                                     && event.getKeyCode() == android.view.KeyEvent.KEYCODE_ENTER
+                                     && event.getAction() == android.view.KeyEvent.ACTION_DOWN;
+                             if (isSearch || isEnter) {
+                                 nextBtn.performClick();
+                                 return true;
+                             }
+                             return false;
+                         });
+
+                         searchBar.addView(searchEdit);
                         searchBar.addView(countTv);
                         searchBar.addView(aaBtn);
                         searchBar.addView(prevBtn);
