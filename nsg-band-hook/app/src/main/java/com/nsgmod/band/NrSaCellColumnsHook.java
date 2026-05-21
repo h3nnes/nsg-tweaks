@@ -257,13 +257,19 @@ public class NrSaCellColumnsHook {
                         if (bw != null) bwText = bw;
                     }
 
-                    // Already injected — refresh text only
+                    // Already injected — refresh text and color
+                    // (NSG's k0() has already set pciView's color correctly for this row)
                     if (TAG_COLS_INJECTED.equals(topRow.getTag())) {
                         if (topRow.getChildCount() >= 8) {
-                            TextView tvArfcn = (TextView) topRow.getChildAt(1);
-                            TextView tvBw    = (TextView) topRow.getChildAt(3);
+                            // After injection layout is: [0]Serving [1]ARFCN [2]PCI [3]BW ...
+                            TextView pciViewR  = (TextView) topRow.getChildAt(2);
+                            TextView tvArfcn   = (TextView) topRow.getChildAt(1);
+                            TextView tvBw      = (TextView) topRow.getChildAt(3);
+                            android.content.res.ColorStateList colors = pciViewR.getTextColors();
                             tvArfcn.setText(arfcnText);
+                            tvArfcn.setTextColor(colors);
                             tvBw.setText(bwText);
+                            tvBw.setTextColor(colors);
                         }
                         return result;
                     }
