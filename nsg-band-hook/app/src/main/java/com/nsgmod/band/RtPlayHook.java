@@ -1,18 +1,19 @@
 package com.nsgmod.band;
 
-import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-
-import com.google.android.material.button.MaterialButton;
+import androidx.appcompat.widget.AppCompatButton;
+import androidx.core.graphics.drawable.DrawableCompat;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -197,17 +198,36 @@ public class RtPlayHook {
         if (fwdIndex < 0) { Log.w(TAG, "forward btn not found in parent children"); return; }
 
         // Create the RT-Play button.
-        // Must be MaterialButton (not plain Button) — the app theme uses
-        // MaterialComponentsViewInflater which inflates <Button> tags as MaterialButton,
-        // giving them the MaterialShapeDrawable background with rounded corners,
-        // elevation, and ripple.  A plain Button() ctor skips all of that.
-        MaterialButton btn = new MaterialButton(forwardBtn.getContext());
+        //
+        // IMPORTANT: new MaterialButton(context) calls ThemeEnforcement.checkMaterialTheme()
+        // which throws IllegalArgumentException for contexts that don't carry the
+        // isMaterialTheme attribute — even if the Activity visually uses Material styling.
+        // The XML inflation path used for forwardBtn bypasses this check; the programmatic
+        // constructor path does not.  The exception would be swallowed by the outer
+        // catch(Throwable) and the button would silently never appear.
+        //
+        // Safe fix: AppCompatButton (no theme-enforcement guard) + clone forwardBtn's
+        // already-validated background drawable, mutate it, and tint it turquoise.
+        Drawable clonedBg = null;
+        Drawable fwdBg = forwardBtn.getBackground();
+        if (fwdBg != null && fwdBg.getConstantState() != null) {
+            clonedBg = fwdBg.getConstantState()
+                            .newDrawable(forwardBtn.getContext().getResources())
+                            .mutate();
+            DrawableCompat.setTint(clonedBg, 0xFF00BCD4); // turquoise
+        }
+
+        AppCompatButton btn = new AppCompatButton(forwardBtn.getContext());
         btn.setText("RT-Play");
         btn.setTextColor(Color.WHITE);
         btn.setTextAppearance(android.R.style.TextAppearance_Small);
         btn.setAllCaps(false);
-        // Turquoise tint to visually distinguish from the purple (#BA86FC) step buttons
-        btn.setBackgroundTintList(ColorStateList.valueOf(0xFF00BCD4));
+        if (clonedBg != null) {
+            btn.setBackground(clonedBg);
+        } else {
+            // Fallback: solid turquoise — always visible
+            btn.setBackgroundColor(0xFF00BCD4);
+        }
 
         float dp = forwardBtn.getContext().getResources().getDisplayMetrics().density;
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -219,7 +239,7 @@ public class RtPlayHook {
         // Build the controller and wire the toggle
         RtPlayController controller = new RtPlayController(
                 fragment, btn,
-                wsJ, wsG, wsH, wsI, wsC, wsF,
+                wsJ, wsG, wsI, wsC, wsF,
                 wsGMethod, wsIMethod,
                 attrD, propB,
                 iterEnd, iterKey, iterValue, iterNext,
@@ -242,12 +262,12 @@ public class RtPlayHook {
         private static final String LABEL_OFF = "RT-Play";
         private static final String LABEL_ON  = "■ Stop";
 
-        private final Object         fragment;
-        private final MaterialButton button;
+        private final Object  fragment;
+        private final Button  button;
         private final Handler handler = new Handler(Looper.getMainLooper());
 
         // Workspace reflection
-        private final Field  wsJ, wsG, wsH, wsI, wsC, wsF;
+        private final Field  wsJ, wsG, wsI, wsC, wsF;
         private final Method wsGMethod, wsIMethod;
 
         // Attribute / Property / Iterator reflection
@@ -333,8 +353,8 @@ public class RtPlayHook {
         };
 
         RtPlayController(
-                Object fragment, MaterialButton button,
-                Field wsJ, Field wsG, Field wsH, Field wsI, Field wsC, Field wsF,
+                Object fragment, Button button,
+                Field wsJ, Field wsG, Field wsI, Field wsC, Field wsF,
                 Method wsGMethod, Method wsIMethod,
                 Field attrD, Method propB,
                 Method iterEnd, Method iterKey, Method iterValue, Method iterNext,
@@ -344,7 +364,6 @@ public class RtPlayHook {
             this.button           = button;
             this.wsJ              = wsJ;
             this.wsG              = wsG;
-            this.wsH              = wsH;
             this.wsI              = wsI;
             this.wsC              = wsC;
             this.wsF              = wsF;
