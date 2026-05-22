@@ -56,10 +56,10 @@ public class ReplayStatusBarHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // a4.h fields
-    private Field f76a;  // int   — switch case
-    private Field f77b;  // Object — AdvancedActivity
-    private Field f78c;  // Object — filename String
+    // a4.h fields — runtime names are a/b/c (JADX renames them to f76a/f77b/f78c)
+    private Field f76a;  // int   — switch case       (runtime: "a")
+    private Field f77b;  // Object — AdvancedActivity (runtime: "b")
+    private Field f78c;  // Object — filename String  (runtime: "c")
 
     // Workspace fields (used to detect live→replay transition)
     private Field wsSingleton;
@@ -78,9 +78,9 @@ public class ReplayStatusBarHook {
             Class<?> hClass  = loader.loadClass("a4.h");
             Class<?> wsClass = loader.loadClass("com.qtrun.sys.Workspace");
 
-            f76a = hClass.getDeclaredField("f76a"); f76a.setAccessible(true);
-            f77b = hClass.getDeclaredField("f77b"); f77b.setAccessible(true);
-            f78c = hClass.getDeclaredField("f78c"); f78c.setAccessible(true);
+            f76a = hClass.getDeclaredField("a"); f76a.setAccessible(true);  // int discriminator
+            f77b = hClass.getDeclaredField("b"); f77b.setAccessible(true);  // AdvancedActivity
+            f78c = hClass.getDeclaredField("c"); f78c.setAccessible(true);  // filename String
 
             wsSingleton  = wsClass.getField("j");
             wsDataSource = wsClass.getField("c");
