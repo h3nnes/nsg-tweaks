@@ -141,10 +141,19 @@ public class GranularSeekBarHook {
 
         /** Raw Y of finger at touch-down, in SeekBar local coordinates. */
         private float touchDownY        = 0f;
-        /** Raw X of finger at touch-down. */
-        private float touchDownX        = 0f;
-        /** SeekBar progress at touch-down. */
-        private int   touchDownProgress = 0;
+        /**
+         * Anchor X — reset to current finger X whenever the zone changes so that
+         * switching granularity mid-drag does not jump the thumb back to the original
+         * touch-down position.
+         */
+        private float anchorX           = 0f;
+        /**
+         * Anchor progress — the seekbar progress at the moment the current zone began.
+         * Progress is computed as anchorProgress + scaledDelta-from-anchorX.
+         */
+        private int   anchorProgress    = 0;
+        /** The divisor active in the previous MOVE event (detect zone transitions). */
+        private float lastDivisor       = 1f;
         /** Last scaled progress we sent — used for UP event. */
         private int   lastScaledProgress = 0;
 
@@ -160,10 +169,11 @@ public class GranularSeekBarHook {
 
             switch (action) {
                 case MotionEvent.ACTION_DOWN: {
-                    touchDownY        = event.getY();
-                    touchDownX        = event.getX();
-                    touchDownProgress = seekBar.getProgress();
-                    lastScaledProgress = touchDownProgress;
+                    touchDownY         = event.getY();
+                    anchorX            = event.getX();
+                    anchorProgress     = seekBar.getProgress();
+                    lastDivisor        = 1f;
+                    lastScaledProgress = anchorProgress;
                     // Forward DOWN as-is so SeekBar enters tracking mode
                     // (sets mIsDragging=true, setPressed(true), thumb animates).
                     seekBar.onTouchEvent(event);
@@ -178,18 +188,26 @@ public class GranularSeekBarHook {
                     if      (dy < -thresh2) divisor = 10f;
                     else if (dy < -thresh1) divisor =  5f;
 
-                    int   max         = seekBar.getMax();
-                    float barUsable   = seekBar.getWidth()
-                                        - seekBar.getPaddingLeft()
-                                        - seekBar.getPaddingRight();
+                    // Zone changed — re-anchor so the thumb stays where it is now
+                    // and future movement is measured from this new anchor point.
+                    if (divisor != lastDivisor) {
+                        anchorX        = event.getX();
+                        anchorProgress = lastScaledProgress;
+                        lastDivisor    = divisor;
+                    }
+
+                    int   max       = seekBar.getMax();
+                    float barUsable = seekBar.getWidth()
+                                      - seekBar.getPaddingLeft()
+                                      - seekBar.getPaddingRight();
                     if (barUsable <= 0f) return true;
 
-                    // Horizontal delta in progress units, then scale.
-                    float dxPx        = event.getX() - touchDownX;
+                    // Horizontal delta from the current zone's anchor, then scale.
+                    float dxPx        = event.getX() - anchorX;
                     float dxProgress  = (dxPx / barUsable) * max;
                     float scaledDelta = dxProgress / divisor;
 
-                    int newProgress = Math.round(touchDownProgress + scaledDelta);
+                    int newProgress = Math.round(anchorProgress + scaledDelta);
                     newProgress = Math.max(0, Math.min(max, newProgress));
                     lastScaledProgress = newProgress;
 
