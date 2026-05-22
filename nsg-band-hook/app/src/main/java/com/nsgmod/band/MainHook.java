@@ -28,6 +28,8 @@ public class MainHook extends XposedModule {
         new ScrollBarHook(this, param.getClassLoader()).install();
         new SignalingSearchHook(this, param.getClassLoader()).install();
         new LteBandwidthColumnHook(this, param.getClassLoader()).install();
+        new LteRsrpRowHook(this, param.getClassLoader()).install();
+        new EutraRsrpRowHook(this, param.getClassLoader()).install();
         new NrSaRsrpRowHook(this, param.getClassLoader(),
                 NrSaCsiSnrRowHook.carrierCountInO0).install();
         new NrSaCsiSnrRowHook(this, param.getClassLoader()).install();
