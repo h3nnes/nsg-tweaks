@@ -1,10 +1,15 @@
 package com.nsgmod.band;
 
 import android.app.Activity;
+import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
@@ -69,6 +74,13 @@ public class ReplayStatusBarHook {
      * Also cleared by Prong B as a fallback if K() is called with DataSource set.
      */
     private static volatile boolean replayActive = false;
+
+    /**
+     * True when the user has dismissed the replay bar for the current session.
+     * Reset to false each time a new log file is loaded (Prong A), so the bar
+     * reappears for every new replay and can be dismissed again independently.
+     */
+    private static volatile boolean replayBarDismissed = false;
 
     /** Weak reference to the Activity currently showing the replay bar (set by Prong A). */
     private static volatile WeakReference<Activity> replayActivity = new WeakReference<>(null);
@@ -152,8 +164,10 @@ public class ReplayStatusBarHook {
                         if (activity == null || filename == null) return result;
 
                         // Mark replay active BEFORE showing bar so Prong B won't
-                        // suppress an immediate re-layout triggered by setVisibility
+                        // suppress an immediate re-layout triggered by setVisibility.
+                        // Also reset dismissed flag so the bar shows for each new load.
                         replayActive = true;
+                        replayBarDismissed = false;
                         replayActivity = new WeakReference<>(activity);
                         showReplayBar(activity, filename);
                         Log.i(TAG, "Prong A: replay bar shown, file=" + filename);
@@ -318,10 +332,18 @@ public class ReplayStatusBarHook {
             try {
                 String pkg     = "com.qtrun.QuickTest";
                 int layoutId   = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
+                int progressId = activity.getResources().getIdentifier("wait_progress_bar",    "id", pkg);
                 if (layoutId == 0) return;
                 View layout = activity.findViewById(layoutId);
-                if (layout != null) layout.setVisibility(View.GONE);
-                Log.d(TAG, "hideReplayBar: bar hidden");
+                if (layout != null) {
+                    layout.setVisibility(View.GONE);
+                    // Restore spinner to VISIBLE so NSG's next "Loading…" phase works normally.
+                    if (progressId != 0) {
+                        View pb = layout.findViewById(progressId);
+                        if (pb != null) pb.setVisibility(View.VISIBLE);
+                    }
+                }
+                Log.d(TAG, "hideReplayBar: bar hidden, spinner restored");
             } catch (Throwable t) {
                 Log.w(TAG, "hideReplayBar failed: " + t);
             }
@@ -355,9 +377,67 @@ public class ReplayStatusBarHook {
                 return;
             }
 
-            // Hide spinner, update label, show container
+            // Hide spinner, update label
             progressBar.setVisibility(View.GONE);
             tipsView.setText(filename + " \u2014 Replaying");
+
+            // Add dismiss X button if not already present (tag used as guard)
+            if (layout.getTag() == null) {
+                try {
+                    LinearLayout ll = (LinearLayout) layout;
+
+                    // Strategy: keep the outer layout VERTICAL so the ProgressBar
+                    // (layout_width="match_parent") is never disturbed — NSG's own
+                    // "Loading…" phase relies on it being a full-width horizontal bar.
+                    //
+                    // Instead, remove tipsView from the outer layout, wrap it together
+                    // with the X button in a new horizontal LinearLayout, and add that
+                    // wrapper back as the second child of the outer layout.
+                    ll.removeView(tipsView);
+
+                    LinearLayout row = new LinearLayout(activity);
+                    row.setOrientation(LinearLayout.HORIZONTAL);
+                    row.setGravity(Gravity.CENTER_VERTICAL);
+                    LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT);
+                    row.setLayoutParams(rowLp);
+
+                    // tipsView fills remaining width inside the row
+                    LinearLayout.LayoutParams tipsLp = new LinearLayout.LayoutParams(
+                            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                    tipsLp.gravity = Gravity.CENTER_VERTICAL;
+                    tipsView.setLayoutParams(tipsLp);
+                    row.addView(tipsView);
+
+                    // X dismiss control — TextView avoids Button's forced minHeight
+                    TextView xBtn = new TextView(activity);
+                    xBtn.setText("\u2715");  // ✕
+                    xBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
+                    xBtn.setTextColor(Color.WHITE);
+                    xBtn.setPadding(20, 0, 4, 0);
+                    xBtn.setGravity(Gravity.CENTER_VERTICAL);
+                    LinearLayout.LayoutParams xLp = new LinearLayout.LayoutParams(
+                            ViewGroup.LayoutParams.WRAP_CONTENT,
+                            ViewGroup.LayoutParams.WRAP_CONTENT);
+                    xBtn.setLayoutParams(xLp);
+                    xBtn.setOnClickListener(v -> {
+                        replayBarDismissed = true;
+                        layout.setVisibility(View.GONE);
+                        // Restore spinner visibility so NSG's next "Loading…" phase works.
+                        progressBar.setVisibility(View.VISIBLE);
+                        Log.i(TAG, "Replay bar dismissed by user");
+                    });
+                    row.addView(xBtn);
+
+                    ll.addView(row);
+                    layout.setTag("nsgmod_replay"); // mark as initialised
+                    Log.d(TAG, "showReplayBar: X button row added");
+                } catch (Throwable t) {
+                    Log.w(TAG, "showReplayBar: could not add X button: " + t);
+                }
+            }
+
             layout.setVisibility(View.VISIBLE);
 
         } catch (Throwable t) {
