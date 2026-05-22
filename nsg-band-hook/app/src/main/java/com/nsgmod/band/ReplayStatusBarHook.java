@@ -62,6 +62,26 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   Prong D intercepts x0.c() — when replayActive, shows wait_progress_bar
  *   (spinner + "Stopping…") before proceeding, matching the live-test exit UX.
  *   replayActive is cleared here so Prong B does not interfere with subsequent K().
+ *
+ * Prong E: t7.q.a(MenuItem) intercept — allow "load logfile" while replay bar is visible.
+ *   NSG's sidebar handler (t7.q.a) guards the file picker launch with:
+ *     if (advancedActivity.findViewById(R.id.wait_progress_layout).getVisibility() != 0)
+ *   Since the replay bar keeps wait_progress_layout VISIBLE, this guard silently
+ *   blocks the file picker while a replay is active and the bar is not dismissed.
+ *   Prong E intercepts t7.q.a() when replayActive == true and the selected item is
+ *   menu_load_logfile: it directly invokes advancedActivity.K.c() with MIME type "*&#47;*"
+ *   (respecting the Application.d() subscription guard) and closes the drawer,
+ *   bypassing the visibility guard entirely.
+ *
+ * Prong F: t7.e.b(Object) before-hook — restore spinner visibility before second load.
+ *   t7.e.b() case 4 is NSG's "Loading…" phase: it sets wait_progress_layout VISIBLE
+ *   and calls progressBar.setIndeterminate(true), but does NOT call
+ *   progressBar.setVisibility(VISIBLE). On first load progressBar starts VISIBLE
+ *   (NSG default), so the spinner shows. But showReplayBar() sets progressBar GONE
+ *   to hide it during replay. On a second load the layout is already VISIBLE and
+ *   progressBar is still GONE — so the spinner never appears during loading.
+ *   Prong F fires before case 4 executes: when replayActive==true it restores
+ *   progressBar to VISIBLE so the loading spinner shows normally.
  */
 public class ReplayStatusBarHook {
 
@@ -97,6 +117,16 @@ public class ReplayStatusBarHook {
     private Field wsSingleton;
     private Field wsDataSource;
 
+    // Prong E: t7.q menu handler bypass
+    private Field advActivityKField;    // AdvancedActivity.K — the logfile picker (d.d)
+    private Method pickerCMethod;       // d.d.c(Object) — launches file picker
+    private Method appDMethod;          // com.qtrun.sys.Application.d() — subscription check
+    private Method drawerDMethod;       // DrawerLayout.d(boolean) — closeDrawers()
+
+    // Prong F: t7.e.b(Object) — runtime field names for the discriminator and Activity
+    private Field teDiscriminator;      // t7.e.a (int, renamed f7749a by JADX)
+    private Field teActivity;           // t7.e.b (AdvancedActivity, renamed f7750b by JADX)
+
     private boolean reflectionReady = false;
 
     public ReplayStatusBarHook(XposedInterface xposed, ClassLoader loader) {
@@ -117,6 +147,27 @@ public class ReplayStatusBarHook {
             wsSingleton  = wsClass.getField("j");
             wsDataSource = wsClass.getField("c");
 
+            // Prong E reflection
+            Class<?> advActivityClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            advActivityKField = advActivityClass.getDeclaredField("K");
+            advActivityKField.setAccessible(true);
+
+            Class<?> ddClass = loader.loadClass("d.d");
+            pickerCMethod = ddClass.getDeclaredMethod("c", Object.class);
+            pickerCMethod.setAccessible(true);
+
+            Class<?> appClass = loader.loadClass("com.qtrun.sys.Application");
+            appDMethod = appClass.getDeclaredMethod("d");
+            // d() is public static synchronized — accessible without setAccessible
+
+            Class<?> drawerClass = loader.loadClass("androidx.drawerlayout.widget.DrawerLayout");
+            drawerDMethod = drawerClass.getMethod("d", boolean.class);
+
+            // Prong F reflection — t7.e fields (runtime names "a" and "b")
+            Class<?> teClass = loader.loadClass("t7.e");
+            teDiscriminator = teClass.getDeclaredField("a"); teDiscriminator.setAccessible(true);
+            teActivity      = teClass.getDeclaredField("b"); teActivity.setAccessible(true);
+
             reflectionReady = true;
             Log.i(TAG, "reflection ready");
         } catch (Exception e) {
@@ -133,6 +184,8 @@ public class ReplayStatusBarHook {
         installProngB();
         installProngC();
         installProngD();
+        installProngE();
+        installProngF();
     }
 
     // -----------------------------------------------------------------------
@@ -317,6 +370,167 @@ public class ReplayStatusBarHook {
             Log.i(TAG, "Prong D installed on t7.x0.c(Activity)");
         } catch (Exception e) {
             Log.e(TAG, "installProngD failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Prong E: t7.q.a(MenuItem) — bypass visibility guard for "load logfile"
+    //          while the replay bar is displayed.
+    //
+    // NSG's guard: if (wait_progress_layout.getVisibility() != 0) { open picker }
+    // The replay bar keeps that layout VISIBLE, so the picker is silently blocked.
+    // We intercept the menu handler and, when replayActive==true and the item is
+    // menu_load_logfile, directly call advancedActivity.K.c(new String[]{"*/*"})
+    // (mirroring what NSG would do) then close the drawer and return true.
+    // -----------------------------------------------------------------------
+    private void installProngE() {
+        try {
+            Class<?> tqClass      = loader.loadClass("t7.q");
+            Class<?> menuItemClass = loader.loadClass("android.view.MenuItem");
+            Method   aMethod       = tqClass.getDeclaredMethod("a", menuItemClass);
+            aMethod.setAccessible(true);
+
+            xposed.hook(aMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (!replayActive) {
+                        return chain.proceed();
+                    }
+                    try {
+                        android.view.MenuItem item = (android.view.MenuItem) chain.getArg(0);
+                        if (item == null) return chain.proceed();
+
+                        // Resolve menu_load_logfile resource id at runtime
+                        // We need an Activity context — grab it from the stored weak ref.
+                        Activity activity = replayActivity.get();
+                        if (activity == null || activity.isFinishing()) return chain.proceed();
+
+                        int loadLogfileId = activity.getResources().getIdentifier(
+                                "menu_load_logfile", "id", "com.qtrun.QuickTest");
+                        if (loadLogfileId == 0 || item.getItemId() != loadLogfileId) {
+                            return chain.proceed(); // not our item — proceed normally
+                        }
+
+                        // It IS menu_load_logfile and replay bar is visible: bypass guard.
+                        Log.i(TAG, "Prong E: menu_load_logfile while replayActive — bypassing visibility guard");
+
+                        boolean subscribed = false;
+                        try {
+                            subscribed = (boolean) appDMethod.invoke(null);
+                        } catch (Throwable t) {
+                            Log.w(TAG, "Prong E: Application.d() failed: " + t);
+                        }
+
+                        if (subscribed) {
+                            Object kPicker = advActivityKField.get(activity);
+                            if (kPicker != null) {
+                                pickerCMethod.invoke(kPicker, new Object[]{new String[]{"*/*"}});
+                                Log.i(TAG, "Prong E: file picker launched");
+                            } else {
+                                Log.w(TAG, "Prong E: advancedActivity.K is null");
+                                return chain.proceed(); // fall back
+                            }
+                        } else {
+                            // Not subscribed — show the upgrade dialog via x0.e(activity)
+                            try {
+                                Class<?> x0Class  = loader.loadClass("t7.x0");
+                                Method   eMethod  = x0Class.getDeclaredMethod("e",
+                                        loader.loadClass("com.qtrun.nsg.AdvancedActivity"));
+                                eMethod.setAccessible(true);
+                                eMethod.invoke(null, activity);
+                            } catch (Throwable t) {
+                                Log.w(TAG, "Prong E: x0.e() fallback failed: " + t);
+                            }
+                        }
+
+                        // Close the drawer (d(false) == closeDrawers())
+                        try {
+                            // The DrawerLayout is a field on t7.q — find it via the chain's this-object
+                            java.lang.reflect.Field[] fields = chain.getThisObject().getClass().getDeclaredFields();
+                            for (java.lang.reflect.Field f : fields) {
+                                f.setAccessible(true);
+                                Object val = f.get(chain.getThisObject());
+                                if (val != null && val.getClass().getName().equals(
+                                        "androidx.drawerlayout.widget.DrawerLayout")) {
+                                    drawerDMethod.invoke(val, false);
+                                    break;
+                                }
+                            }
+                        } catch (Throwable t) {
+                            Log.w(TAG, "Prong E: closeDrawers failed: " + t);
+                        }
+
+                        return true; // consumed — skip original a() body
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Prong E failed: " + t);
+                        return chain.proceed(); // fail safe
+                    }
+                }
+            });
+
+            Log.i(TAG, "Prong E installed on t7.q.a(MenuItem)");
+        } catch (Exception e) {
+            Log.e(TAG, "installProngE failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Prong F: t7.e.b(Object) — restore progressBar visibility before second load.
+    //
+    // t7.e.b() case 4 is the "Loading…" phase. It sets wait_progress_layout VISIBLE
+    // and ensures the ProgressBar is indeterminate — but it does NOT call
+    // progressBar.setVisibility(VISIBLE). On the first load the bar defaults to
+    // VISIBLE, so the spinner shows. After showReplayBar() the spinner is GONE.
+    // On a second load it stays GONE throughout the loading phase (no spinner).
+    //
+    // Fix: before case 4 executes, if replayActive==true restore progressBar to
+    // VISIBLE so NSG's loading phase shows the spinner normally.
+    // -----------------------------------------------------------------------
+    private void installProngF() {
+        try {
+            Class<?> teClass  = loader.loadClass("t7.e");
+            Method   bMethod  = teClass.getDeclaredMethod("b", Object.class);
+            bMethod.setAccessible(true);
+
+            xposed.hook(bMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (replayActive) {
+                        try {
+                            int discriminator = teDiscriminator.getInt(chain.getThisObject());
+                            if (discriminator == 4 && chain.getArg(0) != null) {
+                                // About to show the "Loading…" bar — restore spinner visibility
+                                Activity activity = (Activity) teActivity.get(chain.getThisObject());
+                                if (activity != null && !activity.isFinishing()) {
+                                    String pkg     = "com.qtrun.QuickTest";
+                                    int layoutId   = activity.getResources().getIdentifier(
+                                            "wait_progress_layout", "id", pkg);
+                                    int progressId = activity.getResources().getIdentifier(
+                                            "wait_progress_bar", "id", pkg);
+                                    if (layoutId != 0 && progressId != 0) {
+                                        View layout = activity.findViewById(layoutId);
+                                        if (layout != null) {
+                                            View pb = layout.findViewById(progressId);
+                                            if (pb != null) {
+                                                activity.runOnUiThread(() ->
+                                                        pb.setVisibility(View.VISIBLE));
+                                                Log.d(TAG, "Prong F: progressBar restore posted to UI thread");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (Throwable t) {
+                            Log.w(TAG, "Prong F: pre-restore failed: " + t);
+                        }
+                    }
+                    return chain.proceed();
+                }
+            });
+
+            Log.i(TAG, "Prong F installed on t7.e.b(Object)");
+        } catch (Exception e) {
+            Log.e(TAG, "installProngF failed: " + e);
         }
     }
 
