@@ -206,8 +206,13 @@ public class GranularSeekBarHook {
         // ── per-drag state ───────────────────────────────────────────────────
         private float touchDownY         = 0f;
         private float anchorX            = 0f;
-        /** Anchor key in Workspace key-space (float for sub-step precision). */
-        private float anchorKeyF         = 0f;
+        /**
+         * Anchor key in Workspace key-space.
+         * MUST be double — workspace.h can be a very large long; float only has
+         * 24-bit mantissa (~7 decimal digits) which overflows Math.round() to
+         * Integer.MAX_VALUE for typical recording key ranges.
+         */
+        private double anchorKeyD        = 0.0;
         private float lastDivisor        = 1f;
         /** Last progress value sent (for Zone 1 UP synthesise). */
         private int   lastProgressZone1  = 0;
@@ -249,7 +254,7 @@ public class GranularSeekBarHook {
                 case MotionEvent.ACTION_DOWN: {
                     touchDownY        = event.getY();
                     anchorX           = event.getX();
-                    anchorKeyF        = (float) currentKey();
+                    anchorKeyD        = (double) currentKey();
                     lastDivisor       = 1f;
                     inFineZone        = false;
                     lastProgressZone1 = seekBar.getProgress();
@@ -270,7 +275,7 @@ public class GranularSeekBarHook {
                     if (divisor != lastDivisor) {
                         anchorX    = event.getX();
                         // Anchor key = where we actually are right now.
-                        anchorKeyF = (float) currentKey();
+                        anchorKeyD = (double) currentKey();
                         lastDivisor = divisor;
                     }
 
@@ -285,9 +290,13 @@ public class GranularSeekBarHook {
                         // ── Zone 1: synthetic MotionEvent path ──────────────
                         // Keep using seekbar integer steps via onTouchEvent() so
                         // NSG's onProgressChanged fires with fromUser=true.
-                        int   max         = seekBar.getMax();
-                        float dxProgress  = (dxPx / barUsable) * max;
-                        int   newProgress = Math.round(anchorKeyF / maxKey() * max + dxProgress);
+                        int    max         = seekBar.getMax();
+                        long   maxK        = maxKey();
+                        double dxProgress  = (maxK > 0)
+                                ? ((double) dxPx / barUsable) * max
+                                : 0.0;
+                        int    newProgress = (int) Math.round(
+                                anchorKeyD / (maxK > 0 ? maxK : 1) * max + dxProgress);
                         newProgress = Math.max(0, Math.min(max, newProgress));
                         lastProgressZone1 = newProgress;
                         forwardAtProgress(MotionEvent.ACTION_MOVE, event, newProgress);
@@ -296,8 +305,8 @@ public class GranularSeekBarHook {
                         // Compute key delta in full key-space, then divide.
                         long   maxK      = maxKey();
                         if (maxK <= 0) return true;
-                        float  dxKey     = (dxPx / barUsable) * maxK;
-                        float  scaledKey = anchorKeyF + dxKey / divisor;
+                        double dxKey     = ((double) dxPx / barUsable) * maxK;
+                        double scaledKey = anchorKeyD + dxKey / divisor;
                         long   newKey    = Math.max(0, Math.min(maxK, Math.round(scaledKey)));
                         lastKeyFine = newKey;
                         seekWorkspace(newKey);
@@ -363,7 +372,7 @@ public class GranularSeekBarHook {
                 Object targetFragment = (callbackHolder != null)
                         ? advActAField.get(callbackHolder)
                         : fragment;
-                Log.v(TAG, "seekWorkspace key=" + key + " frag=" + targetFragment);
+                Log.v(TAG, "seekWorkspace key=" + key);
                 wsGMethod.invoke(ws, key, targetFragment);
             } catch (Throwable t) {
                 Log.w(TAG, "seekWorkspace failed: " + t, t);
