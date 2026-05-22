@@ -1,6 +1,6 @@
 package com.nsgmod.band;
 
-import android.graphics.Color;
+import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
@@ -12,8 +12,6 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.appcompat.widget.AppCompatButton;
-import androidx.core.graphics.drawable.DrawableCompat;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -197,36 +195,52 @@ public class RtPlayHook {
         }
         if (fwdIndex < 0) { Log.w(TAG, "forward btn not found in parent children"); return; }
 
-        // Create the RT-Play button.
-        //
-        // IMPORTANT: new MaterialButton(context) calls ThemeEnforcement.checkMaterialTheme()
-        // which throws IllegalArgumentException for contexts that don't carry the
-        // isMaterialTheme attribute — even if the Activity visually uses Material styling.
-        // The XML inflation path used for forwardBtn bypasses this check; the programmatic
-        // constructor path does not.  The exception would be swallowed by the outer
-        // catch(Throwable) and the button would silently never appear.
-        //
-        // Safe fix: AppCompatButton (no theme-enforcement guard) + clone forwardBtn's
-        // already-validated background drawable, mutate it, and tint it turquoise.
-        Drawable clonedBg = null;
+        // Create the RT-Play button using the proven SignalingShareHook pattern:
+        // plain Button(ctx) + copy every visual property from the reference button.
+        // This is the only approach that reliably works in an LSposed hook context:
+        //   - MaterialButton(ctx) → ThemeEnforcement throws → silently swallowed
+        //   - AppCompatButton  → not in NSG's classpath under canonical name → NoClassDefFoundError
+        //   - plain Button + copy from forwardBtn → always works, matches style exactly
+        Button btn = new Button(forwardBtn.getContext());
+        btn.setText("RT-Play");
+        btn.setTransformationMethod(null); // disable AllCaps
+        btn.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, ((Button) forwardBtn).getTextSize());
+        btn.setTextColor(((Button) forwardBtn).getTextColors());
+        btn.setTypeface(((Button) forwardBtn).getTypeface());
+        btn.setPadding(
+                forwardBtn.getPaddingLeft(),
+                forwardBtn.getPaddingTop(),
+                forwardBtn.getPaddingRight(),
+                forwardBtn.getPaddingBottom());
+        btn.setMinimumHeight(forwardBtn.getMinimumHeight());
+        // Mirror MaterialButton insets if applicable (graceful no-op otherwise)
+        try {
+            Class<?> mbClass = Class.forName("com.google.android.material.button.MaterialButton");
+            if (mbClass.isInstance(forwardBtn)) {
+                Method getInsetTop    = mbClass.getMethod("getInsetTop");
+                Method getInsetBottom = mbClass.getMethod("getInsetBottom");
+                Method getInsetLeft   = mbClass.getMethod("getInsetLeft");
+                Method getInsetRight  = mbClass.getMethod("getInsetRight");
+                Method setInsetTop    = mbClass.getMethod("setInsetTop",    int.class);
+                Method setInsetBottom = mbClass.getMethod("setInsetBottom", int.class);
+                Method setInsetLeft   = mbClass.getMethod("setInsetLeft",   int.class);
+                Method setInsetRight  = mbClass.getMethod("setInsetRight",  int.class);
+                setInsetTop.invoke(btn,    getInsetTop.invoke(forwardBtn));
+                setInsetBottom.invoke(btn, getInsetBottom.invoke(forwardBtn));
+                setInsetLeft.invoke(btn,   getInsetLeft.invoke(forwardBtn));
+                setInsetRight.invoke(btn,  getInsetRight.invoke(forwardBtn));
+            }
+        } catch (Throwable ignored) { /* non-Material or inset API unavailable — skip */ }
+        // Clone background and tint turquoise to distinguish from the purple step buttons
         Drawable fwdBg = forwardBtn.getBackground();
         if (fwdBg != null && fwdBg.getConstantState() != null) {
-            clonedBg = fwdBg.getConstantState()
-                            .newDrawable(forwardBtn.getContext().getResources())
-                            .mutate();
-            DrawableCompat.setTint(clonedBg, 0xFF00BCD4); // turquoise
-        }
-
-        AppCompatButton btn = new AppCompatButton(forwardBtn.getContext());
-        btn.setText("RT-Play");
-        btn.setTextColor(Color.WHITE);
-        btn.setTextAppearance(android.R.style.TextAppearance_Small);
-        btn.setAllCaps(false);
-        if (clonedBg != null) {
+            Drawable clonedBg = fwdBg.getConstantState()
+                    .newDrawable(forwardBtn.getContext().getResources())
+                    .mutate();
+            clonedBg.setColorFilter(0xFF00BCD4, PorterDuff.Mode.SRC_IN);
             btn.setBackground(clonedBg);
         } else {
-            // Fallback: solid turquoise — always visible
-            btn.setBackgroundColor(0xFF00BCD4);
+            btn.setBackgroundColor(0xFF00BCD4); // solid turquoise fallback
         }
 
         float dp = forwardBtn.getContext().getResources().getDisplayMetrics().density;
