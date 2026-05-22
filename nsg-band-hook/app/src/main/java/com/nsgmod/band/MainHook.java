@@ -38,6 +38,7 @@ public class MainHook extends XposedModule {
                 NrSaCsiSnrRowHook.saK2aCarriers).install();
         new SubscriberHook(this, param.getClassLoader()).install();
         new ReplayStatusBarHook(this, param.getClassLoader()).install();
+        new GranularSeekBarHook(this, param.getClassLoader()).install();
         new SettingsToggleHook(this, param.getClassLoader()).install();
     }
 }
