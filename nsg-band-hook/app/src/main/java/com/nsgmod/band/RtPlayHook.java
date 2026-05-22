@@ -1,16 +1,18 @@
 package com.nsgmod.band;
 
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+
+import com.google.android.material.button.MaterialButton;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -194,14 +196,18 @@ public class RtPlayHook {
         }
         if (fwdIndex < 0) { Log.w(TAG, "forward btn not found in parent children"); return; }
 
-        // Create the RT-Play button matching the style of the step buttons:
-        // textAppearanceSmall, white text, height=40dp, wrap_content width
-        Button btn = new Button(forwardBtn.getContext());
+        // Create the RT-Play button.
+        // Must be MaterialButton (not plain Button) — the app theme uses
+        // MaterialComponentsViewInflater which inflates <Button> tags as MaterialButton,
+        // giving them the MaterialShapeDrawable background with rounded corners,
+        // elevation, and ripple.  A plain Button() ctor skips all of that.
+        MaterialButton btn = new MaterialButton(forwardBtn.getContext());
         btn.setText("RT-Play");
-        btn.setTextAppearance(android.R.style.TextAppearance_Small);
         btn.setTextColor(Color.WHITE);
-        btn.setBackgroundResource(0); // transparent — inherits CardView/dark theme background
+        btn.setTextAppearance(android.R.style.TextAppearance_Small);
         btn.setAllCaps(false);
+        // Turquoise tint to visually distinguish from the purple (#BA86FC) step buttons
+        btn.setBackgroundTintList(ColorStateList.valueOf(0xFF00BCD4));
 
         float dp = forwardBtn.getContext().getResources().getDisplayMetrics().density;
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -236,8 +242,8 @@ public class RtPlayHook {
         private static final String LABEL_OFF = "RT-Play";
         private static final String LABEL_ON  = "■ Stop";
 
-        private final Object  fragment;
-        private final Button  button;
+        private final Object         fragment;
+        private final MaterialButton button;
         private final Handler handler = new Handler(Looper.getMainLooper());
 
         // Workspace reflection
@@ -327,7 +333,7 @@ public class RtPlayHook {
         };
 
         RtPlayController(
-                Object fragment, Button button,
+                Object fragment, MaterialButton button,
                 Field wsJ, Field wsG, Field wsH, Field wsI, Field wsC, Field wsF,
                 Method wsGMethod, Method wsIMethod,
                 Field attrD, Method propB,
