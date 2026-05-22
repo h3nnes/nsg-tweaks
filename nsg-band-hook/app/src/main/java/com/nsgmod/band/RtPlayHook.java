@@ -1,10 +1,12 @@
 package com.nsgmod.band;
 
+import android.content.Context;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -173,8 +175,6 @@ public class RtPlayHook {
     // ── Button injection ──────────────────────────────────────────────────────
 
     private void attachButton(Object fragment, View rootView) {
-        // Locate the forward (+0.5s) button by its hardcoded resource ID, then
-        // insert our button immediately before it in the same LinearLayout row.
         View forwardBtn = rootView.findViewById(ID_FWD);
         if (forwardBtn == null) {
             Log.w(TAG, "playback_forward_500ms (0x7f09022c) not found in view tree");
@@ -188,20 +188,50 @@ public class RtPlayHook {
         }
         LinearLayout row = (LinearLayout) parent;
 
-        // Find the forward button's position
         int fwdIndex = -1;
         for (int i = 0; i < row.getChildCount(); i++) {
             if (row.getChildAt(i) == forwardBtn) { fwdIndex = i; break; }
         }
         if (fwdIndex < 0) { Log.w(TAG, "forward btn not found in parent children"); return; }
 
-        // Create the RT-Play button using the proven SignalingShareHook pattern:
-        // plain Button(ctx) + copy every visual property from the reference button.
-        // This is the only approach that reliably works in an LSposed hook context:
-        //   - MaterialButton(ctx) → ThemeEnforcement throws → silently swallowed
-        //   - AppCompatButton  → not in NSG's classpath under canonical name → NoClassDefFoundError
-        //   - plain Button + copy from forwardBtn → always works, matches style exactly
-        Button btn = new Button(forwardBtn.getContext());
+        // Use the same pattern as SignalingShareHook:
+        //   1. Remove forwardBtn from the row.
+        //   2. Create a horizontal LinearLayout container sized by forwardBtn's own LayoutParams.
+        //   3. Add RT-Play button (MATCH_PARENT height) then forwardBtn (MATCH_PARENT height)
+        //      inside the container — both take their height from the container which is
+        //      sized by forwardBtn's original LayoutParams (84px / 40dp).
+        //   4. Put the container back at the same index in the row.
+        //
+        // This sidesteps the plain Button default minHeight=100 problem: the container
+        // height is authoritative (exact px from forwardBtn's LP), and MATCH_PARENT
+        // children inside a fixed-height parent resolve correctly.
+
+        // Detach forwardBtn from row
+        row.removeViewAt(fwdIndex);
+
+        Context ctx = forwardBtn.getContext();
+        float dp = ctx.getResources().getDisplayMetrics().density;
+
+        // Container takes forwardBtn's original LayoutParams (width/margins) but we
+        // need WRAP_CONTENT width to accommodate two buttons.
+        ViewGroup.LayoutParams fwdRowLp = forwardBtn.getLayoutParams();
+        int containerHeight = (fwdRowLp != null && fwdRowLp.height > 0)
+                ? fwdRowLp.height   // 84px = 40dp at this device density
+                : (int) (40 * dp);
+
+        LinearLayout container = new LinearLayout(ctx);
+        container.setOrientation(LinearLayout.HORIZONTAL);
+        LinearLayout.LayoutParams containerLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                containerHeight);
+        // Preserve forwardBtn's original end margin
+        if (fwdRowLp instanceof LinearLayout.LayoutParams) {
+            containerLp.setMarginEnd(((LinearLayout.LayoutParams) fwdRowLp).getMarginEnd());
+        }
+        container.setLayoutParams(containerLp);
+
+        // Build the RT-Play button — copy visual style from forwardBtn
+        Button btn = new Button(ctx);
         btn.setText("RT-Play");
         btn.setTransformationMethod(null); // disable AllCaps
         btn.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, ((Button) forwardBtn).getTextSize());
@@ -213,10 +243,19 @@ public class RtPlayHook {
                 forwardBtn.getPaddingRight(),
                 forwardBtn.getPaddingBottom());
         btn.setMinimumHeight(forwardBtn.getMinimumHeight());
-        // Mirror MaterialButton insets if applicable (graceful no-op otherwise)
+        // Copy background + tint turquoise (same as SignalingShareHook pattern)
+        if (forwardBtn.getBackground() != null
+                && forwardBtn.getBackground().getConstantState() != null) {
+            Drawable clonedBg = forwardBtn.getBackground().getConstantState().newDrawable().mutate();
+            clonedBg.setColorFilter(0xFF00BCD4, PorterDuff.Mode.SRC_IN);
+            btn.setBackground(clonedBg);
+        } else {
+            btn.setBackgroundColor(0xFF00BCD4);
+        }
+        // Mirror MaterialButton insets from forwardBtn so the pill shape matches
         try {
             Class<?> mbClass = Class.forName("com.google.android.material.button.MaterialButton");
-            if (mbClass.isInstance(forwardBtn)) {
+            if (mbClass.isInstance(btn) && mbClass.isInstance(forwardBtn)) {
                 Method getInsetTop    = mbClass.getMethod("getInsetTop");
                 Method getInsetBottom = mbClass.getMethod("getInsetBottom");
                 Method getInsetLeft   = mbClass.getMethod("getInsetLeft");
@@ -230,27 +269,29 @@ public class RtPlayHook {
                 setInsetLeft.invoke(btn,   getInsetLeft.invoke(forwardBtn));
                 setInsetRight.invoke(btn,  getInsetRight.invoke(forwardBtn));
             }
-        } catch (Throwable ignored) { /* non-Material or inset API unavailable — skip */ }
-        // Clone background and tint turquoise to distinguish from the purple step buttons
-        Drawable fwdBg = forwardBtn.getBackground();
-        if (fwdBg != null && fwdBg.getConstantState() != null) {
-            Drawable clonedBg = fwdBg.getConstantState()
-                    .newDrawable(forwardBtn.getContext().getResources())
-                    .mutate();
-            clonedBg.setColorFilter(0xFF00BCD4, PorterDuff.Mode.SRC_IN);
-            btn.setBackground(clonedBg);
-        } else {
-            btn.setBackgroundColor(0xFF00BCD4); // solid turquoise fallback
-        }
+        } catch (Throwable ignored) { /* non-Material theme — skip */ }
 
-        float dp = forwardBtn.getContext().getResources().getDisplayMetrics().density;
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                (int) (40 * dp));
-        lp.setMarginEnd((int) (8 * dp));
-        btn.setLayoutParams(lp);
+        // RT-Play button: MATCH_PARENT height (container is fixed), gap before forwardBtn.
+        // Match the 8dp marginEnd that "< 0.5s" uses, so the gap on both sides of RT-Play
+        // is visually identical.
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT);
+        btnLp.setMarginEnd((int) (8 * dp));
+        btn.setLayoutParams(btnLp);
 
-        // Build the controller and wire the toggle
+        // forwardBtn: MATCH_PARENT height inside container
+        LinearLayout.LayoutParams fwdNewLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.MATCH_PARENT);
+        forwardBtn.setLayoutParams(fwdNewLp);
+
+        container.addView(btn);
+        container.addView(forwardBtn);
+        row.addView(container, fwdIndex);
+
+        Log.i(TAG, "RT-Play button inserted at index " + fwdIndex);
+
         RtPlayController controller = new RtPlayController(
                 fragment, btn,
                 wsJ, wsG, wsI, wsC, wsF,
@@ -260,10 +301,6 @@ public class RtPlayHook {
                 fragmentYField, advActAField, fragmentZField,
                 fragmentI0Method, maAMMethod);
         btn.setOnClickListener(v -> controller.toggle());
-
-        // Insert before the forward button
-        row.addView(btn, fwdIndex);
-        Log.i(TAG, "RT-Play button inserted at index " + fwdIndex);
     }
 
     // =========================================================================

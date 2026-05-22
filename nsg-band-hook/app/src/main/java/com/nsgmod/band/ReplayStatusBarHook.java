@@ -49,6 +49,14 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   the bar on the main thread. This is the primary "end replay" signal.
  *   h0.E() is also called from the "Discard" dialog path, so all stop-replay
  *   cases are covered.
+ *
+ * Prong D: t7.x0.c(Activity) before-hook (graceful exit).
+ *   In replay mode h0.A() returns false (no live test), so menu_exit takes the
+ *   fast-exit branch: x0.c() is called directly and I() (which shows the loading
+ *   spinner) is never called. The user sees the replay bar vanish with no spinner.
+ *   Prong D intercepts x0.c() — when replayActive, shows wait_progress_bar
+ *   (spinner + "Stopping…") before proceeding, matching the live-test exit UX.
+ *   replayActive is cleared here so Prong B does not interfere with subsequent K().
  */
 public class ReplayStatusBarHook {
 
@@ -112,6 +120,7 @@ public class ReplayStatusBarHook {
         installProngA();
         installProngB();
         installProngC();
+        installProngD();
     }
 
     // -----------------------------------------------------------------------
@@ -258,6 +267,46 @@ public class ReplayStatusBarHook {
     }
 
     // -----------------------------------------------------------------------
+    // Prong D: t7.x0.c(Activity) — graceful-exit path in replay mode.
+    //
+    // In live mode:  menu_exit → h0.A()==true → t7.b runnable → activity.I() → x0.c()
+    // In replay mode: menu_exit → h0.A()==false → x0.c() DIRECTLY (no I() call)
+    //
+    // Fix: before x0.c() proceeds, show the spinner bar so the user sees the
+    //      normal "Stopping…" loading animation during the ~250 ms before finish().
+    // -----------------------------------------------------------------------
+    private void installProngD() {
+        try {
+            Class<?> x0Class   = loader.loadClass("t7.x0");
+            Class<?> actClass  = loader.loadClass("android.app.Activity");
+            Method   cMethod   = x0Class.getDeclaredMethod("c", actClass);
+
+            xposed.hook(cMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (replayActive) {
+                        replayActive = false; // clear first so Prong B doesn't suppress K()
+                        try {
+                            Activity activity = (Activity) chain.getArg(0);
+                            if (activity != null && !activity.isFinishing()) {
+                                showExitSpinner(activity);
+                            }
+                        } catch (Throwable t) {
+                            Log.w(TAG, "Prong D: showExitSpinner failed: " + t);
+                        }
+                        Log.i(TAG, "Prong D: x0.c() in replay mode — spinner shown, replayActive=false");
+                    }
+                    return chain.proceed();
+                }
+            });
+
+            Log.i(TAG, "Prong D installed on t7.x0.c(Activity)");
+        } catch (Exception e) {
+            Log.e(TAG, "installProngD failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -313,6 +362,46 @@ public class ReplayStatusBarHook {
 
         } catch (Throwable t) {
             Log.w(TAG, "showReplayBar failed: " + t);
+        }
+    }
+
+    /** Show the loading spinner bar (matching the live-test exit UX) when exiting from replay. */
+    private void showExitSpinner(Activity activity) {
+        try {
+            String pkg     = "com.qtrun.QuickTest";
+            int layoutId   = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
+            int progressId = activity.getResources().getIdentifier("wait_progress_bar",    "id", pkg);
+            int tipsId     = activity.getResources().getIdentifier("wait_progress_tips",   "id", pkg);
+
+            if (layoutId == 0 || progressId == 0 || tipsId == 0) {
+                Log.w(TAG, "showExitSpinner: view ids not found");
+                return;
+            }
+
+            View layout = activity.findViewById(layoutId);
+            if (layout == null) { Log.w(TAG, "showExitSpinner: layout not found"); return; }
+
+            View     progressBar = layout.findViewById(progressId);
+            TextView tipsView    = (TextView) layout.findViewById(tipsId);
+            if (progressBar == null || tipsView == null) {
+                Log.w(TAG, "showExitSpinner: child views not found");
+                return;
+            }
+
+            // Show spinner and "Stopping…" label — mirrors what AdvancedActivity.I() does
+            progressBar.setVisibility(View.VISIBLE);
+            int stoppingId = activity.getResources().getIdentifier(
+                    "tips_stop_test_waiting", "string", pkg);
+            if (stoppingId != 0) {
+                tipsView.setText(activity.getString(stoppingId));
+            } else {
+                tipsView.setText("Stopping…");
+            }
+            layout.setVisibility(View.VISIBLE);
+
+            Log.d(TAG, "showExitSpinner: spinner shown");
+        } catch (Throwable t) {
+            Log.w(TAG, "showExitSpinner failed: " + t);
         }
     }
 }
