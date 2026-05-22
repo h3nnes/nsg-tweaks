@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="module_description">Adds NR band column to NSG NSA cell table</string>
+    <string name="module_description">NSG Tweaks: NR band/BW columns, per-SCell colouring, signaling enhancements</string>
 </resources>
