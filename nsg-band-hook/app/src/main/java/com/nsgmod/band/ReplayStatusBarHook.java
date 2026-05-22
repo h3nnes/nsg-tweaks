@@ -19,36 +19,51 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * loaded for replay, showing the filename and "Replaying" status.
  *
  * NSG behaviour (unhooked):
- *   1. User opens a log file → t7.e.b() shows wait_progress_layout (VISIBLE),
- *      sets wait_progress_tips text to "Loading <filename> …"
- *   2. Load completes → a4.h.e(Object) case 5 → AdvancedActivity.K() sets
- *      wait_progress_layout to GONE and clears FLAG_NOT_TOUCHABLE.
+ *   t7.e.b() case 4: shows wait_progress_layout ("Loading <file> …")
+ *   a4.h.e() case 5: calls AdvancedActivity.K() → sets layout GONE, then
+ *                    populates Workspace, calls M() and invalidateOptionsMenu().
  *
- * Our hook (after a4.h.e):
- *   - Only when obj (DataSource) is non-null (load succeeded)
- *   - Re-show wait_progress_layout (VISIBLE)
- *   - Hide wait_progress_bar (GONE) — remove the progress bar, keep the label
- *   - Set wait_progress_tips text to "<filename> — Replaying"
- *   - Do NOT set FLAG_NOT_TOUCHABLE (user must be able to interact)
+ * Strategy — two hooks that work together:
  *
- * When user stops replay / closes file:
- *   AdvancedActivity.K() is called again from other paths.  In those cases
- *   Workspace.c (DataSource) will be null or a new live session has started,
- *   so K() proceeds normally and sets the layout GONE again.
+ * Prong A: a4.h.e(Object) case 5 after-hook.
+ *   Fires after the full case-5 body (K, workspace setup, M(), menu) completes.
+ *   Re-shows the bar with "<filename> — Replaying" text and progress bar hidden.
+ *   Also sets replayActive = true so Prong B knows we are in replay mode.
  *
- * View IDs resolved via Resources.getIdentifier() so we don't hard-code int values.
+ * Prong B: AdvancedActivity.K() intercept.
+ *   When replayActive is true, suppresses GONE (still clears FLAG_NOT_TOUCHABLE).
+ *   This handles any subsequent K() calls that might arrive after Prong A sets
+ *   the bar visible (e.g. from workspace listeners or other deferred callbacks).
+ *   When replayActive is false (live mode, or after user stops replay), K() runs
+ *   normally and also clears the flag.
+ *
+ * Note: K() is called inside case-5 BEFORE workspace.f(dataSource) sets up the
+ * workspace, so Prong B cannot check Workspace.c at K()-call time. The static
+ * flag approach sidesteps this ordering issue entirely.
  */
 public class ReplayStatusBarHook {
 
     private static final String TAG = "NSGBandHook_Replay";
 
+    /**
+     * True while a log file is loaded and being replayed.
+     * Set to true by Prong A when load succeeds.
+     * Set to false by Prong B when K() is called in live/stop context (replayActive=false).
+     * Deliberately volatile because theoretically readable from multiple threads.
+     */
+    private static volatile boolean replayActive = false;
+
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // Reflection handles
-    private Field  f76a;  // a4.h.f76a — int switch case
-    private Field  f77b;  // a4.h.f77b — Object (AdvancedActivity)
-    private Field  f78c;  // a4.h.f78c — Object (filename String)
+    // a4.h fields
+    private Field f76a;  // int   — switch case
+    private Field f77b;  // Object — AdvancedActivity
+    private Field f78c;  // Object — filename String
+
+    // Workspace fields (used to detect live→replay transition)
+    private Field wsSingleton;
+    private Field wsDataSource;
 
     private boolean reflectionReady = false;
 
@@ -60,10 +75,16 @@ public class ReplayStatusBarHook {
 
     private void initReflection() {
         try {
-            Class<?> hClass = loader.loadClass("a4.h");
-            f76a = hClass.getField("f76a");
-            f77b = hClass.getField("f77b");
-            f78c = hClass.getField("f78c");
+            Class<?> hClass  = loader.loadClass("a4.h");
+            Class<?> wsClass = loader.loadClass("com.qtrun.sys.Workspace");
+
+            f76a = hClass.getDeclaredField("f76a"); f76a.setAccessible(true);
+            f77b = hClass.getDeclaredField("f77b"); f77b.setAccessible(true);
+            f78c = hClass.getDeclaredField("f78c"); f78c.setAccessible(true);
+
+            wsSingleton  = wsClass.getField("j");
+            wsDataSource = wsClass.getField("c");
+
             reflectionReady = true;
             Log.i(TAG, "reflection ready");
         } catch (Exception e) {
@@ -76,75 +97,124 @@ public class ReplayStatusBarHook {
             Log.e(TAG, "install skipped — reflection not ready");
             return;
         }
+        installProngA();
+        installProngB();
+    }
+
+    // -----------------------------------------------------------------------
+    // Prong A: a4.h.e(Object) — after-hook for file load completion (case 5)
+    // -----------------------------------------------------------------------
+    private void installProngA() {
         try {
-            Class<?> hClass = loader.loadClass("a4.h");
-            Method eMethod = hClass.getMethod("e", Object.class);
+            Class<?> hClass  = loader.loadClass("a4.h");
+            Method   eMethod = hClass.getMethod("e", Object.class);
 
             xposed.hook(eMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     try {
-                        handleAfterE(chain.getThisObject(), chain.getArg(0));
+                        int switchCase = f76a.getInt(chain.getThisObject());
+                        if (switchCase != 5) return result;
+
+                        Object dataSourceArg = chain.getArg(0);
+                        if (dataSourceArg == null) {
+                            // Load failed — make sure flag is clear
+                            replayActive = false;
+                            Log.d(TAG, "Prong A: load failed, replayActive=false");
+                            return result;
+                        }
+
+                        Activity activity = (Activity) f77b.get(chain.getThisObject());
+                        String   filename = (String)   f78c.get(chain.getThisObject());
+                        if (activity == null || filename == null) return result;
+
+                        // Mark replay active BEFORE showing bar so Prong B won't
+                        // suppress an immediate re-layout triggered by setVisibility
+                        replayActive = true;
+                        showReplayBar(activity, filename);
+                        Log.i(TAG, "Prong A: replay bar shown, file=" + filename);
                     } catch (Throwable t) {
-                        Log.w(TAG, "handleAfterE failed: " + t);
+                        Log.w(TAG, "Prong A failed: " + t);
                     }
                     return result;
                 }
             });
 
-            Log.i(TAG, "hook installed on a4.h.e(Object)");
+            Log.i(TAG, "Prong A installed on a4.h.e(Object)");
         } catch (Exception e) {
-            Log.e(TAG, "install failed: " + e);
+            Log.e(TAG, "installProngA failed: " + e);
         }
     }
 
-    private void handleAfterE(Object thisObj, Object dataSourceArg) throws Exception {
-        // Only handle case 5 (log file load completion)
-        int switchCase = f76a.getInt(thisObj);
-        if (switchCase != 5) return;
+    // -----------------------------------------------------------------------
+    // Prong B: AdvancedActivity.K() — suppress GONE when replayActive
+    // -----------------------------------------------------------------------
+    private void installProngB() {
+        try {
+            Class<?> activityClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            Method   kMethod       = activityClass.getDeclaredMethod("K");
 
-        // Only when load succeeded (DataSource non-null)
-        if (dataSourceArg == null) return;
+            xposed.hook(kMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (replayActive) {
+                        try {
+                            // Suppress GONE — just clear the touch flag so UI stays interactive
+                            Activity activity = (Activity) chain.getThisObject();
+                            activity.getWindow().clearFlags(16);
+                            Log.d(TAG, "Prong B: K() suppressed, replay mode active");
+                        } catch (Throwable t) {
+                            Log.w(TAG, "Prong B suppress failed: " + t);
+                            return chain.proceed(); // fall back to normal behaviour
+                        }
+                        return null; // skip original K()
+                    }
+                    // Not in replay mode — let K() run, and clear flag
+                    replayActive = false;
+                    return chain.proceed();
+                }
+            });
 
-        String filename = (String) f78c.get(thisObj);
-        Activity activity = (Activity) f77b.get(thisObj);
-        if (activity == null || filename == null) return;
-
-        String pkg = "com.qtrun.QuickTest";
-        int layoutId   = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
-        int progressId = activity.getResources().getIdentifier("wait_progress_bar",    "id", pkg);
-        int tipsId     = activity.getResources().getIdentifier("wait_progress_tips",   "id", pkg);
-
-        if (layoutId == 0 || progressId == 0 || tipsId == 0) {
-            Log.w(TAG, "view id(s) not found — layout=" + layoutId
-                    + " progress=" + progressId + " tips=" + tipsId);
-            return;
+            Log.i(TAG, "Prong B installed on AdvancedActivity.K()");
+        } catch (Exception e) {
+            Log.e(TAG, "installProngB failed: " + e);
         }
+    }
 
-        View layout = activity.findViewById(layoutId);
-        if (layout == null) {
-            Log.w(TAG, "wait_progress_layout not found in activity");
-            return;
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    private void showReplayBar(Activity activity, String filename) {
+        try {
+            String pkg     = "com.qtrun.QuickTest";
+            int layoutId   = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
+            int progressId = activity.getResources().getIdentifier("wait_progress_bar",    "id", pkg);
+            int tipsId     = activity.getResources().getIdentifier("wait_progress_tips",   "id", pkg);
+
+            if (layoutId == 0 || progressId == 0 || tipsId == 0) {
+                Log.w(TAG, "showReplayBar: view ids not found");
+                return;
+            }
+
+            View layout = activity.findViewById(layoutId);
+            if (layout == null) { Log.w(TAG, "showReplayBar: layout not found"); return; }
+
+            View     progressBar = layout.findViewById(progressId);
+            TextView tipsView    = (TextView) layout.findViewById(tipsId);
+            if (progressBar == null || tipsView == null) {
+                Log.w(TAG, "showReplayBar: child views not found");
+                return;
+            }
+
+            // Hide spinner, update label, show container
+            progressBar.setVisibility(View.GONE);
+            tipsView.setText(filename + " \u2014 Replaying");
+            layout.setVisibility(View.VISIBLE);
+
+        } catch (Throwable t) {
+            Log.w(TAG, "showReplayBar failed: " + t);
         }
-
-        View progressBar = layout.findViewById(progressId);
-        TextView tipsView = (TextView) layout.findViewById(tipsId);
-
-        if (progressBar == null || tipsView == null) {
-            Log.w(TAG, "child views not found inside wait_progress_layout");
-            return;
-        }
-
-        // Hide the spinning progress bar — load is done
-        progressBar.setVisibility(View.GONE);
-
-        // Update the label: "<filename> — Replaying"
-        tipsView.setText(filename + " \u2014 Replaying");
-
-        // Re-show the container (K() just set it GONE)
-        layout.setVisibility(View.VISIBLE);
-
-        Log.i(TAG, "replay status bar shown for: " + filename);
     }
 }
