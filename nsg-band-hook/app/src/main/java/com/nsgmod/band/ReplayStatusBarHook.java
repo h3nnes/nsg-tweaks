@@ -31,15 +31,13 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   Also sets replayActive = true so Prong B knows we are in replay mode.
  *
  * Prong B: AdvancedActivity.K() intercept.
- *   When replayActive is true, suppresses GONE (still clears FLAG_NOT_TOUCHABLE).
- *   This handles any subsequent K() calls that might arrive after Prong A sets
- *   the bar visible (e.g. from workspace listeners or other deferred callbacks).
- *   When replayActive is false (live mode, or after user stops replay), K() runs
- *   normally and also clears the flag.
- *
- * Note: K() is called inside case-5 BEFORE workspace.f(dataSource) sets up the
- * workspace, so Prong B cannot check Workspace.c at K()-call time. The static
- * flag approach sidesteps this ordering issue entirely.
+ *   Uses Workspace.c (DataSource field) to distinguish the two K() callers:
+ *   • DataSource == null  → called from a4.h.e() case 5 during file loading
+ *     (workspace.c() clears it first; workspace.f() sets it after K()).
+ *     → Suppress K(), keep bar visible.
+ *   • DataSource != null  → called from t7.e.e() case 1 (user stopped replay).
+ *     h0.G() never clears the DataSource, so it remains set.
+ *     → Allow K(), clear replayActive so save-log / live mode resume normally.
  */
 public class ReplayStatusBarHook {
 
@@ -48,7 +46,7 @@ public class ReplayStatusBarHook {
     /**
      * True while a log file is loaded and being replayed.
      * Set to true by Prong A when load succeeds.
-     * Set to false by Prong B when K() is called in live/stop context (replayActive=false).
+     * Set to false by Prong B when K() is allowed (DataSource != null = user stopped replay).
      * Deliberately volatile because theoretically readable from multiple threads.
      */
     private static volatile boolean replayActive = false;
@@ -148,7 +146,16 @@ public class ReplayStatusBarHook {
     }
 
     // -----------------------------------------------------------------------
-    // Prong B: AdvancedActivity.K() — suppress GONE when replayActive
+    // Prong B: AdvancedActivity.K() — suppress GONE when replayActive,
+    //          BUT allow K() when the user explicitly stops replay.
+    //
+    // How to distinguish the two K() callers:
+    //   • K() called from a4.h.e() case 5 (file loading):
+    //       workspace.c (DataSource) is NULL — load hasn't set it yet.
+    //       → Suppress K(), keep the bar visible.
+    //   • K() called from t7.e.e() case 1 (user tapped stop/save):
+    //       h0.G() ran but never clears workspace.c; DataSource is still set.
+    //       → Allow K(), clear replayActive so normal behaviour resumes.
     // -----------------------------------------------------------------------
     private void installProngB() {
         try {
@@ -158,21 +165,41 @@ public class ReplayStatusBarHook {
             xposed.hook(kMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    if (replayActive) {
+                    if (!replayActive) {
+                        // Live mode — always allow K() normally
+                        return chain.proceed();
+                    }
+
+                    // In replay mode: check whether DataSource is null to decide.
+                    boolean dataSourceNull = true; // assume loading phase unless we can check
+                    try {
+                        Object ws = wsSingleton.get(null);  // Workspace singleton (static field)
+                        if (ws != null) {
+                            dataSourceNull = (wsDataSource.get(ws) == null);
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Prong B: workspace check failed: " + t);
+                    }
+
+                    if (dataSourceNull) {
+                        // K() is called during file loading — DataSource not yet assigned.
+                        // Suppress it, clear FLAG_NOT_TOUCHABLE so UI stays interactive.
                         try {
-                            // Suppress GONE — just clear the touch flag so UI stays interactive
                             Activity activity = (Activity) chain.getThisObject();
                             activity.getWindow().clearFlags(16);
-                            Log.d(TAG, "Prong B: K() suppressed, replay mode active");
                         } catch (Throwable t) {
-                            Log.w(TAG, "Prong B suppress failed: " + t);
-                            return chain.proceed(); // fall back to normal behaviour
+                            Log.w(TAG, "Prong B: clearFlags failed: " + t);
+                            return chain.proceed(); // fall back on error
                         }
+                        Log.d(TAG, "Prong B: K() suppressed (load phase, DataSource null)");
                         return null; // skip original K()
+                    } else {
+                        // K() is called because user stopped replay (DataSource still live).
+                        // Allow it to run so the bar hides and save-log works normally.
+                        replayActive = false;
+                        Log.i(TAG, "Prong B: K() allowed (stop replay, DataSource set), replayActive=false");
+                        return chain.proceed();
                     }
-                    // Not in replay mode — let K() run, and clear flag
-                    replayActive = false;
-                    return chain.proceed();
                 }
             });
 
