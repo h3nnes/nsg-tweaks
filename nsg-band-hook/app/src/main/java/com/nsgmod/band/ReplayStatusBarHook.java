@@ -1,6 +1,8 @@
 package com.nsgmod.band;
 
 import android.app.Activity;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.ProgressBar;
@@ -10,6 +12,7 @@ import androidx.annotation.NonNull;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.ref.WeakReference;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
@@ -23,12 +26,12 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   a4.h.e() case 5: calls AdvancedActivity.K() → sets layout GONE, then
  *                    populates Workspace, calls M() and invalidateOptionsMenu().
  *
- * Strategy — two hooks that work together:
+ * Strategy — three hooks that work together:
  *
  * Prong A: a4.h.e(Object) case 5 after-hook.
  *   Fires after the full case-5 body (K, workspace setup, M(), menu) completes.
  *   Re-shows the bar with "<filename> — Replaying" text and progress bar hidden.
- *   Also sets replayActive = true so Prong B knows we are in replay mode.
+ *   Sets replayActive = true and stores a WeakReference to the Activity.
  *
  * Prong B: AdvancedActivity.K() intercept.
  *   Uses Workspace.c (DataSource field) to distinguish the two K() callers:
@@ -38,6 +41,14 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   • DataSource != null  → called from t7.e.e() case 1 (user stopped replay).
  *     h0.G() never clears the DataSource, so it remains set.
  *     → Allow K(), clear replayActive so save-log / live mode resume normally.
+ *
+ * Prong C: t7.h0.E() before-hook (start-new-test).
+ *   When menu_open_new_test is tapped in replay mode, NSG calls h0.D(false) then
+ *   h0.E() directly — it NEVER calls K(). So replayActive would stay true forever.
+ *   Prong C detects h0.E() while replayActive==true, clears the flag, and hides
+ *   the bar on the main thread. This is the primary "end replay" signal.
+ *   h0.E() is also called from the "Discard" dialog path, so all stop-replay
+ *   cases are covered.
  */
 public class ReplayStatusBarHook {
 
@@ -46,10 +57,13 @@ public class ReplayStatusBarHook {
     /**
      * True while a log file is loaded and being replayed.
      * Set to true by Prong A when load succeeds.
-     * Set to false by Prong B when K() is allowed (DataSource != null = user stopped replay).
-     * Deliberately volatile because theoretically readable from multiple threads.
+     * Cleared by Prong C when h0.E() fires (start-new-test path).
+     * Also cleared by Prong B as a fallback if K() is called with DataSource set.
      */
     private static volatile boolean replayActive = false;
+
+    /** Weak reference to the Activity currently showing the replay bar (set by Prong A). */
+    private static volatile WeakReference<Activity> replayActivity = new WeakReference<>(null);
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -97,6 +111,7 @@ public class ReplayStatusBarHook {
         }
         installProngA();
         installProngB();
+        installProngC();
     }
 
     // -----------------------------------------------------------------------
@@ -130,6 +145,7 @@ public class ReplayStatusBarHook {
                         // Mark replay active BEFORE showing bar so Prong B won't
                         // suppress an immediate re-layout triggered by setVisibility
                         replayActive = true;
+                        replayActivity = new WeakReference<>(activity);
                         showReplayBar(activity, filename);
                         Log.i(TAG, "Prong A: replay bar shown, file=" + filename);
                     } catch (Throwable t) {
@@ -210,8 +226,63 @@ public class ReplayStatusBarHook {
     }
 
     // -----------------------------------------------------------------------
+    // Prong C: t7.h0.E() — start-new-test, the primary "end replay" signal.
+    //
+    // When menu_open_new_test is tapped in replay mode, NSG calls:
+    //   J() → h0.D(false) → h0.E()
+    // It NEVER calls K(), so Prong B never fires and replayActive stays true.
+    // Hook h0.E() before it runs: clear replayActive and hide the bar.
+    // h0.E() runs on the main thread, so we can touch views directly.
+    // -----------------------------------------------------------------------
+    private void installProngC() {
+        try {
+            Class<?> h0Class  = loader.loadClass("t7.h0");
+            Method   eMethod  = h0Class.getDeclaredMethod("E");
+
+            xposed.hook(eMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (replayActive) {
+                        replayActive = false;
+                        Log.i(TAG, "Prong C: h0.E() while replay active — hiding bar, replayActive=false");
+                        hideReplayBar();
+                    }
+                    return chain.proceed();
+                }
+            });
+
+            Log.i(TAG, "Prong C installed on t7.h0.E()");
+        } catch (Exception e) {
+            Log.e(TAG, "installProngC failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    /** Hide the replay bar using the stored Activity reference. */
+    private void hideReplayBar() {
+        Activity activity = replayActivity.get();
+        if (activity == null || activity.isFinishing()) return;
+        Runnable run = () -> {
+            try {
+                String pkg     = "com.qtrun.QuickTest";
+                int layoutId   = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
+                if (layoutId == 0) return;
+                View layout = activity.findViewById(layoutId);
+                if (layout != null) layout.setVisibility(View.GONE);
+                Log.d(TAG, "hideReplayBar: bar hidden");
+            } catch (Throwable t) {
+                Log.w(TAG, "hideReplayBar failed: " + t);
+            }
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            run.run();
+        } else {
+            new Handler(Looper.getMainLooper()).post(run);
+        }
+    }
 
     private void showReplayBar(Activity activity, String filename) {
         try {
