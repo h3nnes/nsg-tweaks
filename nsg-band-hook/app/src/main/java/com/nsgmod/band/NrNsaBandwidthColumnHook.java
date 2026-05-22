@@ -204,8 +204,8 @@ public class NrNsaBandwidthColumnHook {
                         Log.w(TAG, "NrNsaBandwidthColumnHook: h(position) failed: " + e);
                     }
 
-                    String bwText = readBandwidth(isSource0, intraRow);
-                    if (bwText == null) bwText = "-";
+                    final String bwText0 = readBandwidth(isSource0, intraRow);
+                    final String bwText  = (bwText0 != null) ? bwText0 : "-";
 
                     // Already injected — refresh text at child[2]
                     if (TAG_BW_INJECTED.equals(row.getTag(BW_TAG_KEY))) {
@@ -221,35 +221,27 @@ public class NrNsaBandwidthColumnHook {
                         return result;
                     }
 
+                    // BandColumnHook hasn't run yet on this recycled view (still 6 children).
+                    // Schedule a retry after the current getView call stack unwinds — by then
+                    // BandColumnHook will have injected its column (7 children).
+                    if (row.getChildCount() == 6) {
+                        final LinearLayout retryRow = row;
+                        row.post(() -> {
+                            if (TAG_BW_INJECTED.equals(retryRow.getTag(BW_TAG_KEY))) return;
+                            if (retryRow.getChildCount() != 7) return;
+                            try {
+                                injectBwIntoRow(retryRow, bwText, rowView);
+                            } catch (Exception ex) {
+                                Log.w(TAG, "NrNsaBandwidthColumnHook: post-retry inject failed: " + ex);
+                            }
+                        });
+                        return result;
+                    }
+
                     // Row must have 7 children (BandColumnHook already ran)
                     if (row.getChildCount() != 7) return result;
 
-                    // Copy style from PCI view (child[3] after Band injection = original child[1])
-                    TextView refView = (TextView) row.getChildAt(3);
-                    TextView bwView  = new TextView(rowView.getContext());
-                    bwView.setText(bwText);
-                    bwView.setGravity(android.view.Gravity.CENTER);
-                    bwView.setMaxLines(1);
-                    bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, refView.getTextSize());
-                    bwView.setTypeface(refView.getTypeface());
-                    bwView.setTextColor(refView.getTextColors());
-
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                            0, (int) (21 * rowView.getContext().getResources().getDisplayMetrics().density));
-                    lp.weight = FINAL_WEIGHTS[2]; // 0.10f
-                    bwView.setLayoutParams(lp);
-
-                    row.addView(bwView, 2);
-
-                    // Redistribute all 8 columns
-                    for (int i = 0; i < row.getChildCount() && i < FINAL_WEIGHTS.length; i++) {
-                        LinearLayout.LayoutParams clp =
-                                (LinearLayout.LayoutParams) row.getChildAt(i).getLayoutParams();
-                        clp.weight = FINAL_WEIGHTS[i];
-                        row.getChildAt(i).setLayoutParams(clp);
-                    }
-
-                    row.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
+                    injectBwIntoRow(row, bwText, rowView);
                     Log.d(TAG, "NrNsaBandwidthColumnHook: injected BW col pos=" + position + " bw=" + bwText);
                     return result;
                 }
@@ -332,11 +324,49 @@ public class NrNsaBandwidthColumnHook {
         }
     }
 
+    /**
+     * Injects the BW TextView at index 2 of an already-Band-injected row (childCount==7)
+     * and redistributes all 8 column weights.
+     * Called both inline from getView and from the post() retry lambda.
+     */
+    private void injectBwIntoRow(LinearLayout row, String bwText, View contextView) {
+        // Copy style from PCI view (child[3] after Band injection = original child[1])
+        TextView refView = (TextView) row.getChildAt(3);
+        TextView bwView  = new TextView(contextView.getContext());
+        bwView.setText(bwText);
+        bwView.setGravity(android.view.Gravity.CENTER);
+        bwView.setMaxLines(1);
+        bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, refView.getTextSize());
+        bwView.setTypeface(refView.getTypeface());
+        if (!"-".equals(bwText)) {
+            bwView.setTextColor(0xFFFFFFFF);
+        } else {
+            bwView.setTextColor(refView.getTextColors());
+        }
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                0, (int) (21 * contextView.getContext().getResources().getDisplayMetrics().density));
+        lp.weight = FINAL_WEIGHTS[2]; // 0.10f
+        bwView.setLayoutParams(lp);
+
+        row.addView(bwView, 2);
+
+        // Redistribute all 8 columns
+        for (int i = 0; i < row.getChildCount() && i < FINAL_WEIGHTS.length; i++) {
+            LinearLayout.LayoutParams clp =
+                    (LinearLayout.LayoutParams) row.getChildAt(i).getLayoutParams();
+            clp.weight = FINAL_WEIGHTS[i];
+            row.getChildAt(i).setLayoutParams(clp);
+        }
+
+        row.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
+    }
+
     private LinearLayout findHorizontalRow(View v) {
         if (!(v instanceof LinearLayout)) return null;
         LinearLayout ll = (LinearLayout) v;
         if (ll.getOrientation() == LinearLayout.HORIZONTAL
-                && (ll.getChildCount() == 7 || ll.getChildCount() == 8)) {
+                && (ll.getChildCount() == 6 || ll.getChildCount() == 7 || ll.getChildCount() == 8)) {
             return ll;
         }
         if (ll.getOrientation() == LinearLayout.VERTICAL && ll.getChildCount() > 0) {
@@ -344,7 +374,7 @@ public class NrNsaBandwidthColumnHook {
             if (first instanceof LinearLayout) {
                 LinearLayout inner = (LinearLayout) first;
                 if (inner.getOrientation() == LinearLayout.HORIZONTAL
-                        && (inner.getChildCount() == 7 || inner.getChildCount() == 8)) {
+                        && (inner.getChildCount() == 6 || inner.getChildCount() == 7 || inner.getChildCount() == 8)) {
                     return inner;
                 }
             }
