@@ -372,7 +372,6 @@ public class GranularSeekBarHook {
                 Object targetFragment = (callbackHolder != null)
                         ? advActAField.get(callbackHolder)
                         : fragment;
-                Log.v(TAG, "seekWorkspace key=" + key);
                 wsGMethod.invoke(ws, key, targetFragment);
             } catch (Throwable t) {
                 Log.w(TAG, "seekWorkspace failed: " + t, t);
