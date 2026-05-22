@@ -355,16 +355,18 @@ public class GranularSeekBarHook {
         private void seekWorkspace(long key) {
             try {
                 Object ws = wsJ.get(null);
-                if (ws == null || wsC.get(ws) == null) return;
+                if (ws == null) { Log.w(TAG, "seekWorkspace: ws null"); return; }
+                if (wsC.get(ws) == null) { Log.w(TAG, "seekWorkspace: DataSource null"); return; }
                 // Resolve the back-reference fragment (k8.f) the same way
-                // onProgressChanged does: fragment.Y.f3807a
+                // onProgressChanged does: fragment.Y.a
                 Object callbackHolder = fragmentYField.get(fragment);
                 Object targetFragment = (callbackHolder != null)
                         ? advActAField.get(callbackHolder)
                         : fragment;
+                Log.v(TAG, "seekWorkspace key=" + key + " frag=" + targetFragment);
                 wsGMethod.invoke(ws, key, targetFragment);
             } catch (Throwable t) {
-                Log.w(TAG, "seekWorkspace failed: " + t);
+                Log.w(TAG, "seekWorkspace failed: " + t, t);
             }
         }
 
