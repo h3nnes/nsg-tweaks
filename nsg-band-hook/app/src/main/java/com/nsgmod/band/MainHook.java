@@ -37,6 +37,7 @@ public class MainHook extends XposedModule {
         new NrSaCellColorHook(this, param.getClassLoader(),
                 NrSaCsiSnrRowHook.saK2aCarriers).install();
         new SubscriberHook(this, param.getClassLoader()).install();
+        new ReplayStatusBarHook(this, param.getClassLoader()).install();
         new SettingsToggleHook(this, param.getClassLoader()).install();
     }
 }
