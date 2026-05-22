@@ -39,6 +39,7 @@ public class MainHook extends XposedModule {
         new SubscriberHook(this, param.getClassLoader()).install();
         new ReplayStatusBarHook(this, param.getClassLoader()).install();
         new GranularSeekBarHook(this, param.getClassLoader()).install();
+        new RtPlayHook(this, param.getClassLoader()).install();
         new SettingsToggleHook(this, param.getClassLoader()).install();
     }
 }
