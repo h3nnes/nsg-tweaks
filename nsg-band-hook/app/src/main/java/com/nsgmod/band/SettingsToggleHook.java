@@ -392,6 +392,79 @@ public class SettingsToggleHook {
             }
         }
 
+        // --- Third toggle: RT-Play button ---
+        if (findPref != null && findPref.invoke(prefScreen, PREF_KEY_RT_PLAY) == null) {
+            Object sw3 = swCtor.newInstance(ctorArgs);
+
+            if (keyField != null)     { keyField.set(sw3, PREF_KEY_RT_PLAY); }
+            if (titleField != null)   { titleField.set(sw3, "NSGMod: RT-Play button"); }
+            if (summaryField != null) { summaryField.set(sw3, "Show real-time replay button in log playback controls"); }
+
+            try {
+                Field iconSpaceField = prefBaseCls.getDeclaredField("C");
+                iconSpaceField.setAccessible(true);
+                iconSpaceField.set(sw3, false);
+            } catch (Throwable t) {
+                Log.w(TAG, "iconSpaceReserved field C not found for sw3: " + t);
+            }
+
+            // setDefaultValue(Boolean.TRUE) — RT-Play is on by default
+            for (Method m : prefBaseCls.getDeclaredMethods()) {
+                if (m.getReturnType() == void.class) {
+                    Class<?>[] p = m.getParameterTypes();
+                    if (p.length == 1 && p[0] == Object.class) {
+                        m.setAccessible(true);
+                        m.invoke(sw3, Boolean.TRUE);
+                        break;
+                    }
+                }
+            }
+
+            children.add(sw3);
+
+            // Attach PreferenceManager and parent to sw3
+            try {
+                Class<?> prefMgrType = prefManager.getClass();
+                Method attachMethod3 = null;
+                outer5:
+                for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+                    for (Method m : c.getDeclaredMethods()) {
+                        Class<?>[] p = m.getParameterTypes();
+                        if (p.length == 1 && p[0].isAssignableFrom(prefMgrType)
+                                && m.getReturnType() == void.class) {
+                            attachMethod3 = m;
+                            break outer5;
+                        }
+                    }
+                }
+                if (attachMethod3 != null) {
+                    attachMethod3.setAccessible(true);
+                    attachMethod3.invoke(sw3, prefManager);
+                } else {
+                    Log.w(TAG, "attach method not found on Preference for sw3");
+                }
+
+                Field parentField3 = null;
+                outer6:
+                for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+                    for (Field f : c.getDeclaredFields()) {
+                        if (f.getType() == prefGroupCls) {
+                            parentField3 = f;
+                            break outer6;
+                        }
+                    }
+                }
+                if (parentField3 != null) {
+                    parentField3.setAccessible(true);
+                    parentField3.set(sw3, prefScreen);
+                } else {
+                    Log.w(TAG, "parent field not found on Preference for sw3");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "failed to attach preference manager to sw3: " + t);
+            }
+        }
+
         // Notify the RecyclerView adapter that the preference list changed
         // n() = notifyHierarchyChanged in decompiled source
         prefScreenCls.getMethod("n").invoke(prefScreen);
