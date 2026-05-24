@@ -37,10 +37,14 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   pair.second               → intraRow: 0=PCell, 1=SCell1, 2=SCell2 …
  *
  * Keys:
- *   ARFCN serving    : NR5G::Cell_Measurements::NR_Cells_ARFCN       (Integer[], index=intraRow)
- *   ARFCN detected   : NR5G::Detected_Cells::NR_DetectedCells_ARFCN  (Integer[], index=intraRow)
- *   BW PCell         : NR5G::Serving_Cell::NR_Bandwidth_DL           (direct MHz int)
+ *   ARFCN serving    : NR5G::Cell_Measurements::NR_Cells_ARFCN           (Integer[], index=intraRow, covers ALL cells incl. non-metrics SCells)
+ *   ARFCN detected   : NR5G::Detected_Cells::NR_DetectedCells_ARFCN      (Integer[], index=intraRow)
+ *   BW PCell         : NR5G::Serving_Cell::NR_Bandwidth_DL               (direct MHz int)
  *   BW SCell N       : NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL  (index N-1)
+ *
+ * NOTE: Do NOT use NR5G::Serving_Cell::NR_ARFCN_SSB / NR_SCell_ARFCN_SSB for ARFCN.
+ * Those are the metrics-page (g8.m / NRNSANRCC) keys which only cover SCells visible
+ * on the NR-SA metrics tab. Aggregated SCells not on that page will show "-".
  */
 public class NrSaCellColumnsHook {
 
@@ -54,7 +58,7 @@ public class NrSaCellColumnsHook {
     private Field  wsSingleton;
     private Field  wsModuleIndex;
     private Field  wsDataSource;
-    private Field  wsCurrentTime;  // Workspace.g → long (replay cursor; -1 = live/unset)
+
     private Method dsGetProperty;
     private Method propIterMethod;
     private Method propGetMethod;   // Property.get(long key) → Object
@@ -85,7 +89,7 @@ public class NrSaCellColumnsHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
-            wsCurrentTime  = wsClass.getField("g");  // long replay cursor
+
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -123,23 +127,27 @@ public class NrSaCellColumnsHook {
     // -----------------------------------------------------------------------
 
     /** Read ARFCN for a row.
+     *
+     * Uses the same Cell_Measurements keys that a8.i (NRSACellsFragment) itself registers:
+     *   serving  → NR5G::Cell_Measurements::NR_Cells_ARFCN       (Integer[], index = intraRow)
+     *   detected → NR5G::Detected_Cells::NR_DetectedCells_ARFCN  (Integer[], index = intraRow)
+     *
+     * Do NOT use NR5G::Serving_Cell::NR_ARFCN_SSB or NR_SCell_ARFCN_SSB here.
+     * Those are the metrics-page (Serving_Cell namespace) keys used by g8.m (NRNSANRCC).
+     * SCells that are aggregated but not shown on the metrics page have no entry there,
+     * so they would show "-". The Cell_Measurements array covers all cells in the table.
+     *
      * @param isServing true = serving bucket (PCell/SCells); false = detected/neighbour bucket
-     * @param intraRow  bucket-relative row index (0-based; 0=PCell, 1+=SCell N)
+     * @param intraRow  bucket-relative row index (0-based; 0=PCell, 1=SCell1, 2=SCell2 …)
      */
     private String readArfcn(boolean isServing, int intraRow) {
         if (!isServing) {
-            // Neighbour / detected bucket — array-indexed, unchanged
             return readPropertyWithIndex(
                     "NR5G::Detected_Cells::NR_DetectedCells_ARFCN", intraRow);
         }
-        if (intraRow == 0) {
-            // PCell — scalar serving-cell key (same fast path as metrics page)
-            return readPropertyWithIndex(
-                    "NR5G::Serving_Cell::NR_ARFCN_SSB", -1);
-        }
-        // SCell N — scalar per-SCell key; scellIndex is 0-based
+        // Both PCell (intraRow=0) and SCells (intraRow≥1) are in the same flat array.
         return readPropertyWithIndex(
-                "NR5G::Serving_Cell::SCell::NR_SCell_ARFCN_SSB", intraRow - 1);
+                "NR5G::Cell_Measurements::NR_Cells_ARFCN", intraRow);
     }
 
     /**
@@ -164,10 +172,8 @@ public class NrSaCellColumnsHook {
             Object dataSource  = wsDataSource.get(ws);
             if (dataSource == null) return null;
 
-            // Use replay cursor time so values track the playback position.
-            // wsCurrentTime (Workspace.g) is -1 when live; fall back to Long.MAX_VALUE.
-            long cursorTime = wsCurrentTime.getLong(ws);
-            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+            // Always use Long.MAX_VALUE to get the latest sample (live mode compatible).
+            long queryTime = Long.MAX_VALUE;
 
             Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
             if (property == null) return null;
