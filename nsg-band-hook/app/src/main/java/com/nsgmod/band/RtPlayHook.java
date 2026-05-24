@@ -338,16 +338,16 @@ public class RtPlayHook {
                             } catch (Throwable t) {
                                 Log.w(TAG, "failed to remove RT-Play button container: " + t);
                             }
-                        });
-                        // Unregister listener
-                        if (rtPlayPrefListener != null) {
-                            try {
-                                prefs.unregisterOnSharedPreferenceChangeListener(rtPlayPrefListener);
-                            } catch (Throwable t) {
-                                Log.w(TAG, "unregister listener failed: " + t);
+                            // Unregister listener after view removal
+                            if (rtPlayPrefListener != null) {
+                                try {
+                                    prefs.unregisterOnSharedPreferenceChangeListener(rtPlayPrefListener);
+                                } catch (Throwable t) {
+                                    Log.w(TAG, "unregister listener failed: " + t);
+                                }
+                                rtPlayPrefListener = null;
                             }
-                            rtPlayPrefListener = null;
-                        }
+                        });
                     }
                 };
                 prefs.registerOnSharedPreferenceChangeListener(rtPlayPrefListener);
