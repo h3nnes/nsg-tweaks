@@ -115,6 +115,7 @@ public class NrSaCellColumnsHook {
         }
         hookGetView();
         hookOnCreateView();
+        hookH8bQ();
     }
 
     // -----------------------------------------------------------------------
@@ -446,5 +447,37 @@ public class NrSaCellColumnsHook {
         int color = ta.getColor(0, 0xFFAAAAAA);
         ta.recycle();
         return color;
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook 3: h8.b.Q() — force o0() rebuild when NR-SA CA Matrix becomes visible
+    // -----------------------------------------------------------------------
+
+    private void hookH8bQ() {
+        try {
+            Class<?> cls    = loader.loadClass("h8.b");
+            Method   qMeth  = cls.getDeclaredMethod("Q");
+            qMeth.setAccessible(true);
+            Method   o0Meth = cls.getDeclaredMethod("o0");
+            o0Meth.setAccessible(true);
+
+            xposed.hook(qMeth).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result   = chain.proceed();
+                    Object fragment = chain.getThisObject();
+                    try {
+                        o0Meth.invoke(fragment);
+                        Log.d(TAG, "NrSaCellColumnsHook: forced h8.b.o0() after Q()");
+                    } catch (Throwable t) {
+                        Log.w(TAG, "NrSaCellColumnsHook: h8.b.o0() invoke failed: " + t);
+                    }
+                    return result;
+                }
+            });
+            Log.i(TAG, "NrSaCellColumnsHook: hookH8bQ installed");
+        } catch (Throwable t) {
+            Log.w(TAG, "NrSaCellColumnsHook: hookH8bQ failed: " + t);
+        }
     }
 }
