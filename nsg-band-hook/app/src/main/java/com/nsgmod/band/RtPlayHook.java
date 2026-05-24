@@ -299,6 +299,10 @@ public class RtPlayHook {
         container.addView(forwardBtn);
         row.addView(container, fwdIndex);
 
+        // Effectively-final captures for use inside lambdas
+        final int capturedFwdIndex = fwdIndex;
+        final ViewGroup.LayoutParams capturedFwdRowLp = fwdRowLp;
+
         Log.i(TAG, "RT-Play button inserted at index " + fwdIndex);
 
         RtPlayController controller = new RtPlayController(
@@ -341,10 +345,21 @@ public class RtPlayHook {
                                 android.view.ViewParent p = btn.getParent();
                                 if (p instanceof ViewGroup) {
                                     // btn is inside the container LinearLayout;
-                                    // remove the entire container from the row
+                                    // remove the entire container from the row, then
+                                    // re-insert forwardBtn at its original index so it
+                                    // is not lost along with the container.
                                     android.view.ViewParent containerParent = ((ViewGroup) p).getParent();
                                     if (containerParent instanceof ViewGroup) {
-                                        ((ViewGroup) containerParent).removeView((View) p);
+                                        ViewGroup containerVg = (ViewGroup) p;
+                                        ViewGroup rowVg = (ViewGroup) containerParent;
+                                        // Detach forwardBtn from container before removing container
+                                        containerVg.removeView(forwardBtn);
+                                        // Restore original LayoutParams and re-insert into row
+                                        if (capturedFwdRowLp != null) {
+                                            forwardBtn.setLayoutParams(capturedFwdRowLp);
+                                        }
+                                        rowVg.removeView((View) p);
+                                        rowVg.addView(forwardBtn, capturedFwdIndex);
                                     }
                                 }
                             } catch (Throwable t) {
