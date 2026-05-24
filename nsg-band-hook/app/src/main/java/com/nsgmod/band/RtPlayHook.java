@@ -81,6 +81,7 @@ public class RtPlayHook {
 
     /** Listener that stops + removes the RT-Play button when the toggle is turned off. */
     private SharedPreferences.OnSharedPreferenceChangeListener rtPlayPrefListener = null;
+    private SharedPreferences rtPlayPrefs = null;
 
     public RtPlayHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -312,12 +313,23 @@ public class RtPlayHook {
 
         // Register a preference listener so toggling off immediately stops + removes the button
         try {
+            // Unregister any previous listener from a prior fragment instance
+            if (rtPlayPrefListener != null && rtPlayPrefs != null) {
+                try {
+                    rtPlayPrefs.unregisterOnSharedPreferenceChangeListener(rtPlayPrefListener);
+                } catch (Throwable t) {
+                    Log.w(TAG, "unregister old RT-Play listener failed: " + t);
+                }
+                rtPlayPrefListener = null;
+                rtPlayPrefs = null;
+            }
             Class<?> atCls = Class.forName("android.app.ActivityThread");
             android.app.Application app =
                     (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
             if (app != null) {
                 SharedPreferences prefs = app.getSharedPreferences(
                         "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+                rtPlayPrefs = prefs;
                 rtPlayPrefListener = (sharedPreferences, key) -> {
                     if (!SettingsToggleHook.PREF_KEY_RT_PLAY.equals(key)) return;
                     if (!sharedPreferences.getBoolean(key, true)) {
@@ -339,13 +351,18 @@ public class RtPlayHook {
                                 Log.w(TAG, "failed to remove RT-Play button container: " + t);
                             }
                             // Unregister listener after view removal
-                            if (rtPlayPrefListener != null) {
+                            SharedPreferences.OnSharedPreferenceChangeListener selfRef = rtPlayPrefListener;
+                            if (selfRef != null) {
                                 try {
-                                    prefs.unregisterOnSharedPreferenceChangeListener(rtPlayPrefListener);
+                                    prefs.unregisterOnSharedPreferenceChangeListener(selfRef);
                                 } catch (Throwable t) {
                                     Log.w(TAG, "unregister listener failed: " + t);
                                 }
-                                rtPlayPrefListener = null;
+                                // Only null the field if it still points to us (not a new listener)
+                                if (rtPlayPrefListener == selfRef) {
+                                    rtPlayPrefListener = null;
+                                    rtPlayPrefs = null;
+                                }
                             }
                         });
                     }
