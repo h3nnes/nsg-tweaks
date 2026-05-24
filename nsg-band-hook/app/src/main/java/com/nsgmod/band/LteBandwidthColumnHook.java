@@ -182,6 +182,8 @@ public class LteBandwidthColumnHook {
     public void install() {
         hookGetView();
         hookOnCreateView();
+        hookE8bQ();
+        hookG8iQ();
     }
 
     // -----------------------------------------------------------------------
@@ -398,5 +400,71 @@ public class LteBandwidthColumnHook {
         int color = ta.getColor(0, 0xFFAAAAAA);
         ta.recycle();
         return color;
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook 3: e8.b.Q() — force n0() rebuild when LTE CA Matrix becomes visible
+    // -----------------------------------------------------------------------
+
+    private void hookE8bQ() {
+        try {
+            Class<?> cls    = loader.loadClass("e8.b");
+            Method   qMeth  = cls.getDeclaredMethod("Q");
+            qMeth.setAccessible(true);
+            Method   n0Meth = cls.getDeclaredMethod("n0");
+            n0Meth.setAccessible(true);
+
+            xposed.hook(qMeth).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result   = chain.proceed();
+                    if (!SettingsToggleHook.cellModsEnabled()) return result;
+                    Object fragment = chain.getThisObject();
+                    try {
+                        n0Meth.invoke(fragment);
+                        Log.d(TAG, "LteBWHook: forced e8.b.n0() after Q()");
+                    } catch (Throwable t) {
+                        Log.w(TAG, "LteBWHook: e8.b.n0() invoke failed: " + t);
+                    }
+                    return result;
+                }
+            });
+            Log.i(TAG, "LteBWHook: hookE8bQ installed");
+        } catch (Throwable t) {
+            Log.e(TAG, "LteBWHook: hookE8bQ failed: " + t);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook 4: g8.i.Q() — force n0() rebuild when NR-NSA EUTRA CA Matrix becomes visible
+    // -----------------------------------------------------------------------
+
+    private void hookG8iQ() {
+        try {
+            Class<?> cls    = loader.loadClass("g8.i");
+            Method   qMeth  = cls.getDeclaredMethod("Q");
+            qMeth.setAccessible(true);
+            Method   n0Meth = cls.getDeclaredMethod("n0");
+            n0Meth.setAccessible(true);
+
+            xposed.hook(qMeth).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result   = chain.proceed();
+                    if (!SettingsToggleHook.cellModsEnabled()) return result;
+                    Object fragment = chain.getThisObject();
+                    try {
+                        n0Meth.invoke(fragment);
+                        Log.d(TAG, "LteBWHook: forced g8.i.n0() after Q()");
+                    } catch (Throwable t) {
+                        Log.w(TAG, "LteBWHook: g8.i.n0() invoke failed: " + t);
+                    }
+                    return result;
+                }
+            });
+            Log.i(TAG, "LteBWHook: hookG8iQ installed");
+        } catch (Throwable t) {
+            Log.e(TAG, "LteBWHook: hookG8iQ failed: " + t);
+        }
     }
 }
