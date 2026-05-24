@@ -2,6 +2,7 @@ package com.nsgmod.band;
 
 import android.content.Context;
 import android.graphics.PorterDuff;
+import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
@@ -77,6 +78,9 @@ public class RtPlayHook {
     private Method maAMMethod; // ma.a.m(Date) → String  (format timestamp label)
 
     private boolean reflectionReady = false;
+
+    /** Listener that stops + removes the RT-Play button when the toggle is turned off. */
+    private SharedPreferences.OnSharedPreferenceChangeListener rtPlayPrefListener = null;
 
     public RtPlayHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -175,6 +179,10 @@ public class RtPlayHook {
     // ── Button injection ──────────────────────────────────────────────────────
 
     private void attachButton(Object fragment, View rootView) {
+        if (!SettingsToggleHook.rtPlayEnabled()) {
+            Log.i(TAG, "RT-Play toggle is off — skipping button attachment");
+            return;
+        }
         View forwardBtn = rootView.findViewById(ID_FWD);
         if (forwardBtn == null) {
             Log.w(TAG, "playback_forward_500ms (0x7f09022c) not found in view tree");
@@ -301,6 +309,53 @@ public class RtPlayHook {
                 fragmentYField, advActAField, fragmentZField,
                 fragmentI0Method, maAMMethod);
         btn.setOnClickListener(v -> controller.toggle());
+
+        // Register a preference listener so toggling off immediately stops + removes the button
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            android.app.Application app =
+                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app != null) {
+                SharedPreferences prefs = app.getSharedPreferences(
+                        "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+                rtPlayPrefListener = (sharedPreferences, key) -> {
+                    if (!SettingsToggleHook.PREF_KEY_RT_PLAY.equals(key)) return;
+                    if (!sharedPreferences.getBoolean(key, true)) {
+                        // Toggle turned off — stop playback and remove button immediately
+                        Log.i(TAG, "RT-Play toggle turned off — stopping and removing button");
+                        controller.stop();
+                        btn.post(() -> {
+                            try {
+                                android.view.ViewParent p = btn.getParent();
+                                if (p instanceof ViewGroup) {
+                                    // btn is inside the container LinearLayout;
+                                    // remove the entire container from the row
+                                    android.view.ViewParent containerParent = ((ViewGroup) p).getParent();
+                                    if (containerParent instanceof ViewGroup) {
+                                        ((ViewGroup) containerParent).removeView((View) p);
+                                    }
+                                }
+                            } catch (Throwable t) {
+                                Log.w(TAG, "failed to remove RT-Play button container: " + t);
+                            }
+                        });
+                        // Unregister listener
+                        if (rtPlayPrefListener != null) {
+                            try {
+                                prefs.unregisterOnSharedPreferenceChangeListener(rtPlayPrefListener);
+                            } catch (Throwable t) {
+                                Log.w(TAG, "unregister listener failed: " + t);
+                            }
+                            rtPlayPrefListener = null;
+                        }
+                    }
+                };
+                prefs.registerOnSharedPreferenceChangeListener(rtPlayPrefListener);
+                Log.i(TAG, "RT-Play preference listener registered");
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "failed to register RT-Play preference listener: " + t);
+        }
     }
 
     // =========================================================================
@@ -444,7 +499,7 @@ public class RtPlayHook {
             Log.i(TAG, "RT-Play started");
         }
 
-        private void stop() {
+        void stop() {
             playing = false;
             handler.removeCallbacks(stepRunnable);
             // button.setText must run on UI thread; handler is main-looper so this is safe
