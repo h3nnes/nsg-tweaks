@@ -123,13 +123,22 @@ public class NrSaCellColumnsHook {
 
     /** Read ARFCN for a row.
      * @param isServing true = serving bucket (PCell/SCells); false = detected/neighbour bucket
-     * @param intraRow  bucket-relative row index (0-based)
+     * @param intraRow  bucket-relative row index (0-based; 0=PCell, 1+=SCell N)
      */
     private String readArfcn(boolean isServing, int intraRow) {
-        String key = isServing
-                ? "NR5G::Cell_Measurements::NR_Cells_ARFCN"
-                : "NR5G::Detected_Cells::NR_DetectedCells_ARFCN";
-        return readPropertyWithIndex(key, intraRow);
+        if (!isServing) {
+            // Neighbour / detected bucket — array-indexed, unchanged
+            return readPropertyWithIndex(
+                    "NR5G::Detected_Cells::NR_DetectedCells_ARFCN", intraRow);
+        }
+        if (intraRow == 0) {
+            // PCell — scalar serving-cell key (same fast path as metrics page)
+            return readPropertyWithIndex(
+                    "NR5G::Serving_Cell::NR_ARFCN_SSB", -1);
+        }
+        // SCell N — scalar per-SCell key; scellIndex is 0-based
+        return readPropertyWithIndex(
+                "NR5G::Serving_Cell::SCell::NR_SCell_ARFCN_SSB", intraRow - 1);
     }
 
     /**
