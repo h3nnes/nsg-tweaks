@@ -487,9 +487,12 @@ public class LteBandwidthColumnHook {
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
                     Object fragment = chain.getThisObject();
                     try {
-                        Method getViewMeth = fragment.getClass().getMethod("getView");
-                        android.view.View fragView =
-                                (android.view.View) getViewMeth.invoke(fragment);
+                        android.view.View fragView = null;
+                        if (fragment instanceof androidx.fragment.app.Fragment) {
+                            fragView = ((androidx.fragment.app.Fragment) fragment).getView();
+                        } else if (fragment instanceof android.app.Fragment) {
+                            fragView = ((android.app.Fragment) fragment).getView();
+                        }
                         if (fragView == null) return result;
 
                         android.widget.ListView lv =
@@ -498,7 +501,9 @@ public class LteBandwidthColumnHook {
                         if (lv == null) return result;
 
                         lv.postDelayed(() -> {
+                            // 500 ms gives LTE::Serving_Cell properties time to populate after NR→LTE fallback
                             try {
+                                if (!lv.isAttachedToWindow()) return;
                                 android.widget.ListAdapter adapter = lv.getAdapter();
                                 if (adapter instanceof android.widget.BaseAdapter) {
                                     ((android.widget.BaseAdapter) adapter)
