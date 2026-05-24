@@ -16,6 +16,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Date;
@@ -68,11 +69,11 @@ public class RtPlayHook {
     private Field  attrD;     // com.qtrun.sys.a.d  (the Property object)
 
     // ── com.qtrun.sys.Property / Property.Iterator reflection ─────────────────
-    private Method propB;     // Property.b(long) → Iterator  (positioned at key ≤ arg)
+    private Constructor<?> iterCtor;        // Iterator(Property) constructor
+    private Method iterForwardLong; // Iterator.forward(long) → seek to first record >= T
     private Method iterEnd;   // Iterator.end()Z
     private Method iterKey;   // Iterator.key()J
     private Method iterValue; // Iterator.value()Object  (cast to Date)
-    private Method iterNext;  // Iterator.next()V  (advance forward one record)
 
     // ── ma.a reflection ───────────────────────────────────────────────────────
     private Method maAMMethod; // ma.a.m(Date) → String  (format timestamp label)
@@ -136,11 +137,11 @@ public class RtPlayHook {
             attrD = attrClass.getDeclaredField("d"); attrD.setAccessible(true);
 
             // Property / Iterator
-            propB     = propClass.getDeclaredMethod("b", long.class); propB.setAccessible(true);
+            iterCtor        = iterClass.getDeclaredConstructor(propClass); iterCtor.setAccessible(true);
+            iterForwardLong = iterClass.getDeclaredMethod("forward", long.class); iterForwardLong.setAccessible(true);
             iterEnd   = iterClass.getDeclaredMethod("end");            iterEnd.setAccessible(true);
             iterKey   = iterClass.getDeclaredMethod("key");            iterKey.setAccessible(true);
             iterValue = iterClass.getDeclaredMethod("value");          iterValue.setAccessible(true);
-            iterNext  = iterClass.getDeclaredMethod("next");           iterNext.setAccessible(true);
 
             // ma.a.m(Date) → String
             maAMMethod = maAClass.getDeclaredMethod("m", dateClass); maAMMethod.setAccessible(true);
@@ -309,8 +310,8 @@ public class RtPlayHook {
                 fragment, btn,
                 wsJ, wsG, wsI, wsC, wsF,
                 wsGMethod, wsIMethod,
-                attrD, propB,
-                iterEnd, iterKey, iterValue, iterNext,
+                attrD, iterCtor, iterForwardLong,
+                iterEnd, iterKey, iterValue,
                 fragmentYField, advActAField, fragmentZField,
                 fragmentI0Method, maAMMethod);
         btn.setOnClickListener(v -> controller.toggle());
@@ -410,8 +411,9 @@ public class RtPlayHook {
 
         // Attribute / Property / Iterator reflection
         private final Field  attrD;
-        private final Method propB;
-        private final Method iterEnd, iterKey, iterValue, iterNext;
+        private final Constructor<?> iterCtor;
+        private final Method iterForwardLong;
+        private final Method iterEnd, iterKey, iterValue;
 
         // Fragment reflection
         private final Field  fragmentYField, advActAField, fragmentZField;
@@ -432,8 +434,6 @@ public class RtPlayHook {
                     }
 
                     long curKey   = wsG.getLong(ws);
-                    Date curDate  = (Date) wsI.get(ws);
-                    if (curDate == null) { stop(); return; }
 
                     // Get the Common::Timestamp Property
                     Object attr = wsF.get(ws);
@@ -441,9 +441,10 @@ public class RtPlayHook {
                     Object prop = attrD.get(attr);
                     if (prop == null) { stop(); return; }
 
-                    // Create iterator at the current key, then step one record forward
-                    Object it = propB.invoke(prop, curKey);
-                    iterNext.invoke(it);
+                    // Seek to first record >= next whole-second boundary
+                    long nextSecond = (curKey / 1000L + 1L) * 1000L;
+                    Object it = iterCtor.newInstance(prop);
+                    iterForwardLong.invoke(it, nextSecond);
 
                     if ((Boolean) iterEnd.invoke(it)) {
                         // Reached end of log — stop playback
@@ -451,13 +452,8 @@ public class RtPlayHook {
                         stop(); return;
                     }
 
-                    long nextKey  = (Long)  iterKey.invoke(it);
-                    Date nextDate = (Date)  iterValue.invoke(it);
-
-                    // Real-time delta between this record and the next
-                    long deltaMs = nextDate.getTime() - curDate.getTime();
-                    if (deltaMs < 0)      deltaMs = 0;
-                    if (deltaMs > 10_000) deltaMs = 10_000; // safety cap: max 10 s gap
+                    long nextKey  = (Long) iterKey.invoke(it);
+                    Date nextDate = (Date) iterValue.invoke(it);
 
                     // Resolve targetFragment the same way onProgressChanged does
                     Object callbackHolder = fragmentYField.get(fragment);
@@ -480,8 +476,8 @@ public class RtPlayHook {
                         ((TextView) tvObj).setText(label);
                     }
 
-                    // Schedule next step after the real-time interval
-                    handler.postDelayed(this, Math.max(deltaMs, 16L));
+                    // Schedule next step after fixed 1000ms wall-clock tick
+                    handler.postDelayed(this, 1000L);
 
                 } catch (Throwable t) {
                     Log.w(TAG, "stepRunnable error: " + t, t);
@@ -494,8 +490,8 @@ public class RtPlayHook {
                 Object fragment, Button button,
                 Field wsJ, Field wsG, Field wsI, Field wsC, Field wsF,
                 Method wsGMethod, Method wsIMethod,
-                Field attrD, Method propB,
-                Method iterEnd, Method iterKey, Method iterValue, Method iterNext,
+                Field attrD, Constructor<?> iterCtor, Method iterForwardLong,
+                Method iterEnd, Method iterKey, Method iterValue,
                 Field fragmentYField, Field advActAField, Field fragmentZField,
                 Method fragmentI0Method, Method maAMMethod) {
             this.fragment         = fragment;
@@ -508,11 +504,11 @@ public class RtPlayHook {
             this.wsGMethod        = wsGMethod;
             this.wsIMethod        = wsIMethod;
             this.attrD            = attrD;
-            this.propB            = propB;
+            this.iterCtor         = iterCtor;
+            this.iterForwardLong  = iterForwardLong;
             this.iterEnd          = iterEnd;
             this.iterKey          = iterKey;
             this.iterValue        = iterValue;
-            this.iterNext         = iterNext;
             this.fragmentYField   = fragmentYField;
             this.advActAField     = advActAField;
             this.fragmentZField   = fragmentZField;
