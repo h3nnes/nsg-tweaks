@@ -184,6 +184,7 @@ public class LteBandwidthColumnHook {
         hookOnCreateView();
         hookE8bQ();
         hookG8iQ();
+        hookA8fQ();
     }
 
     // -----------------------------------------------------------------------
@@ -465,6 +466,60 @@ public class LteBandwidthColumnHook {
             Log.i(TAG, "LteBWHook: hookG8iQ installed");
         } catch (Throwable t) {
             Log.e(TAG, "LteBWHook: hookG8iQ failed: " + t);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook 5: a8.f.Q() — post delayed notifyDataSetChanged to re-read BW
+    //         after NR→LTE fallback once LTE Serving_Cell data has settled
+    // -----------------------------------------------------------------------
+
+    private void hookA8fQ() {
+        try {
+            Class<?> cls   = loader.loadClass("a8.f");
+            Method   qMeth = cls.getDeclaredMethod("Q");
+            qMeth.setAccessible(true);
+
+            xposed.hook(qMeth).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result   = chain.proceed();
+                    if (!SettingsToggleHook.cellModsEnabled()) return result;
+                    Object fragment = chain.getThisObject();
+                    try {
+                        Method getViewMeth = fragment.getClass().getMethod("getView");
+                        android.view.View fragView =
+                                (android.view.View) getViewMeth.invoke(fragment);
+                        if (fragView == null) return result;
+
+                        android.widget.ListView lv =
+                                (android.widget.ListView) fragView.findViewById(
+                                        android.R.id.list);
+                        if (lv == null) return result;
+
+                        lv.postDelayed(() -> {
+                            try {
+                                android.widget.ListAdapter adapter = lv.getAdapter();
+                                if (adapter instanceof android.widget.BaseAdapter) {
+                                    ((android.widget.BaseAdapter) adapter)
+                                            .notifyDataSetChanged();
+                                    Log.d(TAG, "LteBWHook: delayed notifyDataSetChanged"
+                                            + " on a8.f fired");
+                                }
+                            } catch (Throwable t2) {
+                                Log.w(TAG, "LteBWHook: delayed notify failed: " + t2);
+                            }
+                        }, 500);
+
+                    } catch (Throwable t) {
+                        Log.w(TAG, "LteBWHook: hookA8fQ body failed: " + t);
+                    }
+                    return result;
+                }
+            });
+            Log.i(TAG, "LteBWHook: hookA8fQ installed");
+        } catch (Throwable t) {
+            Log.e(TAG, "LteBWHook: hookA8fQ failed: " + t);
         }
     }
 }
