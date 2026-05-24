@@ -74,6 +74,7 @@ public class RtPlayHook {
     private Method iterEnd;   // Iterator.end()Z
     private Method iterKey;   // Iterator.key()J
     private Method iterValue; // Iterator.value()Object  (cast to Date)
+    private Method iterNext;  // Iterator.next()V  (step one record forward)
 
     // ── ma.a reflection ───────────────────────────────────────────────────────
     private Method maAMMethod; // ma.a.m(Date) → String  (format timestamp label)
@@ -142,6 +143,7 @@ public class RtPlayHook {
             iterEnd   = iterClass.getDeclaredMethod("end");            iterEnd.setAccessible(true);
             iterKey   = iterClass.getDeclaredMethod("key");            iterKey.setAccessible(true);
             iterValue = iterClass.getDeclaredMethod("value");          iterValue.setAccessible(true);
+            iterNext  = iterClass.getDeclaredMethod("next");           iterNext.setAccessible(true);
 
             // ma.a.m(Date) → String
             maAMMethod = maAClass.getDeclaredMethod("m", dateClass); maAMMethod.setAccessible(true);
@@ -311,7 +313,7 @@ public class RtPlayHook {
                 wsJ, wsG, wsI, wsC, wsF,
                 wsGMethod, wsIMethod,
                 attrD, iterCtor, iterForwardLong,
-                iterEnd, iterKey, iterValue,
+                iterEnd, iterKey, iterValue, iterNext,
                 fragmentYField, advActAField, fragmentZField,
                 fragmentI0Method, maAMMethod);
         btn.setOnClickListener(v -> controller.toggle());
@@ -413,7 +415,7 @@ public class RtPlayHook {
         private final Field  attrD;
         private final Constructor<?> iterCtor;
         private final Method iterForwardLong;
-        private final Method iterEnd, iterKey, iterValue;
+        private final Method iterEnd, iterKey, iterValue, iterNext;
 
         // Fragment reflection
         private final Field  fragmentYField, advActAField, fragmentZField;
@@ -433,27 +435,46 @@ public class RtPlayHook {
                         stop(); return;
                     }
 
-                    long curKey   = wsG.getLong(ws);
+                    long curKey = wsG.getLong(ws);
 
                     // Get the Common::Timestamp Property
                     Object attr = wsF.get(ws);
-                    if (attr == null) { stop(); return; }
+                    if (attr == null) { Log.w(TAG, "tick: attr null"); stop(); return; }
                     Object prop = attrD.get(attr);
-                    if (prop == null) { stop(); return; }
+                    if (prop == null) { Log.w(TAG, "tick: prop null"); stop(); return; }
 
-                    // Seek to first record >= next whole-second boundary
-                    long nextSecond = (curKey / 1000L + 1L) * 1000L;
+                    // Get current Date from Workspace.i — use its real wall-clock ms
+                    // to compute the 1-second boundary. Keys are NOT in milliseconds.
+                    Date curDate = (Date) wsI.get(ws);
+                    if (curDate == null) { Log.w(TAG, "tick: curDate null"); stop(); return; }
+                    long targetMs = curDate.getTime() + 1000L;
+                    Log.d(TAG, "tick: curKey=" + curKey + " curDate=" + curDate.getTime() + " targetMs=" + targetMs);
+
+                    // Position iterator at current key, then step forward until
+                    // we find the first record whose Date >= targetMs
                     Object it = iterCtor.newInstance(prop);
-                    iterForwardLong.invoke(it, nextSecond);
+                    iterForwardLong.invoke(it, curKey);  // seek to current position first
 
-                    if ((Boolean) iterEnd.invoke(it)) {
-                        // Reached end of log — stop playback
+                    // step past current record (we're already at it)
+                    iterNext.invoke(it);
+
+                    long nextKey = -1L;
+                    Date nextDate = null;
+                    while (!((Boolean) iterEnd.invoke(it))) {
+                        Date d = (Date) iterValue.invoke(it);
+                        if (d != null && d.getTime() >= targetMs) {
+                            nextKey  = (Long) iterKey.invoke(it);
+                            nextDate = d;
+                            break;
+                        }
+                        iterNext.invoke(it);
+                    }
+
+                    if (nextKey < 0) {
                         Log.i(TAG, "RT-Play: end of log reached");
                         stop(); return;
                     }
-
-                    long nextKey  = (Long) iterKey.invoke(it);
-                    Date nextDate = (Date) iterValue.invoke(it);
+                    Log.d(TAG, "tick: nextKey=" + nextKey + " nextDate=" + nextDate.getTime());
 
                     // Resolve targetFragment the same way onProgressChanged does
                     Object callbackHolder = fragmentYField.get(fragment);
@@ -491,7 +512,7 @@ public class RtPlayHook {
                 Field wsJ, Field wsG, Field wsI, Field wsC, Field wsF,
                 Method wsGMethod, Method wsIMethod,
                 Field attrD, Constructor<?> iterCtor, Method iterForwardLong,
-                Method iterEnd, Method iterKey, Method iterValue,
+                Method iterEnd, Method iterKey, Method iterValue, Method iterNext,
                 Field fragmentYField, Field advActAField, Field fragmentZField,
                 Method fragmentI0Method, Method maAMMethod) {
             this.fragment         = fragment;
@@ -509,6 +530,7 @@ public class RtPlayHook {
             this.iterEnd          = iterEnd;
             this.iterKey          = iterKey;
             this.iterValue        = iterValue;
+            this.iterNext         = iterNext;
             this.fragmentYField   = fragmentYField;
             this.advActAField     = advActAField;
             this.fragmentZField   = fragmentZField;
