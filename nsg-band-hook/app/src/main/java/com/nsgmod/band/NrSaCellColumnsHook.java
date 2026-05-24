@@ -465,6 +465,7 @@ public class NrSaCellColumnsHook {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result   = chain.proceed();
+                    if (!SettingsToggleHook.cellModsEnabled()) return result;
                     Object fragment = chain.getThisObject();
                     try {
                         o0Meth.invoke(fragment);
@@ -477,7 +478,7 @@ public class NrSaCellColumnsHook {
             });
             Log.i(TAG, "NrSaCellColumnsHook: hookH8bQ installed");
         } catch (Throwable t) {
-            Log.w(TAG, "NrSaCellColumnsHook: hookH8bQ failed: " + t);
+            Log.e(TAG, "NrSaCellColumnsHook: hookH8bQ failed: " + t);
         }
     }
 }
