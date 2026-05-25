@@ -13,24 +13,22 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks t7.u.i0(String) — NSG's Experiment onCreatePreferences — to inject a
- * SwitchPreferenceCompat into the PreferenceScreen root.
+ * Hooks t7.t.i0(String) — NSG's Experiment onCreatePreferences — to inject
+ * SwitchPreferenceCompat toggles into the PreferenceScreen root.
  *
  * All androidx.preference classes are loaded from NSG's classloader (compileOnly
  * means they are absent from our APK at runtime). Every preference interaction
  * goes through reflection.
  *
- * Toggle state is stored in SharedPreferences file "nsgmod_prefs"
- * under key "nsgmod.subscriber_bypass" (default: false).
- * SubscriberHook reads the same file on every call.
+ * Toggle states are stored in SharedPreferences file "com.qtrun.QuickTest_preferences".
  */
 public class SettingsToggleHook {
 
-    private static final String TAG          = "NSGBandHook_Settings";
-    static final String  PREFS_FILE   = "nsgmod_prefs";
-    static final String  PREF_KEY     = "nsgmod.subscriber_bypass";
-    static final String  PREF_KEY_CELL_MODS = "nsgmod.cell_mods_enabled";
-    static final String  PREF_KEY_RT_PLAY   = "nsgmod.rt_play_enabled";
+    private static final String TAG               = "NSGBandHook_Settings";
+    static final String  PREFS_FILE               = "nsgmod_prefs";
+    static final String  PREF_KEY                 = "nsgmod.subscriber_bypass";
+    static final String  PREF_KEY_CELL_MODS       = "nsgmod.cell_mods_enabled";
+    static final String  PREF_KEY_RT_PLAY         = "nsgmod.rt_play_enabled";
 
     /** Returns true when the cell-table modifications toggle is enabled (default: true). */
     public static boolean cellModsEnabled() {
@@ -43,7 +41,7 @@ public class SettingsToggleHook {
                     "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
             return prefs.getBoolean(PREF_KEY_CELL_MODS, true); // default ON
         } catch (Throwable t) {
-            android.util.Log.w("NSGBandHook_Settings", "cellModsEnabled check failed: " + t);
+            android.util.Log.w(TAG, "cellModsEnabled check failed: " + t);
             return true; // fail open — keep mods active
         }
     }
@@ -59,12 +57,12 @@ public class SettingsToggleHook {
                     "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
             return prefs.getBoolean(PREF_KEY_RT_PLAY, true); // default ON
         } catch (Throwable t) {
-            android.util.Log.w("NSGBandHook_Settings", "rtPlayEnabled check failed: " + t);
+            android.util.Log.w(TAG, "rtPlayEnabled check failed: " + t);
             return true; // fail open — keep button visible
         }
     }
 
-    private static final String FRAGMENT_CLS = "t7.u";
+    private static final String FRAGMENT_CLS = "t7.t";
 
     private final XposedInterface xposed;
     private final ClassLoader     loader;
@@ -75,18 +73,15 @@ public class SettingsToggleHook {
     }
 
     public void install() {
-        Log.i(TAG, "install() called");
         try {
             Class<?> fragCls = loader.loadClass(FRAGMENT_CLS);
             Method i0 = fragCls.getDeclaredMethod("i0", String.class);
-            Log.i(TAG, "method found: " + i0);
 
             xposed.hook(i0).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     Object fragment = chain.getThisObject();
-                    Log.i(TAG, "i0() intercepted");
                     try {
                         injectToggle(fragment);
                     } catch (Throwable t) {
@@ -96,7 +91,7 @@ public class SettingsToggleHook {
                 }
             });
 
-            Log.i(TAG, "settings toggle hook installed");
+            Log.i(TAG, "settings toggle hook installed on " + FRAGMENT_CLS + ".i0");
         } catch (Throwable t) {
             Log.w(TAG, "install failed: " + t, t);
         }
@@ -106,25 +101,22 @@ public class SettingsToggleHook {
         // --- 1. Get PreferenceScreen via field reflection ---
         // fragment.Y  →  PreferenceManager (androidx.preference.f)
         // prefManager.<field of type PreferenceScreen>  →  PreferenceScreen
-        Class<?> baseCls    = loader.loadClass("androidx.preference.c");
-        Field yField        = baseCls.getField("Y");
-        Object prefManager  = yField.get(fragment);
+        Class<?> baseCls = loader.loadClass("androidx.preference.c");
+        Field yField = baseCls.getField("Y");
+        Object prefManager = yField.get(fragment);
         if (prefManager == null) {
-            Log.w(TAG, "PreferenceManager is null");
+            Log.w(TAG, "PreferenceManager (Y) is null — aborting");
             return;
         }
 
         Class<?> prefScreenCls = loader.loadClass("androidx.preference.PreferenceScreen");
         Class<?> prefMgrCls    = prefManager.getClass();
+
         Field screenField = null;
         for (Field f : prefMgrCls.getDeclaredFields()) {
-            if (f.getType() == prefScreenCls) {
-                screenField = f;
-                break;
-            }
+            if (f.getType() == prefScreenCls) { screenField = f; break; }
         }
         if (screenField == null) {
-            // walk superclasses too
             Class<?> c = prefMgrCls.getSuperclass();
             while (c != null && screenField == null) {
                 for (Field f : c.getDeclaredFields()) {
@@ -134,49 +126,46 @@ public class SettingsToggleHook {
             }
         }
         if (screenField == null) {
-            Log.w(TAG, "PreferenceScreen field not found in PreferenceManager");
+            Log.w(TAG, "PreferenceScreen field not found — aborting");
             return;
         }
         screenField.setAccessible(true);
         Object prefScreen = screenField.get(prefManager);
         if (prefScreen == null) {
-            Log.w(TAG, "PreferenceScreen is null");
+            Log.w(TAG, "PreferenceScreen is null — aborting");
             return;
         }
 
         // --- 2. Guard against double-injection ---
-        // findPreference is obfuscated; find by signature: (CharSequence) → Preference
+        // findPreference generic signature <T extends Preference> T F(CharSequence) erases
+        // return type to Object at runtime — match on CharSequence parameter only.
         Class<?> prefCls = loader.loadClass("androidx.preference.Preference");
         Method findPref = null;
         for (Method m : prefScreenCls.getMethods()) {
             Class<?>[] p = m.getParameterTypes();
-            if (p.length == 1 && p[0] == CharSequence.class && prefCls.isAssignableFrom(m.getReturnType())) {
+            if (p.length == 1 && p[0] == CharSequence.class) {
                 findPref = m;
                 break;
             }
         }
         if (findPref != null && findPref.invoke(prefScreen, PREF_KEY) != null) {
-            Log.i(TAG, "toggle already present, skipping");
-            return;
+            return; // already injected
         }
+
         // --- 3. Get Context ---
-        // requireContext() is obfuscated; find by signature: () → Context
         Method reqCtx = null;
         for (Method m : fragment.getClass().getMethods()) {
             if (m.getParameterCount() == 0 && m.getReturnType() == Context.class) {
-                reqCtx = m;
-                break;
+                reqCtx = m; break;
             }
         }
         if (reqCtx == null) {
-            Log.w(TAG, "requireContext() method not found");
+            Log.w(TAG, "requireContext() not found — aborting");
             return;
         }
         Context ctx = (Context) reqCtx.invoke(fragment);
 
-        // --- 4. Build SwitchPreferenceCompat via reflection ---
-        // Constructor is (Context, AttributeSet[, int[, int]]) — no single-arg variant.
-        // Pick the shortest constructor with Context as first param, pass nulls for rest.
+        // --- 4. Locate SwitchPreferenceCompat constructor ---
         Class<?> swCls = loader.loadClass("androidx.preference.SwitchPreferenceCompat");
         java.lang.reflect.Constructor<?> swCtor = null;
         for (java.lang.reflect.Constructor<?> c : swCls.getDeclaredConstructors()) {
@@ -185,23 +174,17 @@ public class SettingsToggleHook {
                 if (swCtor == null || p.length < swCtor.getParameterCount()) swCtor = c;
             }
         }
-        if (swCtor == null) { Log.w(TAG, "SwitchPreferenceCompat ctor not found"); return; }
+        if (swCtor == null) {
+            Log.w(TAG, "SwitchPreferenceCompat ctor not found — aborting");
+            return;
+        }
         swCtor.setAccessible(true);
-        Object[] ctorArgs = new Object[swCtor.getParameterCount()];
-        ctorArgs[0] = ctx;
-        Object sw = swCtor.newInstance(ctorArgs);
 
-        // Set fields directly by type — decompiler-assigned names don't match runtime.
+        // --- 5. Locate key/title/summary/iconSpaceReserved fields on Preference ---
         Class<?> prefBaseCls = loader.loadClass("androidx.preference.Preference");
-
-        // key: the only String field whose name is "key" candidate — find by scanning
-        // We identify fields by type + position heuristic: key=String#1, summary=String#2, etc.
-        // Safer: use the obfuscated method that takes (String) and returns void for setKey.
-        // x(String) in decompiled source writes to SharedPreferences — that's persistString.
-        // The key field is final String — set via reflection by finding the first final String field.
-        Field keyField = null;
-        Field titleField = null;   // CharSequence — title
-        Field summaryField = null; // CharSequence — summary (second CharSequence field)
+        Field keyField     = null;
+        Field titleField   = null;
+        Field summaryField = null;
         for (Field f : prefBaseCls.getDeclaredFields()) {
             Class<?> ft = f.getType();
             int mod = f.getModifiers();
@@ -210,265 +193,153 @@ public class SettingsToggleHook {
             } else if (ft == CharSequence.class && titleField == null) {
                 titleField = f;
             } else if (ft == CharSequence.class && summaryField == null) {
-                // second CharSequence field = summary
                 summaryField = f;
             }
         }
+        if (keyField != null) keyField.setAccessible(true);
+        if (titleField != null) titleField.setAccessible(true);
+        if (summaryField != null) summaryField.setAccessible(true);
 
-        if (keyField != null) { keyField.setAccessible(true); keyField.set(sw, PREF_KEY); }
-        else Log.w(TAG, "key field not found");
-
-        if (titleField != null) { titleField.setAccessible(true); titleField.set(sw, "NSGMod: Subscriber bypass"); }
-        else Log.w(TAG, "title field not found");
-
-        if (summaryField != null) { summaryField.setAccessible(true); summaryField.set(sw, "Unlock all premium features"); }
-        else Log.w(TAG, "summary field not found");
-
-        // iconSpaceReserved = field "C" (public final boolean C) in Preference
-        // Controls whether icon placeholder space is shown when no icon is set.
-        // Do NOT call y(boolean) — that method sets f1518p (isVisible/shown), not iconSpaceReserved,
-        // and causes k()=false which disables the entire view (greys it out).
+        // iconSpaceReserved field (named "C" in v4.8.6)
+        Field iconSpaceField = null;
         try {
-            Field iconSpaceField = prefBaseCls.getDeclaredField("C");
+            iconSpaceField = prefBaseCls.getDeclaredField("C");
             iconSpaceField.setAccessible(true);
-            iconSpaceField.set(sw, false);
-        } catch (Throwable t) {
-            Log.w(TAG, "iconSpaceReserved field C not found: " + t);
-        }
+        } catch (Throwable ignored) {}
 
-        // setDefaultValue → find void method taking Object
+        // setDefaultValue: void method(Object) on Preference
+        Method setDefaultValue = null;
         for (Method m : prefBaseCls.getDeclaredMethods()) {
             if (m.getReturnType() == void.class) {
                 Class<?>[] p = m.getParameterTypes();
                 if (p.length == 1 && p[0] == Object.class) {
-                    m.setAccessible(true);
-                    m.invoke(sw, false);
+                    setDefaultValue = m;
+                    setDefaultValue.setAccessible(true);
                     break;
                 }
             }
         }
 
-        // --- 5. Wire PreferenceDataStore ---
-        // PreferenceDataStore doesn't exist in NSG's obfuscated build.
-        // The preference will persist via NSG's default PreferenceManager backing store
-        // (com.qtrun.QuickTest_preferences). SubscriberHook reads from the same file.
-        // No extra wiring needed.
-
-        // --- 6. Add to PreferenceScreen ---
-        // addPreference has no public equivalent in this build.
-        // PreferenceGroup.Q is the ArrayList of children — add directly.
-        Class<?> prefGroupCls = loader.loadClass("androidx.preference.PreferenceGroup");
-        Field qField = null;
-        for (Field f : prefGroupCls.getDeclaredFields()) {
-            if (f.getType() == java.util.ArrayList.class) {
-                qField = f;
-                break;
+        // attach-to-manager method: void o(PreferenceManager) on Preference
+        Class<?> prefMgrType = prefManager.getClass();
+        Method attachMethod = null;
+        outer:
+        for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Method m : c.getDeclaredMethods()) {
+                Class<?>[] p = m.getParameterTypes();
+                if (p.length == 1 && p[0].isAssignableFrom(prefMgrType)
+                        && m.getReturnType() == void.class) {
+                    attachMethod = m;
+                    break outer;
+                }
             }
         }
+        if (attachMethod != null) attachMethod.setAccessible(true);
+
+        // parent (PreferenceGroup) field on Preference
+        Class<?> prefGroupCls = loader.loadClass("androidx.preference.PreferenceGroup");
+        Field parentField = null;
+        outer2:
+        for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (f.getType() == prefGroupCls) { parentField = f; break outer2; }
+            }
+        }
+        if (parentField != null) parentField.setAccessible(true);
+
+        // children ArrayList on PreferenceGroup
+        Field qField = null;
+        for (Field f : prefGroupCls.getDeclaredFields()) {
+            if (f.getType() == java.util.ArrayList.class) { qField = f; break; }
+        }
         if (qField == null) {
-            Log.w(TAG, "PreferenceGroup children ArrayList not found");
+            Log.w(TAG, "children ArrayList field not found — aborting");
             return;
         }
         qField.setAccessible(true);
+
         @SuppressWarnings("unchecked")
         java.util.ArrayList<Object> children = (java.util.ArrayList<Object>) qField.get(prefScreen);
         if (children == null) {
-            Log.w(TAG, "children ArrayList is null");
+            Log.w(TAG, "children ArrayList is null — aborting");
             return;
         }
-        children.add(sw);
 
-        // Attach PreferenceManager and parent to sw — required for pref persistence and state
+        Object[] ctorArgs = new Object[swCtor.getParameterCount()];
+        ctorArgs[0] = ctx;
+
+        // --- 6. Inject toggles ---
+        injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                iconSpaceField, setDefaultValue, attachMethod, parentField,
+                PREF_KEY, "NSGMod: Subscriber bypass", "Unlock all premium features",
+                false, prefManager, prefScreen, children);
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_CELL_MODS) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_CELL_MODS, "NSGMod: Cell table mods",
+                    "Add extra columns/rows to LTE, NR-NSA and NR-SA cell tables",
+                    true, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_RT_PLAY) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_RT_PLAY, "NSGMod: RT-Play button",
+                    "Show real-time replay button in log playback controls",
+                    true, prefManager, prefScreen, children);
+        }
+
+        // --- 7. Trigger adapter refresh ---
+        // Send handler message 1 — replicates what j0() does when view is already created.
+        // If the view is not yet created the adapter is built fresh from Q in onViewCreated.
         try {
-            Class<?> prefMgrType = prefManager.getClass();
-            Method attachMethod = null;
-            outer:
-            for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
-                for (Method m : c.getDeclaredMethods()) {
-                    Class<?>[] p = m.getParameterTypes();
-                    if (p.length == 1 && p[0].isAssignableFrom(prefMgrType)
-                            && m.getReturnType() == void.class) {
-                        attachMethod = m;
-                        break outer;
-                    }
-                }
-            }
-            if (attachMethod != null) {
-                attachMethod.setAccessible(true);
-                attachMethod.invoke(sw, prefManager);
-            } else {
-                Log.w(TAG, "attach method o() not found on Preference for sw");
-            }
-
-            Field parentField = null;
-            outer2:
-            for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
+            android.os.Handler handler = null;
+            for (Class<?> c = fragment.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
                 for (Field f : c.getDeclaredFields()) {
-                    if (f.getType() == prefGroupCls) {
-                        parentField = f;
-                        break outer2;
+                    if (android.os.Handler.class.isAssignableFrom(f.getType())) {
+                        f.setAccessible(true);
+                        Object val = f.get(fragment);
+                        if (val != null) { handler = (android.os.Handler) val; break; }
                     }
                 }
+                if (handler != null) break;
             }
-            if (parentField != null) {
-                parentField.setAccessible(true);
-                parentField.set(sw, prefScreen);
-            } else {
-                Log.w(TAG, "parent field J not found on Preference for sw");
+            if (handler != null) {
+                handler.sendEmptyMessage(1);
             }
         } catch (Throwable t) {
-            Log.w(TAG, "failed to attach preference manager to sw: " + t);
+            Log.w(TAG, "adapter refresh failed: " + t);
         }
+    }
 
-        // --- Second toggle: Cell table mods ---
-        if (findPref != null && findPref.invoke(prefScreen, PREF_KEY_CELL_MODS) == null) {
-            Object sw2 = swCtor.newInstance(ctorArgs);
-
-            if (keyField != null) { keyField.set(sw2, PREF_KEY_CELL_MODS); }
-            if (titleField != null) { titleField.set(sw2, "NSGMod: Cell table mods"); }
-            if (summaryField != null) { summaryField.set(sw2, "Add extra columns/rows to LTE, NR-NSA and NR-SA cell tables"); }
-
-            try {
-                Field iconSpaceField = prefBaseCls.getDeclaredField("C");
-                iconSpaceField.setAccessible(true);
-                iconSpaceField.set(sw2, false);
-            } catch (Throwable t) {
-                Log.w(TAG, "iconSpaceReserved field C not found for sw2: " + t);
-            }
-
-            for (Method m : prefBaseCls.getDeclaredMethods()) {
-                if (m.getReturnType() == void.class) {
-                    Class<?>[] p = m.getParameterTypes();
-                    if (p.length == 1 && p[0] == Object.class) {
-                        m.setAccessible(true);
-                        m.invoke(sw2, Boolean.TRUE);
-                        break;
-                    }
-                }
-            }
-
-            children.add(sw2);
-
-            // Attach PreferenceManager and parent to sw2 — required for pref persistence and state
-            try {
-                Class<?> prefMgrType = prefManager.getClass();
-                Method attachMethod2 = null;
-                outer3:
-                for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
-                    for (Method m : c.getDeclaredMethods()) {
-                        Class<?>[] p = m.getParameterTypes();
-                        if (p.length == 1 && p[0].isAssignableFrom(prefMgrType)
-                                && m.getReturnType() == void.class) {
-                            attachMethod2 = m;
-                            break outer3;
-                        }
-                    }
-                }
-                if (attachMethod2 != null) {
-                    attachMethod2.setAccessible(true);
-                    attachMethod2.invoke(sw2, prefManager);
-                } else {
-                    Log.w(TAG, "attach method o() not found on Preference for sw2");
-                }
-
-                Field parentField2 = null;
-                outer4:
-                for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
-                    for (Field f : c.getDeclaredFields()) {
-                        if (f.getType() == prefGroupCls) {
-                            parentField2 = f;
-                            break outer4;
-                        }
-                    }
-                }
-                if (parentField2 != null) {
-                    parentField2.setAccessible(true);
-                    parentField2.set(sw2, prefScreen);
-                } else {
-                    Log.w(TAG, "parent field J not found on Preference for sw2");
-                }
-            } catch (Throwable t) {
-                Log.w(TAG, "failed to attach preference manager to sw2: " + t);
-            }
+    /**
+     * Creates, configures, and adds a single SwitchPreferenceCompat to the given children list.
+     */
+    private Object injectSwitch(
+            java.lang.reflect.Constructor<?> swCtor,
+            Object[] ctorArgs,
+            Field keyField, Field titleField, Field summaryField,
+            Field iconSpaceField, Method setDefaultValue,
+            Method attachMethod, Field parentField,
+            String key, String title, String summary,
+            boolean defaultOn,
+            Object prefManager, Object prefScreen,
+            java.util.ArrayList<Object> children) {
+        try {
+            Object sw = swCtor.newInstance(ctorArgs);
+            if (keyField != null)     keyField.set(sw, key);
+            if (titleField != null)   titleField.set(sw, title);
+            if (summaryField != null) summaryField.set(sw, summary);
+            if (iconSpaceField != null) iconSpaceField.set(sw, false);
+            if (setDefaultValue != null) setDefaultValue.invoke(sw, defaultOn);
+            children.add(sw);
+            if (attachMethod != null) attachMethod.invoke(sw, prefManager);
+            if (parentField != null)  parentField.set(sw, prefScreen);
+            return sw;
+        } catch (Throwable t) {
+            Log.w(TAG, "injectSwitch(" + key + ") failed: " + t, t);
+            return null;
         }
-
-        // --- Third toggle: RT-Play button ---
-        if (findPref != null && findPref.invoke(prefScreen, PREF_KEY_RT_PLAY) == null) {
-            Object sw3 = swCtor.newInstance(ctorArgs);
-
-            if (keyField != null)     { keyField.set(sw3, PREF_KEY_RT_PLAY); }
-            if (titleField != null)   { titleField.set(sw3, "NSGMod: RT-Play button"); }
-            if (summaryField != null) { summaryField.set(sw3, "Show real-time replay button in log playback controls"); }
-
-            try {
-                Field iconSpaceField = prefBaseCls.getDeclaredField("C");
-                iconSpaceField.setAccessible(true);
-                iconSpaceField.set(sw3, false);
-            } catch (Throwable t) {
-                Log.w(TAG, "iconSpaceReserved field C not found for sw3: " + t);
-            }
-
-            // setDefaultValue(Boolean.TRUE) — RT-Play is on by default
-            for (Method m : prefBaseCls.getDeclaredMethods()) {
-                if (m.getReturnType() == void.class) {
-                    Class<?>[] p = m.getParameterTypes();
-                    if (p.length == 1 && p[0] == Object.class) {
-                        m.setAccessible(true);
-                        m.invoke(sw3, Boolean.TRUE);
-                        break;
-                    }
-                }
-            }
-
-            children.add(sw3);
-
-            // Attach PreferenceManager and parent to sw3
-            try {
-                Class<?> prefMgrType = prefManager.getClass();
-                Method attachMethod3 = null;
-                outer5:
-                for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
-                    for (Method m : c.getDeclaredMethods()) {
-                        Class<?>[] p = m.getParameterTypes();
-                        if (p.length == 1 && p[0].isAssignableFrom(prefMgrType)
-                                && m.getReturnType() == void.class) {
-                            attachMethod3 = m;
-                            break outer5;
-                        }
-                    }
-                }
-                if (attachMethod3 != null) {
-                    attachMethod3.setAccessible(true);
-                    attachMethod3.invoke(sw3, prefManager);
-                } else {
-                    Log.w(TAG, "attach method not found on Preference for sw3");
-                }
-
-                Field parentField3 = null;
-                outer6:
-                for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
-                    for (Field f : c.getDeclaredFields()) {
-                        if (f.getType() == prefGroupCls) {
-                            parentField3 = f;
-                            break outer6;
-                        }
-                    }
-                }
-                if (parentField3 != null) {
-                    parentField3.setAccessible(true);
-                    parentField3.set(sw3, prefScreen);
-                } else {
-                    Log.w(TAG, "parent field not found on Preference for sw3");
-                }
-            } catch (Throwable t) {
-                Log.w(TAG, "failed to attach preference manager to sw3: " + t);
-            }
-        }
-
-        // Notify the RecyclerView adapter that the preference list changed
-        // n() = notifyHierarchyChanged in decompiled source
-        prefScreenCls.getMethod("n").invoke(prefScreen);
-
-        Log.i(TAG, "subscriber bypass toggle injected into Experiment screen");
     }
 }

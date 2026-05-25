@@ -43,7 +43,7 @@ Remove the line that instantiates and installs `SubscriberHook`:
 
 File: `/home/henrik/spielwiese/nsg-modding/nsg-band-hook/nsg-band-hook/app/src/main/java/com/nsgmod/band/SettingsToggleHook.java`
 
-Read the file first. Then make only the following **surgical** changes. Do NOT remove shared infrastructure — the `sw` object creation block (constructor lookup, field scanning, `swCtor.newInstance`) must remain because `sw2` and `sw3` depend on `swCtor`, `keyField`, `titleField`, `summaryField`, `children`, and `qField` which are set up there.
+Read the file first. The injection logic uses a helper method `injectSwitch()`. Make only the following **surgical** changes.
 
 ### 4a — Remove `PREFS_FILE` and `PREF_KEY` constants
 
@@ -56,14 +56,14 @@ Leave `PREF_KEY_CELL_MODS` and `PREF_KEY_RT_PLAY` in place.
 
 ### 4b — Remove Javadoc lines that mention subscriber bypass
 
-In the class-level Javadoc, remove any lines that mention `nsgmod_prefs`, `nsgmod.subscriber_bypass`, or `SubscriberHook`. Replace them with a neutral line such as:
+In the class-level Javadoc, remove any lines that mention `nsgmod_prefs`, `nsgmod.subscriber_bypass`, or `SubscriberHook`. A neutral replacement line is already present:
 ```java
  * Toggle states are stored in SharedPreferences file "com.qtrun.QuickTest_preferences".
 ```
 
 ### 4c — Update the double-injection guard
 
-Find the guard line (it will look like):
+Find the guard that checks for an existing toggle using `PREF_KEY`:
 ```java
         if (findPref != null && findPref.invoke(prefScreen, PREF_KEY) != null) {
 ```
@@ -72,38 +72,20 @@ Change `PREF_KEY` to `PREF_KEY_CELL_MODS`:
         if (findPref != null && findPref.invoke(prefScreen, PREF_KEY_CELL_MODS) != null) {
 ```
 
-### 4d — Remove only the `sw` key/title/summary field assignments and `children.add(sw)`
+### 4d — Remove the subscriber-bypass injectSwitch() call
 
-Keep the `sw` object creation (`swCtor.newInstance(ctorArgs)`) and all the field-scanning code above it. Remove only:
-- The three field-set calls that assign `PREF_KEY`, `"NSGMod: Subscriber bypass"`, `"Unlock all premium features"` to `sw`
-- The `iconSpaceReserved` set block for `sw`
-- The `setDefaultValue(false)` loop for `sw`
-- `children.add(sw);`
-- The entire "Attach PreferenceManager and parent to sw" try-block that follows `children.add(sw)`
-
-Replace all of the above with a single comment:
+Find the call in the `// --- 6. Inject toggles ---` block that passes `PREF_KEY`:
 ```java
-        // (first toggle omitted in public build)
+        injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                iconSpaceField, setDefaultValue, attachMethod, parentField,
+                PREF_KEY, "NSGMod: Subscriber bypass", "Unlock all premium features",
+                false, prefManager, prefScreen, children);
 ```
-
-### 4e — Remove `PREFS_FILE` reference from comments
-
-Remove or reword any comment that still references `nsgmod_prefs` (e.g. in the `--- 5. Wire PreferenceDataStore ---` section). Replace with a neutral comment that does not mention the private prefs file name.
-
-### 4f — Update the final log message
-
-Change:
-```java
-        Log.i(TAG, "subscriber bypass toggle injected into Experiment screen");
-```
-to:
-```java
-        Log.i(TAG, "settings toggles injected into Experiment screen");
-```
+Remove these four lines entirely. Do **not** remove the `injectSwitch()` calls for `PREF_KEY_CELL_MODS` and `PREF_KEY_RT_PLAY`.
 
 ### Verification after Step 4
 
-Compile-check mentally: `PREF_KEY` must not appear anywhere in the file. `swCtor`, `keyField`, `titleField`, `summaryField`, `children` must all still be defined before the `// --- Second toggle ---` block.
+Compile-check mentally: `PREF_KEY` must not appear anywhere in the file. The `injectSwitch()` helper method and the calls for `PREF_KEY_CELL_MODS` and `PREF_KEY_RT_PLAY` must still be present.
 
 ---
 
@@ -186,7 +168,7 @@ Confirm every item before declaring done:
 - [ ] `git reset --hard gitea/main` completed without error
 - [ ] `SubscriberHook.java` deleted during build phase
 - [ ] `MainHook.java` no longer contains `SubscriberHook`
-- [ ] `SettingsToggleHook.java`: `PREF_KEY`/`PREFS_FILE` removed; guard updated to `PREF_KEY_CELL_MODS`; `sw` key/title/summary assignments, `children.add(sw)`, and its attach block removed; `swCtor`/`keyField`/`titleField`/`summaryField`/`children` still present for sw2 and sw3
+- [ ] `SettingsToggleHook.java`: `PREF_KEY`/`PREFS_FILE` removed; guard updated to `PREF_KEY_CELL_MODS`; `injectSwitch()` call for `PREF_KEY` removed; `injectSwitch()` calls for `PREF_KEY_CELL_MODS` and `PREF_KEY_RT_PLAY` still present
 - [ ] All three grep checks (`subs`, `byp`, `lic`) returned zero matches
 - [ ] `assembleDebug` exited 0
 - [ ] `debug-app-publicsafe.apk` exists at `/home/henrik/spielwiese/nsg-modding/nsg-band-hook/debug-app-publicsafe.apk`
