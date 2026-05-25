@@ -365,19 +365,23 @@ public class NrNsaBandwidthColumnHook {
     private LinearLayout findHorizontalRow(View v) {
         if (!(v instanceof LinearLayout)) return null;
         LinearLayout ll = (LinearLayout) v;
-        if (ll.getOrientation() == LinearLayout.HORIZONTAL
-                && (ll.getChildCount() == 6 || ll.getChildCount() == 7 || ll.getChildCount() == 8)) {
-            return ll;
-        }
-        if (ll.getOrientation() == LinearLayout.VERTICAL && ll.getChildCount() > 0) {
+        // v4.8.6: outer container is a vertical LL (nr_cell_list_row_double_nsa).
+        // BandColumnHook already removed the info strip (child 1), leaving only
+        // the main horizontal row as child 0.
+        if (ll.getOrientation() == LinearLayout.VERTICAL && ll.getChildCount() >= 1) {
             View first = ll.getChildAt(0);
             if (first instanceof LinearLayout) {
                 LinearLayout inner = (LinearLayout) first;
                 if (inner.getOrientation() == LinearLayout.HORIZONTAL
-                        && (inner.getChildCount() == 6 || inner.getChildCount() == 7 || inner.getChildCount() == 8)) {
+                        && (inner.getChildCount() >= 6 && inner.getChildCount() <= 8)) {
                     return inner;
                 }
             }
+        }
+        // Flat horizontal row (header row, or legacy layout).
+        if (ll.getOrientation() == LinearLayout.HORIZONTAL
+                && (ll.getChildCount() >= 6 && ll.getChildCount() <= 8)) {
+            return ll;
         }
         return null;
     }

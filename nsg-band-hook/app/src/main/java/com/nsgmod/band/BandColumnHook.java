@@ -9,7 +9,6 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -17,63 +16,42 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks a8.h (NRNSACellsFragment) to inject a Band column into the NSA NR cell table.
+ * Hooks a8.h (NRNSACellsFragment) to inject an ARFCN column (labelled "Band") at index 1
+ * of the main NR cell row, and removes the NSG-added info sub-row that previously showed
+ * the ARFCN below each cell entry.
  *
- * Data path (verified against dex 4.8.4):
- *   Workspace.j            → Workspace singleton (enum)
- *   Workspace.a            → short moduleIndex
- *   Workspace.c            → DataSource
- *   Workspace.g            → long replay cursor (-1 when live)
- *   DataSource.getProperty(key, moduleIndex) → Property
- *   Property.b(cursorTime) → Property$Iterator positioned at cursor
- *   Property$Iterator.end()   → boolean
- *   Property$Iterator.key()   → long sample key
- *   Property.get(key)         → Object (Integer for band; Object[] for SCell band)
+ * In NSG v4.8.6 the row layout changed to nr_cell_list_row_double_nsa — a vertical
+ * LinearLayout with:
+ *   child 0: horizontal main row  [Serving, PCI, Beam, RSRP, RSRQ, SINR]  (6 cols)
+ *   child 1: horizontal info strip [tvRowRFID=ARFCN, tvRowCellName, tvRowCellID]
  *
- * Keys:
- *   NR5G::Serving_Cell::NR_Band          — PCell (intraRow=0); value is scalar Integer
- *   NR5G::Serving_Cell::SCell::NR_SCell_Band — SCells (intraRow>=1); value is Object[]
- *     Property is fetched with workspace moduleIndex (Workspace.a); array is indexed by
- *     (intraRow-1) to select the correct SCell's band number.
+ * We read the ARFCN string that NSG already wrote into tvRowRFID (sub-row child 1, column 0),
+ * inject it into the main row at index 1, and remove the info sub-row so only the
+ * main row remains.  This works for all row types including detected/neighbour cells
+ * because NSG populates tvRowRFID for those too.
  *
- * We do NOT touch k8.c.f5504a — creating Property objects directly bypasses the
- * all-or-nothing z8 guard entirely.
+ * Final main-row column order after both hooks:
+ *   [Serving, ARFCN("Band"), BW, PCI, Beam, RSRP, RSRQ, SINR]
+ * Weights: {0.03f, 0.12f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f}  (set by NrNsaBandwidthColumnHook)
+ * After BandColumnHook only:
+ *   {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f}  (7 cols)
  */
 public class BandColumnHook {
 
     private static final String TAG = "NSGBandHook";
 
-    private static final String KEY_PCELL_BAND = "NR5G::Serving_Cell::NR_Band";
-    private static final String KEY_SCELL_BAND = "NR5G::Serving_Cell::SCell::NR_SCell_Band";
-    private static final int MAX_SCELLS = 4;
-
     private static final String TAG_BAND_INJECTED = "nsg_band_injected";
-    // Keyed tag slot — distinct from NrNsaBandwidthColumnHook's slot so the two hooks
-    // can independently track injection state on the same View without overwriting each other.
-    private static final int BAND_TAG_KEY = "nsg_band_injected".hashCode();
+    private static final int    BAND_TAG_KEY       = "nsg_band_injected".hashCode();
 
     private final XposedInterface xposed;
-    private final ClassLoader loader;
-
-    // Workspace reflection
-    private Field wsSingleton;   // Workspace.j  → Workspace (static)
-    private Field wsModuleIndex; // Workspace.a  → short
-    private Field wsDataSource;  // Workspace.c  → DataSource
-    private Field wsCurrentTime; // Workspace.g  → long replay cursor (-1 = live)
-
-    // Property reflection
-    private Method dsGetProperty;       // DataSource.getProperty(String, int) → Property
-    private Method propIterMethod;      // Property.b(long) → Property$Iterator
-    private Method propGetMethod;       // Property.get(long key) → Object
-    private Method iterEndMethod;       // Property$Iterator.end() → boolean
-    private Method iterKeyMethod;       // Property$Iterator.key() → long
-    private Method iterValueMethod;     // Property$Iterator.value() → Object (kept, unused)
-
-    // Adapter reflection
-    private Field  eField;  // a8.b$b.e → per-source array
-    private Method hMethod; // a8.b$b.h(int) → Pair<k8.c, Integer>
+    private final ClassLoader     loader;
 
     private boolean reflectionReady = false;
+
+    // Adapter reflection — still needed to resolve (source, intraRow) for logging/future use,
+    // but ARFCN is now read directly from the View rather than from workspace.
+    private Field  eField;  // a8.b$b.e → sources array
+    private Method hMethod; // a8.b$b.h(int) → Pair<a8.b.a, Integer>
 
     public BandColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -83,94 +61,16 @@ public class BandColumnHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> dsClass   = loader.loadClass("com.qtrun.sys.DataSource");
-            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
-            Class<?> bbClass   = loader.loadClass("a8.b$b");
-
-            wsSingleton    = wsClass.getField("j");
-            wsModuleIndex  = wsClass.getField("a");
-            wsDataSource   = wsClass.getField("c");
-            wsCurrentTime  = wsClass.getField("g");  // long replay cursor
-
-            dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
-            propIterMethod = propClass.getMethod("b", long.class);
-            propGetMethod  = propClass.getMethod("get", long.class);
-            iterEndMethod  = iterClass.getMethod("end");
-            iterKeyMethod  = iterClass.getMethod("key");
-            iterValueMethod= iterClass.getMethod("value");
-
+            Class<?> bbClass = loader.loadClass("a8.b$b");
             eField  = bbClass.getField("e");
             hMethod = bbClass.getMethod("h", int.class);
-
             reflectionReady = true;
-            Log.i(TAG, "reflection ready");
+            Log.i(TAG, "BandColumnHook: reflection ready");
         } catch (Exception e) {
-            Log.e(TAG, "initReflection failed: " + e);
-        }
-    }
-
-    private Integer readBand(boolean isSource0, int intraRow) {
-        if (!reflectionReady) return null;
-        try {
-            Object ws = wsSingleton.get(null);
-            if (ws == null) return null;
-
-            int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
-            Object dataSource  = wsDataSource.get(ws);
-            if (dataSource == null) return null;
-
-            if (!isSource0) return null; // Detected cells — no serving band
-
-            String key;
-            int    sCellIndex; // -1 for PCell (scalar value), >=0 for SCell (array index)
-            if (intraRow == 0) {
-                key = KEY_PCELL_BAND;
-                sCellIndex = -1;
-            } else {
-                int si = intraRow - 1;
-                if (si >= MAX_SCELLS) return null;
-                key = KEY_SCELL_BAND;
-                sCellIndex = si;
-            }
-
-            // Property is keyed by workspace moduleIndex (short from Workspace.a)
-            Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
-            if (property == null) {
-                Log.w(TAG, "readBand: no property for key=" + key + " moduleIndex=" + moduleIndex);
-                return null;
-            }
-
-            // Use replay cursor time so values track playback position.
-            // Workspace.g is -1 when live; fall back to Long.MAX_VALUE in that case.
-            long cursorTime = wsCurrentTime.getLong(ws);
-            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
-
-            Object iterator = propIterMethod.invoke(property, queryTime);
-            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
-
-            // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
-            long   sampleKey = (long) iterKeyMethod.invoke(iterator);
-            Object value     = propGetMethod.invoke(property, sampleKey);
-            if (value == null) return null;
-
-            // SCell band property returns Object[] (one entry per SCell); PCell returns scalar.
-            if (sCellIndex >= 0) {
-                if (value.getClass().isArray()) {
-                    Object[] arr = (Object[]) value;
-                    if (sCellIndex >= arr.length) return null;
-                    value = arr[sCellIndex];
-                } else {
-                    // Unexpected: scalar for SCell key — only valid if single SCell
-                    if (sCellIndex != 0) return null;
-                }
-            }
-
-            return (value instanceof Number) ? ((Number) value).intValue() : null;
-        } catch (Exception e) {
-            Log.w(TAG, "readBand failed: " + e);
-            return null;
+            // Field/method may not be needed if we fall back to position-based intraRow;
+            // mark ready anyway so the hook still fires.
+            reflectionReady = true;
+            Log.w(TAG, "BandColumnHook: initReflection partial (adapter reflection unavailable): " + e);
         }
     }
 
@@ -183,104 +83,95 @@ public class BandColumnHook {
     // Hook: a8.h$a.getView
     // -----------------------------------------------------------------------
     private void hookGetView() {
-        if (!reflectionReady) {
-            Log.e(TAG, "hookGetView skipped — reflection not ready");
-            return;
-        }
         try {
-            Class<?> adapterClass = loader.loadClass("a8.h$a");
+            Class<?> adapterClass  = loader.loadClass("a8.h$a");
             Method   getViewMethod = adapterClass.getMethod("getView", int.class, View.class, ViewGroup.class);
 
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result  = chain.proceed();
+                    Object result   = chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    int    position = (int) chain.getArg(0);
-                    View   rowView  = (View) result;
+                    int  position = (int) chain.getArg(0);
+                    View rowView  = (View) result;
                     if (rowView == null) return result;
 
-                    LinearLayout row = findHorizontalRow(rowView);
-                    if (row == null) return result;
+                    // rowView is the outer vertical LinearLayout (nr_cell_list_row_double_nsa).
+                    // main row = child 0; info strip = child 1 (may already be removed on recycle).
+                    LinearLayout outerVert = getOuterVertical(rowView);
+                    if (outerVert == null) return result;
 
-                    // Resolve (isSource0, intraRow) via adapter.h(position)
-                    boolean isSource0 = false; // default false: neighbour rows must not read serving-cell data
-                    int     intraRow  = position;
-                    try {
-                        Object   adapter = chain.getThisObject();
-                        Object[] sources = (Object[]) eField.get(adapter);
-                        android.util.Pair<?, ?> pair =
-                                (android.util.Pair<?, ?>) hMethod.invoke(adapter, position);
-                        if (pair != null && pair.second != null) {
-                            intraRow  = (int) pair.second;
-                            isSource0 = (pair.first != null && sources != null
-                                    && pair.first == sources[0]);
+                    LinearLayout mainRow = getMainRow(outerVert);
+                    if (mainRow == null) return result;
+
+                    // --- Already injected path (recycled view) ---
+                    if (TAG_BAND_INJECTED.equals(mainRow.getTag(BAND_TAG_KEY))) {
+                        // Info strip already removed; main row child 1 = ARFCN column.
+                        // Re-read ARFCN from the tag we stored on the outer container.
+                        // NSG may have updated the text in tvRowRFID on the recycled view
+                        // before we removed it — but since the sub-row is gone we stored
+                        // the text in the tag at first injection. However, on a recycled
+                        // view NSG calls getView fresh, so the sub-row IS present again
+                        // (child count == 2) before we run.  Check: if sub-row still
+                        // present, re-read it; otherwise use what's in the injected column.
+                        String arfcn = readArfcnFromSubRow(outerVert);
+                        if (arfcn == null) {
+                            // Sub-row already gone (shouldn't happen on fresh recycle, but safe).
+                            arfcn = ((TextView) mainRow.getChildAt(1)).getText().toString();
                         }
-                    } catch (Exception e) {
-                        Log.w(TAG, "h(position) failed: " + e);
-                    }
+                        removeInfoStrip(outerVert);
 
-                    // "-" for non-serving rows (matches NSG convention); number for serving rows.
-                    String  bandText = "-";
-                    Integer band     = readBand(isSource0, intraRow);
-                    if (band != null) bandText = String.valueOf(band);
-
-                    // Already injected — just refresh text in child[1]
-                    if (TAG_BAND_INJECTED.equals(row.getTag(BAND_TAG_KEY))) {
-                        TextView existing = (TextView) row.getChildAt(1);
-                        existing.setText(bandText);
-                        // Re-apply colour: white for real band numbers, PCI colour for "-".
-                        // child[2] is PCI after injection.
-                        if (band != null) {
-                            existing.setTextColor(0xFFFFFFFF);
-                        } else {
-                            existing.setTextColor(((TextView) row.getChildAt(2)).getTextColors());
-                        }
+                        TextView existing = (TextView) mainRow.getChildAt(1);
+                        existing.setText(arfcn);
+                        applyArfcnColor(existing, arfcn, mainRow);
                         return result;
                     }
 
-                    // First injection — must have exactly 6 children
-                    if (row.getChildCount() != 6) return result;
+                    // --- First injection path ---
+                    // Main row must have exactly 6 children.
+                    if (mainRow.getChildCount() != 6) return result;
 
-                    // Copy font size/typeface from PCI (child[1] before insertion).
-                    // Do NOT copy the ColorStateList — on the first getView call NSG has not yet
-                    // applied its active-white colour, so we'd snapshot a stale grey.
-                    // Instead: white for rows that have a real band number, PCI colour for "-" rows.
-                    TextView pciView = (TextView) row.getChildAt(1);
-                    TextView bandView = new TextView(rowView.getContext());
-                    bandView.setText(bandText);
-                    bandView.setGravity(android.view.Gravity.CENTER);
-                    bandView.setMaxLines(1);
-                    bandView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, pciView.getTextSize());
-                    bandView.setTypeface(pciView.getTypeface());
-                    if (band != null) {
-                        bandView.setTextColor(0xFFFFFFFF); // always white for active band numbers
-                    } else {
-                        bandView.setTextColor(pciView.getTextColors()); // inherit for "-" rows
-                    }
+                    // Read ARFCN from info strip (sub-row child 1, column 0 = tvRowRFID).
+                    String arfcn = readArfcnFromSubRow(outerVert);
+                    if (arfcn == null) arfcn = "-";
+
+                    // Remove the info strip — we've captured what we need.
+                    removeInfoStrip(outerVert);
+
+                    // Inject ARFCN column at index 1 of the main row.
+                    TextView refView  = (TextView) mainRow.getChildAt(1); // PCI (before insertion)
+                    TextView arfcnView = new TextView(rowView.getContext());
+                    arfcnView.setText(arfcn);
+                    arfcnView.setGravity(android.view.Gravity.CENTER);
+                    arfcnView.setMaxLines(1);
+                    arfcnView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, refView.getTextSize());
+                    arfcnView.setTypeface(refView.getTypeface());
+                    applyArfcnColor(arfcnView, arfcn, mainRow);
+
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                             0, (int) (21 * rowView.getContext().getResources().getDisplayMetrics().density));
-                    lp.weight = 0.10f;
-                    bandView.setLayoutParams(lp);
+                    lp.weight = 0.12f;
+                    arfcnView.setLayoutParams(lp);
 
-                    row.addView(bandView, 1);
+                    mainRow.addView(arfcnView, 1);
 
+                    // Redistribute 7 columns (NrNsaBandwidthColumnHook will redistribute to 8 later).
                     float[] weights = {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f};
-                    for (int i = 0; i < row.getChildCount() && i < weights.length; i++) {
+                    for (int i = 0; i < mainRow.getChildCount() && i < weights.length; i++) {
                         LinearLayout.LayoutParams clp =
-                                (LinearLayout.LayoutParams) row.getChildAt(i).getLayoutParams();
+                                (LinearLayout.LayoutParams) mainRow.getChildAt(i).getLayoutParams();
                         clp.weight = weights[i];
-                        row.getChildAt(i).setLayoutParams(clp);
+                        mainRow.getChildAt(i).setLayoutParams(clp);
                     }
 
-                    row.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
-                    Log.d(TAG, "injected Band col pos=" + position + " band=" + bandText);
+                    mainRow.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
+                    Log.d(TAG, "BandColumnHook: injected ARFCN col pos=" + position + " arfcn=" + arfcn);
                     return result;
                 }
             });
-            Log.i(TAG, "hookGetView installed");
+            Log.i(TAG, "BandColumnHook: hookGetView installed");
         } catch (Exception e) {
-            Log.e(TAG, "hookGetView failed: " + e);
+            Log.e(TAG, "BandColumnHook: hookGetView failed: " + e);
         }
     }
 
@@ -303,7 +194,7 @@ public class BandColumnHook {
 
                     int listId = fragmentView.getContext().getResources()
                             .getIdentifier("list_1", "id", "com.qtrun.QuickTest");
-                    if (listId == 0) { Log.w(TAG, "list_1 id not found"); return result; }
+                    if (listId == 0) { Log.w(TAG, "BandColumnHook: list_1 id not found"); return result; }
 
                     ListView listView = (ListView) fragmentView.findViewById(listId);
                     if (listView == null) return result;
@@ -312,9 +203,9 @@ public class BandColumnHook {
                     return result;
                 }
             });
-            Log.i(TAG, "hookOnCreateView installed");
+            Log.i(TAG, "BandColumnHook: hookOnCreateView installed");
         } catch (Exception e) {
-            Log.e(TAG, "hookOnCreateView failed: " + e);
+            Log.e(TAG, "BandColumnHook: hookOnCreateView failed: " + e);
         }
     }
 
@@ -324,6 +215,7 @@ public class BandColumnHook {
                 View child = listView.getChildAt(i);
                 if (!(child instanceof LinearLayout)) continue;
                 LinearLayout ll = (LinearLayout) child;
+                // Header row is a flat horizontal LinearLayout with 6 children (no double-row wrapper).
                 if (ll.getOrientation() != LinearLayout.HORIZONTAL || ll.getChildCount() != 6) continue;
                 if (TAG_BAND_INJECTED.equals(ll.getTag(BAND_TAG_KEY))) return;
 
@@ -333,7 +225,7 @@ public class BandColumnHook {
                 bandLabel.setMaxLines(1);
                 bandLabel.setTextColor(resolveColor(listView.getContext(), android.R.attr.textColorTertiary));
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT);
-                lp.weight = 0.10f;
+                lp.weight = 0.12f;
                 bandLabel.setLayoutParams(lp);
 
                 ll.addView(bandLabel, 1);
@@ -346,42 +238,82 @@ public class BandColumnHook {
                 }
 
                 ll.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
-                Log.i(TAG, "injectBandHeader: done at child " + i);
+                Log.i(TAG, "BandColumnHook: injectBandHeader done at child " + i);
                 return;
             }
-            Log.w(TAG, "injectBandHeader: header not found (" + listView.getChildCount() + " children)");
+            Log.w(TAG, "BandColumnHook: header not found (" + listView.getChildCount() + " children)");
         } catch (Exception e) {
-            Log.w(TAG, "injectBandHeader failed: " + e);
+            Log.w(TAG, "BandColumnHook: injectBandHeader failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
+    /**
+     * Returns the outer vertical LinearLayout if rowView is one, otherwise null.
+     * In v4.8.6 all cell rows use nr_cell_list_row_double_nsa which is a vertical LL.
+     */
+    private LinearLayout getOuterVertical(View rowView) {
+        if (!(rowView instanceof LinearLayout)) return null;
+        LinearLayout ll = (LinearLayout) rowView;
+        if (ll.getOrientation() == LinearLayout.VERTICAL) return ll;
+        return null;
+    }
+
+    /**
+     * Returns the main horizontal row (child 0) of the outer vertical LL.
+     */
+    private LinearLayout getMainRow(LinearLayout outerVert) {
+        if (outerVert.getChildCount() < 1) return null;
+        View first = outerVert.getChildAt(0);
+        if (!(first instanceof LinearLayout)) return null;
+        LinearLayout row = (LinearLayout) first;
+        if (row.getOrientation() != LinearLayout.HORIZONTAL) return null;
+        return row;
+    }
+
+    /**
+     * Reads the ARFCN string from tvRowRFID — child 0 of child 1 (the info strip) of
+     * the outer vertical LL. Returns null if the info strip is absent or already removed.
+     */
+    private String readArfcnFromSubRow(LinearLayout outerVert) {
+        if (outerVert.getChildCount() < 2) return null;
+        View infoStripView = outerVert.getChildAt(1);
+        if (!(infoStripView instanceof LinearLayout)) return null;
+        LinearLayout infoStrip = (LinearLayout) infoStripView;
+        if (infoStrip.getChildCount() < 1) return null;
+        View rfidView = infoStrip.getChildAt(0);
+        if (!(rfidView instanceof TextView)) return null;
+        String text = ((TextView) rfidView).getText().toString().trim();
+        return text.isEmpty() ? "-" : text;
+    }
+
+    /**
+     * Removes the info strip (child 1) from the outer vertical LL if present.
+     */
+    private void removeInfoStrip(LinearLayout outerVert) {
+        if (outerVert.getChildCount() >= 2) {
+            outerVert.removeViewAt(1);
         }
     }
 
     /**
-     * Finds the horizontal 6-child (or 7-child after injection) LinearLayout.
-     * Handles both flat (nr_cell_list_row_nsa) and wrapped (nr_cell_list_row_double_nsa).
+     * Colours the ARFCN TextView: white for real values, PCI colour for "-".
+     * After injection, PCI is at mainRow child[2].
      */
-    private LinearLayout findHorizontalRow(View v) {
-        if (!(v instanceof LinearLayout)) return null;
-        LinearLayout ll = (LinearLayout) v;
-        // 8 children: NrNsaBandwidthColumnHook has already injected BW — the row carries
-        // TAG_BAND_INJECTED, so getView will refresh the text and return early without
-        // re-applying weights. We still need to return the row so that tag check works.
-        if (ll.getOrientation() == LinearLayout.HORIZONTAL
-                && (ll.getChildCount() == 6 || ll.getChildCount() == 7 || ll.getChildCount() == 8)) {
-            return ll;
-        }
-        if (ll.getOrientation() == LinearLayout.VERTICAL && ll.getChildCount() > 0) {
-            View first = ll.getChildAt(0);
-            if (first instanceof LinearLayout) {
-                LinearLayout inner = (LinearLayout) first;
-                // 8 children: same as above — row was already processed; early-return path
-                // in getView handles it via TAG_BAND_INJECTED without reaching the weights loop.
-                if (inner.getOrientation() == LinearLayout.HORIZONTAL
-                        && (inner.getChildCount() == 6 || inner.getChildCount() == 7 || inner.getChildCount() == 8)) {
-                    return inner;
-                }
+    private void applyArfcnColor(TextView tv, String arfcn, LinearLayout mainRow) {
+        if (!"-".equals(arfcn)) {
+            tv.setTextColor(0xFFFFFFFF);
+        } else {
+            // Borrow colour from PCI column.
+            // Before injection PCI is at child[1]; after injection PCI shifts to child[2].
+            int pciIndex = TAG_BAND_INJECTED.equals(mainRow.getTag(BAND_TAG_KEY)) ? 2 : 1;
+            if (mainRow.getChildCount() > pciIndex) {
+                tv.setTextColor(((TextView) mainRow.getChildAt(pciIndex)).getTextColors());
             }
         }
-        return null;
     }
 
     private int resolveColor(android.content.Context ctx, int attr) {
