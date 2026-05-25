@@ -227,8 +227,6 @@ public class NrSaCellColorHook {
                     if (v instanceof TextView) {
                         ((TextView) v).setTextColor(targetColor);
                         applied++;
-                        Log.d(TAG, "NrSaCellColorHook: colored scell=" + idx
-                                + " -> 0x" + Integer.toHexString(targetColor));
                     }
                 } catch (Exception ignored) {}
             }

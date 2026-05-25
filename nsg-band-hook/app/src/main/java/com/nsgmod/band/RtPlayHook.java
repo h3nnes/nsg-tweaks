@@ -448,7 +448,6 @@ public class RtPlayHook {
                     Date curDate = (Date) wsI.get(ws);
                     if (curDate == null) { Log.w(TAG, "tick: curDate null"); stop(); return; }
                     long targetMs = curDate.getTime() + 1000L;
-                    Log.d(TAG, "tick: curKey=" + curKey + " curDate=" + curDate.getTime() + " targetMs=" + targetMs);
 
                     // Position iterator at current key, then step forward until
                     // we find the first record whose Date >= targetMs
@@ -474,7 +473,6 @@ public class RtPlayHook {
                         Log.i(TAG, "RT-Play: end of log reached");
                         stop(); return;
                     }
-                    Log.d(TAG, "tick: nextKey=" + nextKey + " nextDate=" + nextDate.getTime());
 
                     // Resolve targetFragment the same way onProgressChanged does
                     Object callbackHolder = fragmentYField.get(fragment);

@@ -283,7 +283,6 @@ public class LteBandwidthColumnHook {
                     }
 
                     row.setTag(TAG_BW_INJECTED);
-                    Log.d(TAG, "LteBWHook: injected BW col pos=" + position + " bw=" + bwText);
                     return result;
                 }
             });
@@ -423,7 +422,6 @@ public class LteBandwidthColumnHook {
                     Object fragment = chain.getThisObject();
                     try {
                         n0Meth.invoke(fragment);
-                        Log.d(TAG, "LteBWHook: forced e8.b.n0() after Q()");
                     } catch (Throwable t) {
                         Log.w(TAG, "LteBWHook: e8.b.n0() invoke failed: " + t);
                     }
@@ -456,7 +454,6 @@ public class LteBandwidthColumnHook {
                     Object fragment = chain.getThisObject();
                     try {
                         n0Meth.invoke(fragment);
-                        Log.d(TAG, "LteBWHook: forced g8.i.n0() after Q()");
                     } catch (Throwable t) {
                         Log.w(TAG, "LteBWHook: g8.i.n0() invoke failed: " + t);
                     }
@@ -508,8 +505,6 @@ public class LteBandwidthColumnHook {
                                 if (adapter instanceof android.widget.BaseAdapter) {
                                     ((android.widget.BaseAdapter) adapter)
                                             .notifyDataSetChanged();
-                                    Log.d(TAG, "LteBWHook: delayed notifyDataSetChanged"
-                                            + " on a8.f fired");
                                 }
                             } catch (Throwable t2) {
                                 Log.w(TAG, "LteBWHook: delayed notify failed: " + t2);

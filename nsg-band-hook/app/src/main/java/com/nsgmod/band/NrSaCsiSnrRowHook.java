@@ -174,13 +174,11 @@ public class NrSaCsiSnrRowHook {
                     } catch (Exception e) {
                         Log.w(TAG, "NrSaCsiSnrRowHook: could not read carrier count: " + e);
                     }
-                    Log.d(TAG, "NrSaCsiSnrRowHook: o0() called, carriers=" + carriers);
                     carrierCountInO0.set(carriers);
                     try {
                         return chain.proceed();
                     } finally {
                         carrierCountInO0.remove();
-                        Log.d(TAG, "NrSaCsiSnrRowHook: o0() done");
                     }
                 }
             });
@@ -206,9 +204,6 @@ public class NrSaCsiSnrRowHook {
                     Object k2aArg = chain.getArg(0);
                     Integer carriers = carrierCountInO0.get();
                     boolean inO0 = carriers != null;
-                    Log.d(TAG, "NrSaCsiSnrRowHook: v6.b.k0() called, inO0=" + inO0
-                            + " carriers=" + carriers
-                            + " k2a=" + (k2aArg != null ? k2aArg.getClass().getName() : "null"));
                     if (inO0 && k2aArg != null) {
                         // Record this k2.a as belonging to the SA CA Matrix screen
                         saK2aCarriers.put(k2aArg, carriers);

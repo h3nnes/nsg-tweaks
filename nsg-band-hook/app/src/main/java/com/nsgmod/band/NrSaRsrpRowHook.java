@@ -159,8 +159,6 @@ public class NrSaRsrpRowHook {
                     Object  k2aArg   = chain.getArg(0);
                     Integer carriers = carrierCountInO0.get();
                     boolean inO0     = carriers != null;
-                    Log.d(TAG, "NrSaRsrpRowHook: v6.b.k0() called, inO0=" + inO0
-                            + " carriers=" + carriers);
                     if (inO0 && k2aArg != null) {
                         injectRsrpRows(k2aArg, carriers);
                     }

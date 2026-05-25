@@ -342,8 +342,6 @@ public class NrSaCellColumnsHook {
                     }
 
                     topRow.setTag(TAG_COLS_INJECTED);
-                    Log.d(TAG, "NrSaCellColumnsHook: injected cols pos=" + position
-                            + " arfcn=" + arfcnText + " bw=" + bwText);
                     return result;
                 }
             });
@@ -475,7 +473,6 @@ public class NrSaCellColumnsHook {
                     Object fragment = chain.getThisObject();
                     try {
                         o0Meth.invoke(fragment);
-                        Log.d(TAG, "NrSaCellColumnsHook: forced h8.b.o0() after Q()");
                     } catch (Throwable t) {
                         Log.w(TAG, "NrSaCellColumnsHook: h8.b.o0() invoke failed: " + t);
                     }

@@ -350,12 +350,9 @@ public class SignalingShareHook {
                                 Intent chooser = Intent.createChooser(shareIntent, "Share Signaling Message");
                                 chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                                 ctx.startActivity(chooser);
-
-                                Log.d(TAG, "share: intent launched");
                             }
                         });
 
-                        Log.d(TAG, "hookOnItemClick: Share+Copy container added");
                     } catch (Exception e) {
                         Log.w(TAG, "hookOnItemClick post-processing failed: " + e);
                     }

@@ -279,8 +279,6 @@ public class ScrollBarHook {
 
                         // Mark as done on the FrameLayout
                         frame.setTag(SEEKBAR_TAG.hashCode(), SEEKBAR_TAG);
-
-                        Log.d(TAG, "ScrollBarHook: SeekBar overlay added to popup");
                     } catch (Exception e) {
                         Log.w(TAG, "ScrollBarHook post-processing failed: " + e);
                     }

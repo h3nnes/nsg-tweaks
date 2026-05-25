@@ -178,7 +178,25 @@ public class NrNsaBandwidthColumnHook {
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result   = chain.proceed();
+                    // Belt-and-suspenders: if the convertView already has our BW column
+                    // injected, null it so NSG inflates fresh (BandColumnHook does this
+                    // first since it is outermost, but guard here too).
+                    View convertView = (View) chain.getArg(1);
+                    boolean needsNullConvert = false;
+                    if (convertView instanceof LinearLayout) {
+                        LinearLayout cvOuter = (LinearLayout) convertView;
+                        LinearLayout cvMain = (cvOuter.getOrientation() == LinearLayout.VERTICAL
+                                && cvOuter.getChildCount() >= 1
+                                && cvOuter.getChildAt(0) instanceof LinearLayout)
+                                ? (LinearLayout) cvOuter.getChildAt(0) : null;
+                        if (cvMain != null && TAG_BW_INJECTED.equals(cvMain.getTag(BW_TAG_KEY))) {
+                            needsNullConvert = true;
+                        }
+                    }
+
+                    Object result = needsNullConvert
+                            ? chain.proceed(new Object[]{ chain.getArg(0), null, chain.getArg(2) })
+                            : chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
                     int    position = (int) chain.getArg(0);
                     View   rowView  = (View) result;
@@ -208,8 +226,7 @@ public class NrNsaBandwidthColumnHook {
                     final String bwText  = (bwText0 != null) ? bwText0 : "-";
 
                     // Already injected — refresh text at child[2]
-                    if (TAG_BW_INJECTED.equals(row.getTag(BW_TAG_KEY))) {
-                        TextView existing = (TextView) row.getChildAt(2);
+                    if (TAG_BW_INJECTED.equals(row.getTag(BW_TAG_KEY))) {                        TextView existing = (TextView) row.getChildAt(2);
                         existing.setText(bwText);
                         // Refresh color: grey (from PCI ref) for "-", white for actual values
                         if (!"-".equals(bwText)) {
@@ -242,7 +259,6 @@ public class NrNsaBandwidthColumnHook {
                     if (row.getChildCount() != 7) return result;
 
                     injectBwIntoRow(row, bwText, rowView);
-                    Log.d(TAG, "NrNsaBandwidthColumnHook: injected BW col pos=" + position + " bw=" + bwText);
                     return result;
                 }
             });
@@ -315,10 +331,8 @@ public class NrNsaBandwidthColumnHook {
                 }
 
                 ll.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
-                Log.i(TAG, "NrNsaBandwidthColumnHook: injectBwHeader done at child " + i);
                 return;
             }
-            Log.w(TAG, "NrNsaBandwidthColumnHook: header row not found (" + listView.getChildCount() + " children)");
         } catch (Exception e) {
             Log.w(TAG, "NrNsaBandwidthColumnHook: injectBwHeader failed: " + e);
         }
@@ -331,7 +345,12 @@ public class NrNsaBandwidthColumnHook {
      */
     private void injectBwIntoRow(LinearLayout row, String bwText, View contextView) {
         // Copy style from PCI view (child[3] after Band injection = original child[1])
-        TextView refView = (TextView) row.getChildAt(3);
+        View refRaw = row.getChildAt(3);
+        if (!(refRaw instanceof TextView)) {
+            Log.e(TAG, "NrNsaBW injectBwIntoRow: child[3] is not a TextView — aborting");
+            return;
+        }
+        TextView refView = (TextView) refRaw;
         TextView bwView  = new TextView(contextView.getContext());
         bwView.setText(bwText);
         bwView.setGravity(android.view.Gravity.CENTER);
@@ -353,10 +372,12 @@ public class NrNsaBandwidthColumnHook {
 
         // Redistribute all 8 columns
         for (int i = 0; i < row.getChildCount() && i < FINAL_WEIGHTS.length; i++) {
-            LinearLayout.LayoutParams clp =
-                    (LinearLayout.LayoutParams) row.getChildAt(i).getLayoutParams();
+            View child = row.getChildAt(i);
+            android.view.ViewGroup.LayoutParams rawLp = child.getLayoutParams();
+            if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
+            LinearLayout.LayoutParams clp = (LinearLayout.LayoutParams) rawLp;
             clp.weight = FINAL_WEIGHTS[i];
-            row.getChildAt(i).setLayoutParams(clp);
+            child.setLayoutParams(clp);
         }
 
         row.setTag(BW_TAG_KEY, TAG_BW_INJECTED);

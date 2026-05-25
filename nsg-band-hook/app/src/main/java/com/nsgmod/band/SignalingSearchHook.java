@@ -581,9 +581,8 @@ public class SignalingSearchHook {
                                             }
                                         }
                                     }
-                                });
+                                    });
 
-                        Log.d(TAG, "SignalingSearchHook: search bar added to popup");
                     } catch (Exception e) {
                         Log.w(TAG, "SignalingSearchHook post-processing failed: " + e);
                     }

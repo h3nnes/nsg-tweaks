@@ -44,34 +44,38 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *     (workspace.c() clears it first; workspace.f() sets it after K()).
  *     → Suppress K(), keep bar visible.
  *   • DataSource != null  → called from t7.e.e() case 1 (user stopped replay).
- *     h0.G() never clears the DataSource, so it remains set.
+ *     g0.G() never clears the DataSource, so it remains set.
  *     → Allow K(), clear replayActive so save-log / live mode resume normally.
  *
- * Prong C: t7.h0.E() before-hook (start-new-test).
- *   When menu_open_new_test is tapped in replay mode, NSG calls h0.D(false) then
- *   h0.E() directly — it NEVER calls K(). So replayActive would stay true forever.
- *   Prong C detects h0.E() while replayActive==true, clears the flag, and hides
+ * Prong C: t7.g0.E() before-hook (start-new-test).
+ *   When menu_open_new_test is tapped in replay mode, NSG calls g0.D(false) then
+ *   g0.E() directly — it NEVER calls K(). So replayActive would stay true forever.
+ *   Prong C detects g0.E() while replayActive==true, clears the flag, and hides
  *   the bar on the main thread. This is the primary "end replay" signal.
- *   h0.E() is also called from the "Discard" dialog path, so all stop-replay
+ *   g0.E() is also called from the "Discard" dialog path, so all stop-replay
  *   cases are covered.
+ *   (v4.8.4: t7.h0 — renamed to t7.g0 in v4.8.6)
  *
- * Prong D: t7.x0.c(Activity) before-hook (graceful exit).
- *   In replay mode h0.A() returns false (no live test), so menu_exit takes the
- *   fast-exit branch: x0.c() is called directly and I() (which shows the loading
+ * Prong D: t7.w0.c(Activity) before-hook (graceful exit).
+ *   In replay mode g0.A() returns false (no live test), so menu_exit takes the
+ *   fast-exit branch: w0.c() is called directly and I() (which shows the loading
  *   spinner) is never called. The user sees the replay bar vanish with no spinner.
- *   Prong D intercepts x0.c() — when replayActive, shows wait_progress_bar
+ *   Prong D intercepts w0.c() — when replayActive, shows wait_progress_bar
  *   (spinner + "Stopping…") before proceeding, matching the live-test exit UX.
  *   replayActive is cleared here so Prong B does not interfere with subsequent K().
+ *   (v4.8.4: t7.x0 — renamed to t7.w0 in v4.8.6)
  *
- * Prong E: t7.q.a(MenuItem) intercept — allow "load logfile" while replay bar is visible.
- *   NSG's sidebar handler (t7.q.a) guards the file picker launch with:
+ * Prong E: t7.p.a(MenuItem) intercept — allow "load logfile" while replay bar is visible.
+ *   NSG's sidebar handler (t7.p.a, AdvancedActivity's DrawerLayout listener) guards
+ *   the file picker launch with:
  *     if (advancedActivity.findViewById(R.id.wait_progress_layout).getVisibility() != 0)
  *   Since the replay bar keeps wait_progress_layout VISIBLE, this guard silently
  *   blocks the file picker while a replay is active and the bar is not dismissed.
- *   Prong E intercepts t7.q.a() when replayActive == true and the selected item is
+ *   Prong E intercepts t7.p.a() when replayActive == true and the selected item is
  *   menu_load_logfile: it directly invokes advancedActivity.K.c() with MIME type "*&#47;*"
  *   (respecting the Application.d() subscription guard) and closes the drawer,
  *   bypassing the visibility guard entirely.
+ *   (v4.8.4: t7.q — renamed to t7.p in v4.8.6)
  *
  * Prong F: t7.e.b(Object) before-hook — restore spinner visibility before second load.
  *   t7.e.b() case 4 is NSG's "Loading…" phase: it sets wait_progress_layout VISIBLE
@@ -90,7 +94,7 @@ public class ReplayStatusBarHook {
     /**
      * True while a log file is loaded and being replayed.
      * Set to true by Prong A when load succeeds.
-     * Cleared by Prong C when h0.E() fires (start-new-test path).
+     * Cleared by Prong C when g0.E() fires (start-new-test path).
      * Also cleared by Prong B as a fallback if K() is called with DataSource set.
      */
     private static volatile boolean replayActive = false;
@@ -208,7 +212,6 @@ public class ReplayStatusBarHook {
                         if (dataSourceArg == null) {
                             // Load failed — make sure flag is clear
                             replayActive = false;
-                            Log.d(TAG, "Prong A: load failed, replayActive=false");
                             return result;
                         }
 
@@ -246,7 +249,7 @@ public class ReplayStatusBarHook {
     //       workspace.c (DataSource) is NULL — load hasn't set it yet.
     //       → Suppress K(), keep the bar visible.
     //   • K() called from t7.e.e() case 1 (user tapped stop/save):
-    //       h0.G() ran but never clears workspace.c; DataSource is still set.
+    //       g0.G() ran but never clears workspace.c; DataSource is still set.
     //       → Allow K(), clear replayActive so normal behaviour resumes.
     // -----------------------------------------------------------------------
     private void installProngB() {
@@ -283,7 +286,6 @@ public class ReplayStatusBarHook {
                             Log.w(TAG, "Prong B: clearFlags failed: " + t);
                             return chain.proceed(); // fall back on error
                         }
-                        Log.d(TAG, "Prong B: K() suppressed (load phase, DataSource null)");
                         return null; // skip original K()
                     } else {
                         // K() is called because user stopped replay (DataSource still live).
@@ -302,17 +304,18 @@ public class ReplayStatusBarHook {
     }
 
     // -----------------------------------------------------------------------
-    // Prong C: t7.h0.E() — start-new-test, the primary "end replay" signal.
+    // Prong C: t7.g0.E() — start-new-test, the primary "end replay" signal.
     //
     // When menu_open_new_test is tapped in replay mode, NSG calls:
-    //   J() → h0.D(false) → h0.E()
+    //   J() → g0.D(false) → g0.E()
     // It NEVER calls K(), so Prong B never fires and replayActive stays true.
-    // Hook h0.E() before it runs: clear replayActive and hide the bar.
-    // h0.E() runs on the main thread, so we can touch views directly.
+    // Hook g0.E() before it runs: clear replayActive and hide the bar.
+    // g0.E() runs on the main thread, so we can touch views directly.
+    // (v4.8.4: t7.h0 — renamed to t7.g0 in v4.8.6)
     // -----------------------------------------------------------------------
     private void installProngC() {
         try {
-            Class<?> h0Class  = loader.loadClass("t7.h0");
+            Class<?> h0Class  = loader.loadClass("t7.g0");
             Method   eMethod  = h0Class.getDeclaredMethod("E");
 
             xposed.hook(eMethod).intercept(new Hooker() {
@@ -320,31 +323,32 @@ public class ReplayStatusBarHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     if (replayActive) {
                         replayActive = false;
-                        Log.i(TAG, "Prong C: h0.E() while replay active — hiding bar, replayActive=false");
+                        Log.i(TAG, "Prong C: g0.E() while replay active — hiding bar, replayActive=false");
                         hideReplayBar();
                     }
                     return chain.proceed();
                 }
             });
 
-            Log.i(TAG, "Prong C installed on t7.h0.E()");
+            Log.i(TAG, "Prong C installed on t7.g0.E()");
         } catch (Exception e) {
             Log.e(TAG, "installProngC failed: " + e);
         }
     }
 
     // -----------------------------------------------------------------------
-    // Prong D: t7.x0.c(Activity) — graceful-exit path in replay mode.
+    // Prong D: t7.w0.c(Activity) — graceful-exit path in replay mode.
     //
-    // In live mode:  menu_exit → h0.A()==true → t7.b runnable → activity.I() → x0.c()
-    // In replay mode: menu_exit → h0.A()==false → x0.c() DIRECTLY (no I() call)
+    // In live mode:  menu_exit → g0.A()==true → t7.b runnable → activity.I() → w0.c()
+    // In replay mode: menu_exit → g0.A()==false → w0.c() DIRECTLY (no I() call)
     //
-    // Fix: before x0.c() proceeds, show the spinner bar so the user sees the
+    // Fix: before w0.c() proceeds, show the spinner bar so the user sees the
     //      normal "Stopping…" loading animation during the ~250 ms before finish().
+    // (v4.8.4: t7.x0 — renamed to t7.w0 in v4.8.6)
     // -----------------------------------------------------------------------
     private void installProngD() {
         try {
-            Class<?> x0Class   = loader.loadClass("t7.x0");
+            Class<?> x0Class   = loader.loadClass("t7.w0");
             Class<?> actClass  = loader.loadClass("android.app.Activity");
             Method   cMethod   = x0Class.getDeclaredMethod("c", actClass);
 
@@ -361,20 +365,20 @@ public class ReplayStatusBarHook {
                         } catch (Throwable t) {
                             Log.w(TAG, "Prong D: showExitSpinner failed: " + t);
                         }
-                        Log.i(TAG, "Prong D: x0.c() in replay mode — spinner shown, replayActive=false");
+                        Log.i(TAG, "Prong D: w0.c() in replay mode — spinner shown, replayActive=false");
                     }
                     return chain.proceed();
                 }
             });
 
-            Log.i(TAG, "Prong D installed on t7.x0.c(Activity)");
+            Log.i(TAG, "Prong D installed on t7.w0.c(Activity)");
         } catch (Exception e) {
             Log.e(TAG, "installProngD failed: " + e);
         }
     }
 
     // -----------------------------------------------------------------------
-    // Prong E: t7.q.a(MenuItem) — bypass visibility guard for "load logfile"
+    // Prong E: t7.p.a(MenuItem) — bypass visibility guard for "load logfile"
     //          while the replay bar is displayed.
     //
     // NSG's guard: if (wait_progress_layout.getVisibility() != 0) { open picker }
@@ -382,10 +386,12 @@ public class ReplayStatusBarHook {
     // We intercept the menu handler and, when replayActive==true and the item is
     // menu_load_logfile, directly call advancedActivity.K.c(new String[]{"*/*"})
     // (mirroring what NSG would do) then close the drawer and return true.
+    // (v4.8.4: t7.q — renamed to t7.p in v4.8.6; t7.p is AdvancedActivity's
+    //  NavigationView.OnNavigationItemSelectedListener)
     // -----------------------------------------------------------------------
     private void installProngE() {
         try {
-            Class<?> tqClass      = loader.loadClass("t7.q");
+            Class<?> tqClass      = loader.loadClass("t7.p");
             Class<?> menuItemClass = loader.loadClass("android.view.MenuItem");
             Method   aMethod       = tqClass.getDeclaredMethod("a", menuItemClass);
             aMethod.setAccessible(true);
@@ -431,21 +437,21 @@ public class ReplayStatusBarHook {
                                 return chain.proceed(); // fall back
                             }
                         } else {
-                            // Not subscribed — show the upgrade dialog via x0.e(activity)
+                            // Not subscribed — show the upgrade dialog via w0.e(activity)
                             try {
-                                Class<?> x0Class  = loader.loadClass("t7.x0");
-                                Method   eMethod  = x0Class.getDeclaredMethod("e",
+                                Class<?> w0Class  = loader.loadClass("t7.w0");
+                                Method   eMethod  = w0Class.getDeclaredMethod("e",
                                         loader.loadClass("com.qtrun.nsg.AdvancedActivity"));
                                 eMethod.setAccessible(true);
                                 eMethod.invoke(null, activity);
                             } catch (Throwable t) {
-                                Log.w(TAG, "Prong E: x0.e() fallback failed: " + t);
+                                Log.w(TAG, "Prong E: w0.e() fallback failed: " + t);
                             }
                         }
 
                         // Close the drawer (d(false) == closeDrawers())
                         try {
-                            // The DrawerLayout is a field on t7.q — find it via the chain's this-object
+                            // The DrawerLayout is a field on t7.p — find it via the chain's this-object
                             java.lang.reflect.Field[] fields = chain.getThisObject().getClass().getDeclaredFields();
                             for (java.lang.reflect.Field f : fields) {
                                 f.setAccessible(true);
@@ -468,7 +474,7 @@ public class ReplayStatusBarHook {
                 }
             });
 
-            Log.i(TAG, "Prong E installed on t7.q.a(MenuItem)");
+            Log.i(TAG, "Prong E installed on t7.p.a(MenuItem)");
         } catch (Exception e) {
             Log.e(TAG, "installProngE failed: " + e);
         }
@@ -514,7 +520,6 @@ public class ReplayStatusBarHook {
                                             if (pb != null) {
                                                 activity.runOnUiThread(() ->
                                                         pb.setVisibility(View.VISIBLE));
-                                                Log.d(TAG, "Prong F: progressBar restore posted to UI thread");
                                             }
                                         }
                                     }
@@ -557,7 +562,6 @@ public class ReplayStatusBarHook {
                         if (pb != null) pb.setVisibility(View.VISIBLE);
                     }
                 }
-                Log.d(TAG, "hideReplayBar: bar hidden, spinner restored");
             } catch (Throwable t) {
                 Log.w(TAG, "hideReplayBar failed: " + t);
             }
@@ -646,7 +650,6 @@ public class ReplayStatusBarHook {
 
                     ll.addView(row);
                     layout.setTag("nsgmod_replay"); // mark as initialised
-                    Log.d(TAG, "showReplayBar: X button row added");
                 } catch (Throwable t) {
                     Log.w(TAG, "showReplayBar: could not add X button: " + t);
                 }
@@ -692,8 +695,6 @@ public class ReplayStatusBarHook {
                 tipsView.setText("Stopping…");
             }
             layout.setVisibility(View.VISIBLE);
-
-            Log.d(TAG, "showExitSpinner: spinner shown");
         } catch (Throwable t) {
             Log.w(TAG, "showExitSpinner failed: " + t);
         }

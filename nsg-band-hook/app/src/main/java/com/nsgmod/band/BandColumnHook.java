@@ -90,14 +90,31 @@ public class BandColumnHook {
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result   = chain.proceed();
+                    // If convertView is already our modified view, null it out so NSG
+                    // always inflates a fresh row. Otherwise NSG's fixed getChildAt()
+                    // indices break on the already-modified 8-child row and NPEs.
+                    View convertView = (View) chain.getArg(1);
+                    boolean needsNullConvert = false;
+                    if (convertView instanceof LinearLayout) {
+                        LinearLayout cvOuter = (LinearLayout) convertView;
+                        LinearLayout cvMain  = (cvOuter.getOrientation() == LinearLayout.VERTICAL
+                                && cvOuter.getChildCount() >= 1
+                                && cvOuter.getChildAt(0) instanceof LinearLayout)
+                                ? (LinearLayout) cvOuter.getChildAt(0) : null;
+                        if (cvMain != null && TAG_BAND_INJECTED.equals(cvMain.getTag(BAND_TAG_KEY))) {
+                            needsNullConvert = true;
+                        }
+                    }
+
+                    Object result = needsNullConvert
+                            ? chain.proceed(new Object[]{ chain.getArg(0), null, chain.getArg(2) })
+                            : chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
                     int  position = (int) chain.getArg(0);
                     View rowView  = (View) result;
                     if (rowView == null) return result;
 
                     // rowView is the outer vertical LinearLayout (nr_cell_list_row_double_nsa).
-                    // main row = child 0; info strip = child 1 (may already be removed on recycle).
                     LinearLayout outerVert = getOuterVertical(rowView);
                     if (outerVert == null) return result;
 
@@ -106,32 +123,32 @@ public class BandColumnHook {
 
                     // --- Already injected path (recycled view) ---
                     if (TAG_BAND_INJECTED.equals(mainRow.getTag(BAND_TAG_KEY))) {
-                        // Info strip already removed; main row child 1 = ARFCN column.
-                        // Re-read ARFCN from the tag we stored on the outer container.
-                        // NSG may have updated the text in tvRowRFID on the recycled view
-                        // before we removed it — but since the sub-row is gone we stored
-                        // the text in the tag at first injection. However, on a recycled
-                        // view NSG calls getView fresh, so the sub-row IS present again
-                        // (child count == 2) before we run.  Check: if sub-row still
-                        // present, re-read it; otherwise use what's in the injected column.
+                        // convertView was nulled before chain.proceed(), so NSG inflated a
+                        // fresh row with the info strip present. Re-read ARFCN from it.
                         String arfcn = readArfcnFromSubRow(outerVert);
-                        if (arfcn == null) {
-                            // Sub-row already gone (shouldn't happen on fresh recycle, but safe).
-                            arfcn = ((TextView) mainRow.getChildAt(1)).getText().toString();
-                        }
+                        if (arfcn == null) arfcn = ((TextView) mainRow.getChildAt(1)).getText().toString();
                         removeInfoStrip(outerVert);
 
+                        // Borrow color from PCI (child[1] before injection = child[1] here
+                        // since this is the fresh-inflated row with 6 children).
+                        android.content.res.ColorStateList arfcnColor =
+                                colorFromPciAtFreshRow(mainRow);
                         TextView existing = (TextView) mainRow.getChildAt(1);
                         existing.setText(arfcn);
-                        applyArfcnColor(existing, arfcn, mainRow);
+                        if (arfcnColor != null) existing.setTextColor(arfcnColor);
                         return result;
                     }
 
                     // --- First injection path ---
                     // Main row must have exactly 6 children.
-                    if (mainRow.getChildCount() != 6) return result;
+                    if (mainRow.getChildCount() != 6) {
+                        Log.w(TAG, "BandColumnHook: pos=" + position
+                                + " unexpected mainRow.childCount=" + mainRow.getChildCount()
+                                + " (expected 6 for first injection) — skipping");
+                        return result;
+                    }
 
-                    // Read ARFCN from info strip (sub-row child 1, column 0 = tvRowRFID).
+                    // Read ARFCN from info strip.
                     String arfcn = readArfcnFromSubRow(outerVert);
                     if (arfcn == null) arfcn = "-";
 
@@ -139,14 +156,26 @@ public class BandColumnHook {
                     removeInfoStrip(outerVert);
 
                     // Inject ARFCN column at index 1 of the main row.
-                    TextView refView  = (TextView) mainRow.getChildAt(1); // PCI (before insertion)
+                    View refRaw = mainRow.getChildAt(1);
+                    if (!(refRaw instanceof TextView)) {
+                        Log.e(TAG, "BandColumnHook: child[1] is not a TextView — aborting injection");
+                        return result;
+                    }
+                    TextView refView   = (TextView) refRaw;
                     TextView arfcnView = new TextView(rowView.getContext());
                     arfcnView.setText(arfcn);
                     arfcnView.setGravity(android.view.Gravity.CENTER);
                     arfcnView.setMaxLines(1);
                     arfcnView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, refView.getTextSize());
                     arfcnView.setTypeface(refView.getTypeface());
-                    applyArfcnColor(arfcnView, arfcn, mainRow);
+                    // Borrow color from PCI column (child[1] in the fresh 6-child row).
+                    // PCI is always k0-colored by NSG, encoding serving (bright) vs neighbour (grey).
+                    android.content.res.ColorStateList arfcnColor = colorFromPciAtFreshRow(mainRow);
+                    if (arfcnColor != null) {
+                        arfcnView.setTextColor(arfcnColor);
+                    } else {
+                        arfcnView.setTextColor(refView.getTextColors());
+                    }
 
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                             0, (int) (21 * rowView.getContext().getResources().getDisplayMetrics().density));
@@ -158,14 +187,15 @@ public class BandColumnHook {
                     // Redistribute 7 columns (NrNsaBandwidthColumnHook will redistribute to 8 later).
                     float[] weights = {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f};
                     for (int i = 0; i < mainRow.getChildCount() && i < weights.length; i++) {
-                        LinearLayout.LayoutParams clp =
-                                (LinearLayout.LayoutParams) mainRow.getChildAt(i).getLayoutParams();
+                        View child = mainRow.getChildAt(i);
+                        android.view.ViewGroup.LayoutParams rawLp = child.getLayoutParams();
+                        if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
+                        LinearLayout.LayoutParams clp = (LinearLayout.LayoutParams) rawLp;
                         clp.weight = weights[i];
-                        mainRow.getChildAt(i).setLayoutParams(clp);
+                        child.setLayoutParams(clp);
                     }
 
                     mainRow.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
-                    Log.d(TAG, "BandColumnHook: injected ARFCN col pos=" + position + " arfcn=" + arfcn);
                     return result;
                 }
             });
@@ -238,10 +268,8 @@ public class BandColumnHook {
                 }
 
                 ll.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
-                Log.i(TAG, "BandColumnHook: injectBandHeader done at child " + i);
                 return;
             }
-            Log.w(TAG, "BandColumnHook: header not found (" + listView.getChildCount() + " children)");
         } catch (Exception e) {
             Log.w(TAG, "BandColumnHook: injectBandHeader failed: " + e);
         }
@@ -275,19 +303,49 @@ public class BandColumnHook {
     }
 
     /**
-     * Reads the ARFCN string from tvRowRFID — child 0 of child 1 (the info strip) of
-     * the outer vertical LL. Returns null if the info strip is absent or already removed.
+     * Returns the ColorStateList from the PCI column of a fresh (6-child) main row.
+     * NSG calls k0(pciView, isServing) unconditionally, so this always encodes
+     * textColorPrimary (aggregated/serving) or textColorSecondary (neighbour/grey).
+     * Child[1] is PCI in the fresh pre-injection 6-child row.
+     * Returns null if the child is absent or not a TextView.
+     */
+    private android.content.res.ColorStateList colorFromPciAtFreshRow(LinearLayout mainRow) {
+        if (mainRow.getChildCount() <= 1) return null;
+        View v = mainRow.getChildAt(1);
+        if (!(v instanceof TextView)) return null;
+        return ((TextView) v).getTextColors();
+    }
+
+    /**
+     * Reads the ARFCN string from the info strip (outer vertical LL child 1).
+     *
+     * NSG v4.8.6 writes ARFCN into tvRowCellName (child 1) when no GPS/tower-DB
+     * match is available (the normal case), and into tvRowRFID (child 0) only when
+     * a tower-DB hit is found.  So try child[1] first; fall back to child[0].
+     *
+     * Returns null if the info strip is absent or already removed.
      */
     private String readArfcnFromSubRow(LinearLayout outerVert) {
         if (outerVert.getChildCount() < 2) return null;
         View infoStripView = outerVert.getChildAt(1);
         if (!(infoStripView instanceof LinearLayout)) return null;
         LinearLayout infoStrip = (LinearLayout) infoStripView;
-        if (infoStrip.getChildCount() < 1) return null;
-        View rfidView = infoStrip.getChildAt(0);
-        if (!(rfidView instanceof TextView)) return null;
-        String text = ((TextView) rfidView).getText().toString().trim();
-        return text.isEmpty() ? "-" : text;
+
+        // child[1] = tvRowCellName — has ARFCN when no tower-DB match (common case)
+        String arfcn = textOf(infoStrip, 1);
+        if (arfcn != null) return arfcn;
+
+        // child[0] = tvRowRFID — has ARFCN when tower-DB match is available
+        return textOf(infoStrip, 0);
+    }
+
+    /** Returns trimmed non-empty text of child[idx] if it is a TextView, else null. */
+    private static String textOf(LinearLayout ll, int idx) {
+        if (ll.getChildCount() <= idx) return null;
+        View v = ll.getChildAt(idx);
+        if (!(v instanceof TextView)) return null;
+        String t = ((TextView) v).getText().toString().trim();
+        return t.isEmpty() ? null : t;
     }
 
     /**
@@ -299,23 +357,6 @@ public class BandColumnHook {
         }
     }
 
-    /**
-     * Colours the ARFCN TextView: white for real values, PCI colour for "-".
-     * After injection, PCI is at mainRow child[2].
-     */
-    private void applyArfcnColor(TextView tv, String arfcn, LinearLayout mainRow) {
-        if (!"-".equals(arfcn)) {
-            tv.setTextColor(0xFFFFFFFF);
-        } else {
-            // Borrow colour from PCI column.
-            // Before injection PCI is at child[1]; after injection PCI shifts to child[2].
-            int pciIndex = TAG_BAND_INJECTED.equals(mainRow.getTag(BAND_TAG_KEY)) ? 2 : 1;
-            if (mainRow.getChildCount() > pciIndex) {
-                tv.setTextColor(((TextView) mainRow.getChildAt(pciIndex)).getTextColors());
-            }
-        }
-    }
-
     private int resolveColor(android.content.Context ctx, int attr) {
         int[] attrs = {attr};
         android.content.res.TypedArray ta = ctx.obtainStyledAttributes(attrs);
@@ -323,4 +364,5 @@ public class BandColumnHook {
         ta.recycle();
         return color;
     }
+
 }

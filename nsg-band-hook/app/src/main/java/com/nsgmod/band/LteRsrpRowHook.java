@@ -184,13 +184,11 @@ public class LteRsrpRowHook {
                     } catch (Exception e) {
                         Log.w(TAG, "could not read carrier count: " + e);
                     }
-                    Log.d(TAG, "n0() called, carriers=" + carriers);
                     carrierCountInN0.set(carriers);
                     try {
                         return chain.proceed();
                     } finally {
                         carrierCountInN0.remove();
-                        Log.d(TAG, "n0() done");
                     }
                 }
             });
@@ -216,7 +214,6 @@ public class LteRsrpRowHook {
                     Object  k2aArg   = chain.getArg(0);
                     Integer carriers = carrierCountInN0.get();
                     boolean inN0     = carriers != null;
-                    Log.d(TAG, "v6.b.k0() called, inN0=" + inN0 + " carriers=" + carriers);
                     if (inN0 && k2aArg != null) {
                         injectRsrpRow(k2aArg, carriers);
                     }
