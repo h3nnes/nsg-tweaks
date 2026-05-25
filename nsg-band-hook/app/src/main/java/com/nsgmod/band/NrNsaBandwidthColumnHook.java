@@ -16,17 +16,24 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks a8.h (NRNSACellsFragment) to inject a BW column after the Band column
+ * Hooks a8.h$a (NRNSACellsFragment adapter) to inject a BW column after the Band column
  * already injected by BandColumnHook.
  *
  * Final column order: [Serving, Band, BW, PCI, Beam, RSRP, RSRQ, SINR]
  * Final weights:      {0.03f,  0.12f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f}
  *
- * Data keys (same as NrSaCellColumnsHook):
- *   PCell (intraRow=0):  NR5G::Serving_Cell::NR_Bandwidth_DL           → Integer MHz
- *   SCell (intraRow>=1): NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL → Object[] indexed by (intraRow-1)
+ * Performance design:
+ *  - BW values are cached per data-tick (bwCache[]), invalidated by hooking
+ *    a8.b$b.g(long, DataSource, short) which fires once per data tick for both
+ *    NR-NSA and LTE adapters.
+ *  - On every getView: h(position) is called to resolve (isSource0, intraRow)
+ *    so stale-tag recycling is avoided — no wrong BW shown for neighbour rows.
+ *  - The BW TextView ref is cached as a tag for O(1) setText on recycle.
+ *  - No convertView null trick; views recycle normally.
  *
- * Replay-safe: uses Workspace.g cursor; -1 (live) falls back to Long.MAX_VALUE.
+ * Property keys:
+ *   NR5G::Serving_Cell::NR_Bandwidth_DL          — scalar, PCell BW (intraRow 0)
+ *   NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL — array[0..3], SCell 1..4 BW
  */
 public class NrNsaBandwidthColumnHook {
 
@@ -36,35 +43,38 @@ public class NrNsaBandwidthColumnHook {
     private static final String KEY_SCELL_BW = "NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL";
     private static final int MAX_SCELLS = 4;
 
+    // Tag keys on the main-row LinearLayout.
+    private static final int BW_TAG_KEY      = "nsg_nsa_bw_injected".hashCode();
+    private static final int BW_VIEW_TAG_KEY = "nsg_nsa_bw_view".hashCode();
     private static final String TAG_BW_INJECTED = "nsg_nsa_bw_injected";
-    // Keyed tag slot — distinct from BandColumnHook's BAND_TAG_KEY so both hooks track
-    // injection state independently on the same View without overwriting each other.
-    private static final int BW_TAG_KEY = "nsg_nsa_bw_injected".hashCode();
 
     // Final 8-column weights: [Serving, Band, BW, PCI, Beam, RSRP, RSRQ, SINR]
-    private static final float[] FINAL_WEIGHTS = {0.03f, 0.12f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f};
+    private static final float[] FINAL_WEIGHTS =
+            {0.03f, 0.12f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f};
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // Workspace reflection
-    private Field wsSingleton;
-    private Field wsModuleIndex;
-    private Field wsDataSource;
-    private Field wsCurrentTime;
-
-    // Property reflection
+    // Workspace / DataSource reflection — resolved once.
+    private Field  wsSingleton;
+    private Field  wsModuleIndex;
+    private Field  wsDataSource;
+    private Field  wsCurrentTime;
     private Method dsGetProperty;
     private Method propIterMethod;
     private Method propGetMethod;
     private Method iterEndMethod;
     private Method iterKeyMethod;
 
-    // Adapter reflection
-    private Field  eField;
-    private Method hMethod;
+    // Adapter reflection — h(position) and sources field.
+    private Field  eField;   // a8.b$b.e  — Object[] sources array
+    private Method hMethod;  // a8.b$b.h(int) — returns Pair<source, intraRow>
 
     private boolean reflectionReady = false;
+
+    /** BW cache: index 0 = PCell, 1..4 = SCell 1..4. Null = not available → show "-". */
+    private final String[] bwCache = new String[MAX_SCELLS + 1];
+    private volatile boolean bwCacheValid = false;
 
     public NrNsaBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -90,7 +100,6 @@ public class NrNsaBandwidthColumnHook {
             propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
-            // iterValueMethod intentionally omitted — not needed; we use property.get(key) directly.
 
             eField  = bbClass.getField("e");
             hMethod = bbClass.getMethod("h", int.class);
@@ -102,60 +111,78 @@ public class NrNsaBandwidthColumnHook {
         }
     }
 
-    private String readBandwidth(boolean isSource0, int intraRow) {
-        if (!reflectionReady) return null;
-        if (!isSource0) return null; // detected cells have no serving bandwidth
+    // -----------------------------------------------------------------------
+    // BW cache — filled once per data-tick via g() hook, reused per frame.
+    // -----------------------------------------------------------------------
+
+    void invalidateBwCache() {
+        bwCacheValid = false;
+    }
+
+    private void fillBwCache() {
+        for (int i = 0; i <= MAX_SCELLS; i++) bwCache[i] = null;
+        bwCacheValid = true;
+        if (!reflectionReady) return;
         try {
             Object ws = wsSingleton.get(null);
-            if (ws == null) return null;
-
+            if (ws == null) return;
             int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
             Object dataSource  = wsDataSource.get(ws);
-            if (dataSource == null) return null;
-
-            String key;
-            int    sCellIndex;
-            if (intraRow == 0) {
-                key = KEY_PCELL_BW;
-                sCellIndex = -1;
-            } else {
-                int si = intraRow - 1;
-                if (si >= MAX_SCELLS) return null;
-                key = KEY_SCELL_BW;
-                sCellIndex = si;
-            }
-
-            Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
-            if (property == null) {
-                Log.w(TAG, "NrNsaBandwidthColumnHook: no property for key=" + key + " moduleIndex=" + moduleIndex);
-                return null;
-            }
-
+            if (dataSource == null) return;
             long cursorTime = wsCurrentTime.getLong(ws);
             long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
 
-            Object iterator = propIterMethod.invoke(property, queryTime);
-            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
+            // PCell BW — scalar property
+            bwCache[0] = readScalarBw(dataSource, KEY_PCELL_BW, moduleIndex, queryTime);
 
-            long   sampleKey = (long) iterKeyMethod.invoke(iterator);
-            Object value     = propGetMethod.invoke(property, sampleKey);
-            if (value == null) return null;
-
-            if (sCellIndex >= 0) {
-                if (value.getClass().isArray()) {
-                    Object[] arr = (Object[]) value;
-                    if (sCellIndex >= arr.length) return null;
-                    value = arr[sCellIndex];
-                } else {
-                    if (sCellIndex != 0) return null;
+            // SCell BW — array property: arr[0]=SCell1, arr[1]=SCell2, ...
+            Object scelProp = dsGetProperty.invoke(dataSource, KEY_SCELL_BW, moduleIndex);
+            if (scelProp != null) {
+                Object iter = propIterMethod.invoke(scelProp, queryTime);
+                if (iter != null && !(boolean) iterEndMethod.invoke(iter)) {
+                    long key = (long) iterKeyMethod.invoke(iter);
+                    Object val = propGetMethod.invoke(scelProp, key);
+                    if (val != null && val.getClass().isArray()) {
+                        Object[] arr = (Object[]) val;
+                        for (int si = 0; si < arr.length && si < MAX_SCELLS; si++) {
+                            if (arr[si] instanceof Number)
+                                bwCache[si + 1] = bwEnumToMhz(((Number) arr[si]).intValue());
+                        }
+                    } else if (val instanceof Number) {
+                        bwCache[1] = bwEnumToMhz(((Number) val).intValue());
+                    }
                 }
             }
-
-            return (value instanceof Number) ? String.valueOf(((Number) value).intValue()) : null;
         } catch (Exception e) {
-            Log.w(TAG, "NrNsaBandwidthColumnHook: readBandwidth failed: " + e);
+            Log.w(TAG, "NrNsaBandwidthColumnHook: fillBwCache failed: " + e);
+        }
+    }
+
+    private String readScalarBw(Object ds, String key, int modIdx, long queryTime) {
+        try {
+            Object prop = dsGetProperty.invoke(ds, key, modIdx);
+            if (prop == null) return null;
+            Object iter = propIterMethod.invoke(prop, queryTime);
+            if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
+            long sampleKey = (long) iterKeyMethod.invoke(iter);
+            Object val = propGetMethod.invoke(prop, sampleKey);
+            return (val instanceof Number) ? bwEnumToMhz(((Number) val).intValue()) : null;
+        } catch (Exception e) {
             return null;
         }
+    }
+
+    /** Returns cached BW for the given intraRow (0=PCell, 1..4=SCell N). */
+    private String cachedBw(int intraRow) {
+        if (!bwCacheValid) fillBwCache();
+        if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
+        return bwCache[intraRow];
+    }
+
+    private static String bwEnumToMhz(int i) {
+        // NR BW is reported directly in MHz (e.g. 5, 10, 15, 20, 25, 40, 50, 60, 80, 100 MHz).
+        // No enum mapping needed — value IS the MHz figure.
+        return String.valueOf(i);
     }
 
     public void install() {
@@ -164,7 +191,7 @@ public class NrNsaBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.h$a.getView — inject BW cell at index 2 (after Band at index 1)
+    // Hook: a8.h$a.getView
     // -----------------------------------------------------------------------
     private void hookGetView() {
         if (!reflectionReady) {
@@ -173,40 +200,26 @@ public class NrNsaBandwidthColumnHook {
         }
         try {
             Class<?> adapterClass  = loader.loadClass("a8.h$a");
-            Method   getViewMethod = adapterClass.getMethod("getView", int.class, View.class, ViewGroup.class);
+            Method   getViewMethod = adapterClass.getMethod("getView",
+                    int.class, View.class, ViewGroup.class);
 
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    // Belt-and-suspenders: if the convertView already has our BW column
-                    // injected, null it so NSG inflates fresh (BandColumnHook does this
-                    // first since it is outermost, but guard here too).
-                    View convertView = (View) chain.getArg(1);
-                    boolean needsNullConvert = false;
-                    if (convertView instanceof LinearLayout) {
-                        LinearLayout cvOuter = (LinearLayout) convertView;
-                        LinearLayout cvMain = (cvOuter.getOrientation() == LinearLayout.VERTICAL
-                                && cvOuter.getChildCount() >= 1
-                                && cvOuter.getChildAt(0) instanceof LinearLayout)
-                                ? (LinearLayout) cvOuter.getChildAt(0) : null;
-                        if (cvMain != null && TAG_BW_INJECTED.equals(cvMain.getTag(BW_TAG_KEY))) {
-                            needsNullConvert = true;
-                        }
-                    }
-
-                    Object result = needsNullConvert
-                            ? chain.proceed(new Object[]{ chain.getArg(0), null, chain.getArg(2) })
-                            : chain.proceed();
+                    Object result = chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    int    position = (int) chain.getArg(0);
-                    View   rowView  = (View) result;
+                    View rowView = (View) result;
                     if (rowView == null) return result;
 
                     LinearLayout row = findHorizontalRow(rowView);
                     if (row == null) return result;
 
-                    // Resolve (isSource0, intraRow)
-                    boolean isSource0 = false; // default false: neighbour rows must not read serving-cell data
+                    int childCount = row.getChildCount();
+
+                    // Re-resolve (isSource0, intraRow) on every getView — prevents stale-tag
+                    // bug where a recycled row from source-1 would show source-0 BW data.
+                    int     position  = (int) chain.getArg(0);
+                    boolean isSource0 = false;
                     int     intraRow  = position;
                     try {
                         Object   adapter = chain.getThisObject();
@@ -218,47 +231,69 @@ public class NrNsaBandwidthColumnHook {
                             isSource0 = (pair.first != null && sources != null
                                     && sources.length > 0 && pair.first == sources[0]);
                         }
-                    } catch (Exception e) {
-                        Log.w(TAG, "NrNsaBandwidthColumnHook: h(position) failed: " + e);
+                    } catch (Exception ex) {
+                        Log.w(TAG, "NrNsaBandwidthColumnHook: h(position) failed: " + ex);
                     }
 
-                    final String bwText0 = readBandwidth(isSource0, intraRow);
-                    final String bwText  = (bwText0 != null) ? bwText0 : "-";
+                    String bwText = isSource0 ? cachedBw(intraRow) : null;
 
-                    // Already injected — refresh text at child[2]
-                    if (TAG_BW_INJECTED.equals(row.getTag(BW_TAG_KEY))) {                        TextView existing = (TextView) row.getChildAt(2);
-                        existing.setText(bwText);
-                        // Refresh color: grey (from PCI ref) for "-", white for actual values
-                        if (!"-".equals(bwText)) {
-                            existing.setTextColor(0xFFFFFFFF);
+                    // ---- Already-injected fast path ----
+                    Object bvTag = row.getTag(BW_VIEW_TAG_KEY);
+                    if (bvTag instanceof TextView) {
+                        TextView bwView = (TextView) bvTag;
+                        bwView.setText(bwText != null ? bwText : "-");
+                        if (bwText != null) {
+                            bwView.setTextColor(0xFFFFFFFF);
                         } else {
-                            TextView refView = (TextView) row.getChildAt(3);
-                            existing.setTextColor(refView.getTextColors());
+                            if (childCount > 3 && row.getChildAt(3) instanceof TextView)
+                                bwView.setTextColor(
+                                        ((TextView) row.getChildAt(3)).getTextColors());
                         }
                         return result;
                     }
 
-                    // BandColumnHook hasn't run yet on this recycled view (still 6 children).
-                    // Schedule a retry after the current getView call stack unwinds — by then
-                    // BandColumnHook will have injected its column (7 children).
-                    if (row.getChildCount() == 6) {
-                        final LinearLayout retryRow = row;
-                        row.post(() -> {
-                            if (TAG_BW_INJECTED.equals(retryRow.getTag(BW_TAG_KEY))) return;
-                            if (retryRow.getChildCount() != 7) return;
-                            try {
-                                injectBwIntoRow(retryRow, bwText, rowView);
-                            } catch (Exception ex) {
-                                Log.w(TAG, "NrNsaBandwidthColumnHook: post-retry inject failed: " + ex);
-                            }
-                        });
-                        return result;
+                    // ---- First injection path ----
+                    // BandColumnHook (outer/registered second) already ran → 7 children.
+                    if (childCount != 7) return result;
+
+                    String bwDisplay = (bwText != null) ? bwText : "-";
+
+                    // Style from PCI column (child[3] after Band injection).
+                    View refRaw = row.getChildAt(3);
+                    if (!(refRaw instanceof TextView)) return result;
+                    TextView refView = (TextView) refRaw;
+
+                    TextView bwView = new TextView(rowView.getContext());
+                    bwView.setText(bwDisplay);
+                    bwView.setGravity(android.view.Gravity.CENTER);
+                    bwView.setMaxLines(1);
+                    bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                            refView.getTextSize());
+                    bwView.setTypeface(refView.getTypeface());
+                    if (bwText != null) {
+                        bwView.setTextColor(0xFFFFFFFF);
+                    } else {
+                        bwView.setTextColor(refView.getTextColors());
                     }
 
-                    // Row must have 7 children (BandColumnHook already ran)
-                    if (row.getChildCount() != 7) return result;
+                    float density = rowView.getContext()
+                            .getResources().getDisplayMetrics().density;
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                            0, (int) (21 * density));
+                    lp.weight = FINAL_WEIGHTS[2];
+                    bwView.setLayoutParams(lp);
 
-                    injectBwIntoRow(row, bwText, rowView);
+                    row.addView(bwView, 2);
+
+                    for (int i = 0; i < 8 && i < row.getChildCount(); i++) {
+                        View child = row.getChildAt(i);
+                        ViewGroup.LayoutParams rawLp = child.getLayoutParams();
+                        if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
+                        ((LinearLayout.LayoutParams) rawLp).weight = FINAL_WEIGHTS[i];
+                        child.setLayoutParams(rawLp);
+                    }
+
+                    row.setTag(BW_VIEW_TAG_KEY, bwView);
                     return result;
                 }
             });
@@ -269,7 +304,7 @@ public class NrNsaBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.h.I — inject "BW" header label after layout is posted
+    // Hook: a8.h.I — inject "BW" header label
     // -----------------------------------------------------------------------
     private void hookOnCreateView() {
         try {
@@ -287,7 +322,7 @@ public class NrNsaBandwidthColumnHook {
 
                     int listId = fragmentView.getContext().getResources()
                             .getIdentifier("list_1", "id", "com.qtrun.QuickTest");
-                    if (listId == 0) { Log.w(TAG, "NrNsaBandwidthColumnHook: list_1 id not found"); return result; }
+                    if (listId == 0) return result;
 
                     ListView listView = (ListView) fragmentView.findViewById(listId);
                     if (listView == null) return result;
@@ -308,24 +343,26 @@ public class NrNsaBandwidthColumnHook {
                 View child = listView.getChildAt(i);
                 if (!(child instanceof LinearLayout)) continue;
                 LinearLayout ll = (LinearLayout) child;
-                // Header row has 7 children after BandColumnHook ran (Band already injected)
-                if (ll.getOrientation() != LinearLayout.HORIZONTAL || ll.getChildCount() != 7) continue;
+                if (ll.getOrientation() != LinearLayout.HORIZONTAL
+                        || ll.getChildCount() != 7) continue;
                 if (TAG_BW_INJECTED.equals(ll.getTag(BW_TAG_KEY))) return;
 
                 TextView bwLabel = new TextView(listView.getContext());
                 bwLabel.setText("BW");
                 bwLabel.setGravity(android.view.Gravity.CENTER);
                 bwLabel.setMaxLines(1);
-                bwLabel.setTextColor(resolveColor(listView.getContext(), android.R.attr.textColorTertiary));
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT);
-                lp.weight = FINAL_WEIGHTS[2]; // 0.10f
+                bwLabel.setTextColor(resolveColor(listView.getContext(),
+                        android.R.attr.textColorTertiary));
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT);
+                lp.weight = FINAL_WEIGHTS[2];
                 bwLabel.setLayoutParams(lp);
 
                 ll.addView(bwLabel, 2);
 
-                // Redistribute all 8 columns to final weights
                 for (int j = 0; j < ll.getChildCount() && j < FINAL_WEIGHTS.length; j++) {
-                    LinearLayout.LayoutParams clp = (LinearLayout.LayoutParams) ll.getChildAt(j).getLayoutParams();
+                    LinearLayout.LayoutParams clp =
+                            (LinearLayout.LayoutParams) ll.getChildAt(j).getLayoutParams();
                     clp.weight = FINAL_WEIGHTS[j];
                     ll.getChildAt(j).setLayoutParams(clp);
                 }
@@ -339,71 +376,46 @@ public class NrNsaBandwidthColumnHook {
     }
 
     /**
-     * Injects the BW TextView at index 2 of an already-Band-injected row (childCount==7)
-     * and redistributes all 8 column weights.
-     * Called both inline from getView and from the post() retry lambda.
+     * Install cache-invalidation hook on a8.b$b.g(long, DataSource, short).
+     * This method fires once per data tick for both NR-NSA and LTE adapters,
+     * right before notifyDataSetChanged() — so BW cache is stale when getView runs.
+     * Called from MainHook after construction.
      */
-    private void injectBwIntoRow(LinearLayout row, String bwText, View contextView) {
-        // Copy style from PCI view (child[3] after Band injection = original child[1])
-        View refRaw = row.getChildAt(3);
-        if (!(refRaw instanceof TextView)) {
-            Log.e(TAG, "NrNsaBW injectBwIntoRow: child[3] is not a TextView — aborting");
-            return;
+    public void installCacheInvalidationHook() {
+        if (!reflectionReady) return;
+        try {
+            Class<?> bbClass  = loader.loadClass("a8.b$b");
+            Class<?> dsClass  = loader.loadClass("com.qtrun.sys.DataSource");
+            Method   gMethod  = bbClass.getMethod("g", long.class, dsClass, short.class);
+            xposed.hook(gMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    invalidateBwCache();
+                    return result;
+                }
+            });
+            Log.i(TAG, "NrNsaBandwidthColumnHook: cache-invalidation hook on a8.b$b.g() installed");
+        } catch (Exception e) {
+            Log.w(TAG, "NrNsaBandwidthColumnHook: cache-invalidation hook failed: " + e);
         }
-        TextView refView = (TextView) refRaw;
-        TextView bwView  = new TextView(contextView.getContext());
-        bwView.setText(bwText);
-        bwView.setGravity(android.view.Gravity.CENTER);
-        bwView.setMaxLines(1);
-        bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, refView.getTextSize());
-        bwView.setTypeface(refView.getTypeface());
-        if (!"-".equals(bwText)) {
-            bwView.setTextColor(0xFFFFFFFF);
-        } else {
-            bwView.setTextColor(refView.getTextColors());
-        }
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                0, (int) (21 * contextView.getContext().getResources().getDisplayMetrics().density));
-        lp.weight = FINAL_WEIGHTS[2]; // 0.10f
-        bwView.setLayoutParams(lp);
-
-        row.addView(bwView, 2);
-
-        // Redistribute all 8 columns
-        for (int i = 0; i < row.getChildCount() && i < FINAL_WEIGHTS.length; i++) {
-            View child = row.getChildAt(i);
-            android.view.ViewGroup.LayoutParams rawLp = child.getLayoutParams();
-            if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
-            LinearLayout.LayoutParams clp = (LinearLayout.LayoutParams) rawLp;
-            clp.weight = FINAL_WEIGHTS[i];
-            child.setLayoutParams(clp);
-        }
-
-        row.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
     }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
 
     private LinearLayout findHorizontalRow(View v) {
         if (!(v instanceof LinearLayout)) return null;
         LinearLayout ll = (LinearLayout) v;
-        // v4.8.6: outer container is a vertical LL (nr_cell_list_row_double_nsa).
-        // BandColumnHook already removed the info strip (child 1), leaving only
-        // the main horizontal row as child 0.
         if (ll.getOrientation() == LinearLayout.VERTICAL && ll.getChildCount() >= 1) {
             View first = ll.getChildAt(0);
             if (first instanceof LinearLayout) {
                 LinearLayout inner = (LinearLayout) first;
-                if (inner.getOrientation() == LinearLayout.HORIZONTAL
-                        && (inner.getChildCount() >= 6 && inner.getChildCount() <= 8)) {
-                    return inner;
-                }
+                if (inner.getOrientation() == LinearLayout.HORIZONTAL) return inner;
             }
         }
-        // Flat horizontal row (header row, or legacy layout).
-        if (ll.getOrientation() == LinearLayout.HORIZONTAL
-                && (ll.getChildCount() >= 6 && ll.getChildCount() <= 8)) {
-            return ll;
-        }
+        if (ll.getOrientation() == LinearLayout.HORIZONTAL) return ll;
         return null;
     }
 

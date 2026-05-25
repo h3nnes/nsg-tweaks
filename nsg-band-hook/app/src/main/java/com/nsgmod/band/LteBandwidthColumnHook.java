@@ -16,56 +16,56 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks a8.f (LTECellsFragment) to inject a BW (DL bandwidth) column between
- * the Band and EARFCN columns in the LTE cell table.
- *
- * Data path:
- *   Workspace.j → Workspace singleton
- *   Workspace.a → short moduleIndex
- *   Workspace.c → DataSource
- *   Workspace.g → long current cursor time (replay position; -1 if live/unset)
- *   DataSource.getProperty(key, moduleIndex) → Property
- *   Property.b(cursorTime) → Property$Iterator positioned at cursor
- *   Property$Iterator.key() → long sample key at that position
- *   Property.get(key)       → Object value (matches NSG k8.b.f() pattern)
+ * Hooks a8.f$a (LTECellsFragment adapter) to inject a BW column between Band and EARFCN.
  *
  * Keys:
  *   LTE::Serving_Cell::LTE_Bandwidth_PCell_DL          (intraRow == 0)
  *   LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell{N}_DL  (intraRow 1–7)
+ * Enum: 0=1.4, 1=3, 2=5, 3=10, 4=15, 5=20 (MHz)
  *
- * Enum decoding: 0=1.4M, 1=3M, 2=5M, 3=10M, 4=15M, 5=20M
- *
- * Concrete adapter class: a8.f$a (inner class of a8.f, extends a8.b$b)
- * onCreateView method: a8.f.I(LayoutInflater, ViewGroup, Bundle) — uses android.R.id.list
+ * Performance design (mirrors NrNsaBandwidthColumnHook):
+ *  - Bandwidth values are cached in bwCache[] per data-tick, NOT re-read per row.
+ *  - Cache invalidated by hooking a8.b$b.g(long, DataSource, short) — fires once per tick.
+ *  - On every getView: h(position) is called to resolve (isSource0, intraRow) freshly,
+ *    preventing stale-tag recycle bug. BW TextView ref is still cached as tag for O(1) setText.
+ *  - No convertView null trick; views recycle normally.
  */
 public class LteBandwidthColumnHook {
 
     private static final String TAG = "NSGBandHook";
-    private static final String TAG_BW_INJECTED = "nsg_ltebw_injected";
     private static final int MAX_SCELLS = 7;
+
+    // Tag keys on the row LinearLayout.
+    private static final String TAG_BW_INJECTED  = "nsg_ltebw_injected";
+    private static final int    BW_TAG_KEY        = "nsg_ltebw_injected".hashCode();
+    private static final int    BW_VIEW_TAG_KEY   = "nsg_ltebw_view".hashCode();
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // Workspace reflection
-    private Field wsSingleton;    // Workspace.j → Workspace (static)
-    private Field wsModuleIndex;  // Workspace.a → short
-    private Field wsDataSource;   // Workspace.c → DataSource
-    private Field wsCurrentTime;  // Workspace.g → long (replay cursor; -1 = live/unset)
+    // Workspace / Property reflection — used only when filling cache.
+    private Field wsSingleton;
+    private Field wsModuleIndex;
+    private Field wsDataSource;
+    private Field wsCurrentTime;
+    private Method dsGetProperty;
+    private Method propIterMethod;
+    private Method propGetMethod;
+    private Method iterEndMethod;
+    private Method iterKeyMethod;
 
-    // Property reflection
-    private Method dsGetProperty;   // DataSource.getProperty(String, int) → Property
-    private Method propIterMethod;  // Property.b(long) → Property$Iterator
-    private Method propGetMethod;   // Property.get(long key) → Object  (NSG-native pattern)
-    private Method iterEndMethod;   // Property$Iterator.end() → boolean
-    private Method iterKeyMethod;   // Property$Iterator.key() → long
-    private Method iterValueMethod; // Property$Iterator.value() → Object (kept as fallback)
-
-    // Adapter reflection
-    private Field  eField;  // a8.b$b.e → per-source array
-    private Method hMethod; // a8.b$b.h(int) → Pair<source, intraRow>
+    // Adapter reflection — used only on first injection of a row.
+    private Field  eField;
+    private Method hMethod;
 
     private boolean reflectionReady = false;
+
+    /**
+     * BW cache indexed by intraRow (0=PCell, 1..7=SCell N).
+     * Null = not available / show "-".
+     */
+    private final String[] bwCache = new String[MAX_SCELLS + 1];
+    private volatile boolean bwCacheValid = false;
 
     public LteBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -84,14 +84,13 @@ public class LteBandwidthColumnHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
-            wsCurrentTime  = wsClass.getField("g");  // long replay cursor
+            wsCurrentTime  = wsClass.getField("g");
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
             propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
-            iterValueMethod = iterClass.getMethod("value");
 
             eField  = bbClass.getField("e");
             hMethod = bbClass.getMethod("h", int.class);
@@ -104,62 +103,62 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Data reading
+    // BW cache
     // -----------------------------------------------------------------------
 
-    /**
-     * Reads DL bandwidth for a given row.
-     * @param isServingSource true if the row comes from the serving-cell source bucket
-     * @param intraRow        0 = PCell, 1–7 = SCell N
-     * @return bandwidth string (e.g. "20M", "1.4M") or null if unavailable
-     */
-    private String readBandwidth(boolean isServingSource, int intraRow) {
-        if (!reflectionReady) return null;
-        if (!isServingSource) return null; // neighbor rows have no individual bandwidth
+    private void invalidateBwCache() {
+        bwCacheValid = false;
+    }
 
-        String key;
-        if (intraRow == 0) {
-            key = "LTE::Serving_Cell::LTE_Bandwidth_PCell_DL";
-        } else if (intraRow >= 1 && intraRow <= MAX_SCELLS) {
-            key = "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell" + intraRow + "_DL";
-        } else {
-            return null;
-        }
-
+    private void fillBwCache() {
+        for (int i = 0; i <= MAX_SCELLS; i++) bwCache[i] = null;
+        bwCacheValid = true;
+        if (!reflectionReady) return;
         try {
             Object ws = wsSingleton.get(null);
-            if (ws == null) return null;
+            if (ws == null) return;
             int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
             Object dataSource  = wsDataSource.get(ws);
-            if (dataSource == null) return null;
-
-            // Use replay cursor time so values track the playback position.
-            // wsCurrentTime (Workspace.g) is -1 when live; fall back to Long.MAX_VALUE.
+            if (dataSource == null) return;
             long cursorTime = wsCurrentTime.getLong(ws);
             long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
 
-            Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
-            if (property == null) return null;
+            // PCell
+            bwCache[0] = readProperty(dataSource, "LTE::Serving_Cell::LTE_Bandwidth_PCell_DL",
+                    moduleIndex, queryTime);
 
-            Object iterator = propIterMethod.invoke(property, queryTime);
-            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
-
-            // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
-            long   sampleKey = (long) iterKeyMethod.invoke(iterator);
-            Object value     = propGetMethod.invoke(property, sampleKey);
-            if (!(value instanceof Integer)) return null;
-
-            return bwEnumToString((Integer) value);
+            // SCells
+            for (int n = 1; n <= MAX_SCELLS; n++) {
+                bwCache[n] = readProperty(dataSource,
+                        "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell" + n + "_DL",
+                        moduleIndex, queryTime);
+            }
         } catch (Exception e) {
-            Log.w(TAG, "LteBandwidthColumnHook.readBandwidth failed: " + e);
+            Log.w(TAG, "LteBandwidthColumnHook: fillBwCache failed: " + e);
+        }
+    }
+
+    private String readProperty(Object dataSource, String key, int moduleIndex, long queryTime) {
+        try {
+            Object prop = dsGetProperty.invoke(dataSource, key, moduleIndex);
+            if (prop == null) return null;
+            Object iter = propIterMethod.invoke(prop, queryTime);
+            if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
+            long sampleKey = (long) iterKeyMethod.invoke(iter);
+            Object val = propGetMethod.invoke(prop, sampleKey);
+            if (!(val instanceof Integer)) return null;
+            return bwEnumToString((Integer) val);
+        } catch (Exception e) {
             return null;
         }
     }
 
-    /**
-     * Converts 3GPP lte-BandwidthDL enum index to display string with "M" suffix.
-     * 0=1.4M, 1=3M, 2=5M, 3=10M, 4=15M, 5=20M, other=computed.
-     */
+    private String cachedBw(int intraRow) {
+        if (!bwCacheValid) fillBwCache();
+        if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
+        return bwCache[intraRow];
+    }
+
     private static String bwEnumToString(int i) {
         switch (i) {
             case 0: return "1.4";
@@ -182,15 +181,11 @@ public class LteBandwidthColumnHook {
     public void install() {
         hookGetView();
         hookOnCreateView();
-        hookE8bQ();
-        hookG8iQ();
-        hookA8fQ();
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.f$a.getView — inject BW column
+    // Hook: a8.f$a.getView
     // -----------------------------------------------------------------------
-
     private void hookGetView() {
         if (!reflectionReady) {
             Log.e(TAG, "LteBWHook.hookGetView skipped — reflection not ready");
@@ -204,23 +199,60 @@ public class LteBandwidthColumnHook {
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result   = chain.proceed();
+                    // No convertView null trick — recycle normally.
+                    Object result = chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    int    position = (int) chain.getArg(0);
-                    View   rowView  = (View) result;
+                    View rowView = (View) result;
                     if (rowView == null) return result;
 
                     LinearLayout row = findHorizontalRow(rowView);
                     if (row == null) return result;
 
-                    // Resolve (isServingSource, intraRow)
+                    // ---- Already-injected fast path ----
+                    Object bvTag = row.getTag(BW_VIEW_TAG_KEY);
+                    if (bvTag instanceof TextView) {
+                        TextView bwView = (TextView) bvTag;
+                        // Re-resolve (isSource0, intraRow) every time — prevents stale-tag
+                        // bug where a recycled row from source-1 keeps wrong intraRow.
+                        int     position2   = (int) chain.getArg(0);
+                        boolean isServing2  = false;
+                        int     intraRow2   = position2;
+                        try {
+                            Object   adapter2 = chain.getThisObject();
+                            Object[] sources2 = (Object[]) eField.get(adapter2);
+                            android.util.Pair<?, ?> pair2 =
+                                    (android.util.Pair<?, ?>) hMethod.invoke(adapter2, position2);
+                            if (pair2 != null && pair2.second != null) {
+                                intraRow2  = (int) pair2.second;
+                                isServing2 = (pair2.first != null && sources2 != null
+                                        && sources2.length > 0 && pair2.first == sources2[0]);
+                            }
+                        } catch (Exception ex) {
+                            Log.w(TAG, "LteBWHook: fast-path h(position) failed: " + ex);
+                        }
+                        String bwText = isServing2 ? cachedBw(intraRow2) : null;
+                        String display = (bwText != null) ? bwText : "-";
+                        bwView.setText(display);
+                        if (bwText != null) {
+                            bwView.setTextColor(0xFFFFFFFF);
+                        } else {
+                            if (row.getChildCount() > 3 && row.getChildAt(3) instanceof TextView)
+                                bwView.setTextColor(((TextView) row.getChildAt(3)).getTextColors());
+                        }
+                        return result;
+                    }
+
+                    // ---- First injection — must have exactly 6 children ----
+                    if (row.getChildCount() != 6) return result;
+
+                    // Resolve (isServingSource, intraRow) via reflection — first injection only.
                     boolean isServingSource = true;
-                    int     intraRow        = position;
+                    int     intraRow        = (int) chain.getArg(0);
                     try {
                         Object   adapter = chain.getThisObject();
                         Object[] sources = (Object[]) eField.get(adapter);
                         android.util.Pair<?, ?> pair =
-                                (android.util.Pair<?, ?>) hMethod.invoke(adapter, position);
+                                (android.util.Pair<?, ?>) hMethod.invoke(adapter, intraRow);
                         if (pair != null && pair.second != null) {
                             intraRow        = (int) pair.second;
                             isServingSource = (pair.first != null && sources != null
@@ -230,50 +262,31 @@ public class LteBandwidthColumnHook {
                         Log.w(TAG, "LteBWHook: h(position) failed: " + e);
                     }
 
-                    String bwText = "-";
-                    String bw     = readBandwidth(isServingSource, intraRow);
-                    if (bw != null) bwText = bw;
+                    String bwText = isServingSource ? cachedBw(intraRow) : null;
+                    String display = (bwText != null) ? bwText : "-";
 
-                    // Already injected — just refresh text at child[2]
-                    if (TAG_BW_INJECTED.equals(row.getTag())) {
-                        TextView existing = (TextView) row.getChildAt(2);
-                        existing.setText(bwText);
-                        if (bw != null) {
-                            existing.setTextColor(0xFFFFFFFF);
-                        } else {
-                            existing.setTextColor(((TextView) row.getChildAt(3)).getTextColors());
-                        }
-                        return result;
-                    }
-
-                    // First injection — must have exactly 6 children
-                    if (row.getChildCount() != 6) return result;
-
-                    // Copy style from Band column (child[1])
+                    // Copy style from Band column (child[1]).
                     TextView bandView = (TextView) row.getChildAt(1);
                     TextView bwView   = new TextView(rowView.getContext());
-                    bwView.setText(bwText);
+                    bwView.setText(display);
                     bwView.setGravity(android.view.Gravity.CENTER);
                     bwView.setMaxLines(1);
-                    bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
-                            bandView.getTextSize());
+                    bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, bandView.getTextSize());
                     bwView.setTypeface(bandView.getTypeface());
-                    if (bw != null) {
+                    if (bwText != null) {
                         bwView.setTextColor(0xFFFFFFFF);
                     } else {
                         bwView.setTextColor(bandView.getTextColors());
                     }
 
+                    float density = rowView.getContext().getResources().getDisplayMetrics().density;
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                            0, (int) (21 * rowView.getContext().getResources()
-                                    .getDisplayMetrics().density));
+                            0, (int) (21 * density));
                     lp.weight = 0.10f;
                     bwView.setLayoutParams(lp);
 
-                    // Insert at index 2 (between Band and EARFCN)
                     row.addView(bwView, 2);
 
-                    // Redistribute weights across all 7 columns
                     float[] weights = {0.05f, 0.11f, 0.10f, 0.18f, 0.14f, 0.21f, 0.21f};
                     for (int i = 0; i < row.getChildCount() && i < weights.length; i++) {
                         LinearLayout.LayoutParams clp =
@@ -282,7 +295,8 @@ public class LteBandwidthColumnHook {
                         row.getChildAt(i).setLayoutParams(clp);
                     }
 
-                    row.setTag(TAG_BW_INJECTED);
+                    // Cache view reference only — intraRow resolved fresh on every getView.
+                    row.setTag(BW_VIEW_TAG_KEY, bwView);
                     return result;
                 }
             });
@@ -293,9 +307,8 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.f.I — inject "BW" header label after layout is posted
+    // Hook: a8.f.I — inject "BW" header label
     // -----------------------------------------------------------------------
-
     private void hookOnCreateView() {
         try {
             Class<?> fragClass = loader.loadClass("a8.f");
@@ -309,11 +322,8 @@ public class LteBandwidthColumnHook {
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
                     View   fragmentView = (View) result;
                     if (fragmentView == null) return result;
-
-                    // a8.f uses android.R.id.list (not getIdentifier("list_1"))
                     ListView listView = (ListView) fragmentView.findViewById(android.R.id.list);
                     if (listView == null) return result;
-
                     listView.post(() -> injectBwHeader(listView));
                     return result;
                 }
@@ -330,16 +340,14 @@ public class LteBandwidthColumnHook {
                 View child = listView.getChildAt(i);
                 if (!(child instanceof LinearLayout)) continue;
                 LinearLayout ll = (LinearLayout) child;
-                if (ll.getOrientation() != LinearLayout.HORIZONTAL
-                        || ll.getChildCount() != 6) continue;
-                if (TAG_BW_INJECTED.equals(ll.getTag())) return;
+                if (ll.getOrientation() != LinearLayout.HORIZONTAL || ll.getChildCount() != 6) continue;
+                if (TAG_BW_INJECTED.equals(ll.getTag(BW_TAG_KEY))) return;
 
                 TextView bwLabel = new TextView(listView.getContext());
                 bwLabel.setText("BW");
                 bwLabel.setGravity(android.view.Gravity.CENTER);
                 bwLabel.setMaxLines(1);
-                bwLabel.setTextColor(resolveColor(listView.getContext(),
-                        android.R.attr.textColorTertiary));
+                bwLabel.setTextColor(resolveColor(listView.getContext(), android.R.attr.textColorTertiary));
                 LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT);
                 lp.weight = 0.10f;
@@ -355,7 +363,7 @@ public class LteBandwidthColumnHook {
                     ll.getChildAt(j).setLayoutParams(clp);
                 }
 
-                ll.setTag(TAG_BW_INJECTED);
+                ll.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
                 Log.i(TAG, "LteBWHook: injectBwHeader done at child " + i);
                 return;
             }
@@ -367,28 +375,50 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Helpers
+    // Cache invalidation — called from MainHook after construction.
     // -----------------------------------------------------------------------
 
     /**
-     * Finds the horizontal 6-child (or 7-child after injection) LinearLayout.
-     * Handles both flat (lte_cell_list_row) and wrapped (lte_cell_list_row_double).
+     * Install cache-invalidation hook on a8.b$b.g(long, DataSource, short).
+     * This fires once per data tick for both NR-NSA and LTE adapters,
+     * right before notifyDataSetChanged() — ensuring BW cache is stale when getView runs.
+     * Called from MainHook after LteBandwidthColumnHook is constructed.
      */
+    public void installCacheInvalidationHook() {
+        if (!reflectionReady) return;
+        try {
+            Class<?> bbClass = loader.loadClass("a8.b$b");
+            Class<?> dsClass = loader.loadClass("com.qtrun.sys.DataSource");
+            Method   gMethod = bbClass.getMethod("g", long.class, dsClass, short.class);
+            xposed.hook(gMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    invalidateBwCache();
+                    return result;
+                }
+            });
+            Log.i(TAG, "LteBandwidthColumnHook: cache-invalidation hook on a8.b$b.g() installed");
+        } catch (Exception e) {
+            Log.w(TAG, "LteBandwidthColumnHook: cache-invalidation hook failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+
     private LinearLayout findHorizontalRow(View v) {
         if (!(v instanceof LinearLayout)) return null;
         LinearLayout ll = (LinearLayout) v;
         if (ll.getOrientation() == LinearLayout.HORIZONTAL
-                && (ll.getChildCount() == 6 || ll.getChildCount() == 7)) {
-            return ll;
-        }
+                && (ll.getChildCount() == 6 || ll.getChildCount() == 7)) return ll;
         if (ll.getOrientation() == LinearLayout.VERTICAL && ll.getChildCount() > 0) {
             View first = ll.getChildAt(0);
             if (first instanceof LinearLayout) {
                 LinearLayout inner = (LinearLayout) first;
                 if (inner.getOrientation() == LinearLayout.HORIZONTAL
-                        && (inner.getChildCount() == 6 || inner.getChildCount() == 7)) {
-                    return inner;
-                }
+                        && (inner.getChildCount() == 6 || inner.getChildCount() == 7)) return inner;
             }
         }
         return null;
@@ -400,126 +430,5 @@ public class LteBandwidthColumnHook {
         int color = ta.getColor(0, 0xFFAAAAAA);
         ta.recycle();
         return color;
-    }
-
-    // -----------------------------------------------------------------------
-    // Hook 3: e8.b.Q() — force n0() rebuild when LTE CA Matrix becomes visible
-    // -----------------------------------------------------------------------
-
-    private void hookE8bQ() {
-        try {
-            Class<?> cls    = loader.loadClass("e8.b");
-            Method   qMeth  = cls.getDeclaredMethod("Q");
-            qMeth.setAccessible(true);
-            Method   n0Meth = cls.getDeclaredMethod("n0");
-            n0Meth.setAccessible(true);
-
-            xposed.hook(qMeth).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result   = chain.proceed();
-                    if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    Object fragment = chain.getThisObject();
-                    try {
-                        n0Meth.invoke(fragment);
-                    } catch (Throwable t) {
-                        Log.w(TAG, "LteBWHook: e8.b.n0() invoke failed: " + t);
-                    }
-                    return result;
-                }
-            });
-            Log.i(TAG, "LteBWHook: hookE8bQ installed");
-        } catch (Throwable t) {
-            Log.e(TAG, "LteBWHook: hookE8bQ failed: " + t);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Hook 4: g8.i.Q() — force n0() rebuild when NR-NSA EUTRA CA Matrix becomes visible
-    // -----------------------------------------------------------------------
-
-    private void hookG8iQ() {
-        try {
-            Class<?> cls    = loader.loadClass("g8.i");
-            Method   qMeth  = cls.getDeclaredMethod("Q");
-            qMeth.setAccessible(true);
-            Method   n0Meth = cls.getDeclaredMethod("n0");
-            n0Meth.setAccessible(true);
-
-            xposed.hook(qMeth).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result   = chain.proceed();
-                    if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    Object fragment = chain.getThisObject();
-                    try {
-                        n0Meth.invoke(fragment);
-                    } catch (Throwable t) {
-                        Log.w(TAG, "LteBWHook: g8.i.n0() invoke failed: " + t);
-                    }
-                    return result;
-                }
-            });
-            Log.i(TAG, "LteBWHook: hookG8iQ installed");
-        } catch (Throwable t) {
-            Log.e(TAG, "LteBWHook: hookG8iQ failed: " + t);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Hook 5: a8.f.Q() — post delayed notifyDataSetChanged to re-read BW
-    //         after NR→LTE fallback once LTE Serving_Cell data has settled
-    // -----------------------------------------------------------------------
-
-    private void hookA8fQ() {
-        try {
-            Class<?> cls   = loader.loadClass("a8.f");
-            Method   qMeth = cls.getDeclaredMethod("Q");
-            qMeth.setAccessible(true);
-
-            xposed.hook(qMeth).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result   = chain.proceed();
-                    if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    Object fragment = chain.getThisObject();
-                    try {
-                        android.view.View fragView = null;
-                        if (fragment instanceof androidx.fragment.app.Fragment) {
-                            fragView = ((androidx.fragment.app.Fragment) fragment).getView();
-                        } else if (fragment instanceof android.app.Fragment) {
-                            fragView = ((android.app.Fragment) fragment).getView();
-                        }
-                        if (fragView == null) return result;
-
-                        android.widget.ListView lv =
-                                (android.widget.ListView) fragView.findViewById(
-                                        android.R.id.list);
-                        if (lv == null) return result;
-
-                        lv.postDelayed(() -> {
-                            // 500 ms gives LTE::Serving_Cell properties time to populate after NR→LTE fallback
-                            try {
-                                if (!lv.isAttachedToWindow()) return;
-                                android.widget.ListAdapter adapter = lv.getAdapter();
-                                if (adapter instanceof android.widget.BaseAdapter) {
-                                    ((android.widget.BaseAdapter) adapter)
-                                            .notifyDataSetChanged();
-                                }
-                            } catch (Throwable t2) {
-                                Log.w(TAG, "LteBWHook: delayed notify failed: " + t2);
-                            }
-                        }, 500);
-
-                    } catch (Throwable t) {
-                        Log.w(TAG, "LteBWHook: hookA8fQ body failed: " + t);
-                    }
-                    return result;
-                }
-            });
-            Log.i(TAG, "LteBWHook: hookA8fQ installed");
-        } catch (Throwable t) {
-            Log.e(TAG, "LteBWHook: hookA8fQ failed: " + t);
-        }
     }
 }

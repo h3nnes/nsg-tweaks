@@ -22,12 +22,16 @@ public class MainHook extends XposedModule {
     public void onPackageReady(@NonNull PackageReadyParam param) {
         if (!TARGET_PACKAGE.equals(param.getPackageName())) return;
         Log.i(TAG, "hooking " + TARGET_PACKAGE);
-    new NrNsaBandwidthColumnHook(this, param.getClassLoader()).install();
-    new BandColumnHook(this, param.getClassLoader()).install();
-    new SignalingShareHook(this, param.getClassLoader()).install();
+        NrNsaBandwidthColumnHook nrNsaBwHook = new NrNsaBandwidthColumnHook(this, param.getClassLoader());
+        nrNsaBwHook.install();
+        nrNsaBwHook.installCacheInvalidationHook();
+        new BandColumnHook(this, param.getClassLoader()).install();
+        new SignalingShareHook(this, param.getClassLoader()).install();
         new ScrollBarHook(this, param.getClassLoader()).install();
         new SignalingSearchHook(this, param.getClassLoader()).install();
-        new LteBandwidthColumnHook(this, param.getClassLoader()).install();
+        LteBandwidthColumnHook lteBwHook = new LteBandwidthColumnHook(this, param.getClassLoader());
+        lteBwHook.install();
+        lteBwHook.installCacheInvalidationHook();
         new LteRsrpRowHook(this, param.getClassLoader()).install();
         new EutraRsrpRowHook(this, param.getClassLoader()).install();
         new NrSaRsrpRowHook(this, param.getClassLoader(),
