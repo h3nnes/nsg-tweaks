@@ -104,12 +104,11 @@ public class CellIdMatchHook {
                               + " and Latitude between %.2f and %.2f",
                                 lon - 0.2, lon + 0.2, lat - 0.2, lat + 0.2);
 
-                    Log.i(TAG, "ECellID match WHERE: " + where);
                     return where;
                 }
             });
 
-            Log.i(TAG, "CellIdMatchHook installed on ma.a.j()");
+            Log.i(TAG, "CellIdMatchHook installed");
         } catch (Throwable t) {
             Log.e(TAG, "CellIdMatchHook install failed: " + t);
         }
