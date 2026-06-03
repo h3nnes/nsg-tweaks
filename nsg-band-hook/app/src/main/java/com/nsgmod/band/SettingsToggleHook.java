@@ -28,6 +28,7 @@ public class SettingsToggleHook {
     static final String  PREFS_FILE               = "nsgmod_prefs";
     static final String  PREF_KEY                 = "nsgmod.subscriber_bypass";
     static final String  PREF_KEY_CELL_MODS       = "nsgmod.cell_mods_enabled";
+    static final String  PREF_KEY_CELL_ID_MATCH   = "nsgmod.cell_id_match_enabled";
     static final String  PREF_KEY_RT_PLAY         = "nsgmod.rt_play_enabled";
 
     /** Returns true when the cell-table modifications toggle is enabled (default: true). */
@@ -43,6 +44,22 @@ public class SettingsToggleHook {
         } catch (Throwable t) {
             android.util.Log.w(TAG, "cellModsEnabled check failed: " + t);
             return true; // fail open — keep mods active
+        }
+    }
+
+    /** Returns true when the cell-ID matching toggle is enabled (default: true). */
+    public static boolean cellIdMatchEnabled() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            android.app.Application app =
+                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app == null) return true;
+            SharedPreferences prefs = app.getSharedPreferences(
+                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+            return prefs.getBoolean(PREF_KEY_CELL_ID_MATCH, true); // default ON
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "cellIdMatchEnabled check failed: " + t);
+            return true; // fail open
         }
     }
 
