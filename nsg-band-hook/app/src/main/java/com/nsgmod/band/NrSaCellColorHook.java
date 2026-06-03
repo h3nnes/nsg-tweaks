@@ -239,24 +239,29 @@ public class NrSaCellColorHook {
     }
 
     /**
-     * Build a map from v6.g object → SCell index for Rank elements (d7.i$k bindings)
-     * that are at col≥60 (SCell columns). Within the same column, sort by row ascending
-     * and assign SCell indices 0,1,2,... so the topmost row = SCell1, next = SCell2, etc.
+     * Build a map from v6.g object → SCell index for all Rank elements (d7.i$k bindings).
      *
-     * This handles the carriers=3 NSG anomaly where both SCell1 and SCell2 Rank bindings
-     * have c=0 (instead of 0 and 1 respectively) because NSG calls f(binding, 0, false)
-     * for both in the inline o0() path.
+     * Strategy: collect ALL Rank bars regardless of column, sort globally by (col, row),
+     * treat the first entry (smallest col, then smallest row) as the PCell and skip it,
+     * then assign global SCell indices 0, 1, 2, … to the remaining elements in order.
+     *
+     * This correctly handles all three NSG layout paths:
+     *   2-carrier (k0):     col=30:[PCell]          col=65:[SCell0]            → idx 0
+     *   3-carrier (inline): col=30:[PCell]          col=65:[SCell0, SCell1]    → idx 0, 1
+     *   4-carrier (l0):     col=30:[PCell, SCell0]  col=65:[SCell1, SCell2]    → idx 0, 1, 2
+     *
+     * The previous col<60 filter accidentally excluded SCell[0] at col=30 in the 4-carrier
+     * path, causing SCell[1] and SCell[2] to be assigned indices 0 and 1 (off by one) and
+     * therefore display the wrong colors (holo_purple and turquoise instead of turquoise and
+     * yellow).
      */
     private Map<Object, Integer> buildRankScellMap(ArrayList<?> elements) {
         Map<Object, Integer> result = new HashMap<>();
         if (rankBindingClass == null) return result;
 
-        // Group Rank elements by column (float key), collecting (row, element) pairs
-        Map<Float, ArrayList<float[]>> byCol = new HashMap<>(); // col → list of [row, elementIndex]
-        // We can't use element as array entry — use parallel list approach
         ArrayList<Object> rankElems = new ArrayList<>();
-        ArrayList<Float> rankCols  = new ArrayList<>();
-        ArrayList<Float> rankRows  = new ArrayList<>();
+        ArrayList<Float>  rankCols  = new ArrayList<>();
+        ArrayList<Float>  rankRows  = new ArrayList<>();
 
         for (Object elem : elements) {
             if (!vgClass.isInstance(elem)) continue;
@@ -265,18 +270,15 @@ public class NrSaCellColorHook {
                 if (bindings == null || bindings.isEmpty()) continue;
                 Object b = bindings.get(0);
                 if (b == null || !rankBindingClass.isInstance(b)) continue;
-                float col = (float) v6aColField.get(elem);
-                if (col < 60.0f) continue; // PCell column — skip
-                float row = (float) v6aRowField.get(elem);
                 rankElems.add(elem);
-                rankCols.add(col);
-                rankRows.add(row);
+                rankCols.add((float) v6aColField.get(elem));
+                rankRows.add((float) v6aRowField.get(elem));
             } catch (Exception ignored) {}
         }
 
         if (rankElems.isEmpty()) return result;
 
-        // Sort by (col, row) — within each column, row order = SCell order
+        // Sort globally by (col, row) — PCell is always first (smallest col, then smallest row)
         Integer[] indices = new Integer[rankElems.size()];
         for (int i = 0; i < indices.length; i++) indices[i] = i;
         final ArrayList<Float> finalCols = rankCols;
@@ -289,14 +291,10 @@ public class NrSaCellColorHook {
             }
         });
 
-        // Assign SCell indices: within each column group, 0 = lowest row, 1 = next, …
-        float lastCol = Float.NaN;
-        int scellInCol = 0;
-        for (int i : indices) {
-            float col = rankCols.get(i);
-            if (col != lastCol) { scellInCol = 0; lastCol = col; }
-            result.put(rankElems.get(i), scellInCol);
-            scellInCol++;
+        // Skip indices[0] (PCell); assign global SCell indices 0, 1, 2, … to the rest
+        int scellIdx = 0;
+        for (int si = 1; si < indices.length; si++) {
+            result.put(rankElems.get(indices[si]), scellIdx++);
         }
         return result;
     }
