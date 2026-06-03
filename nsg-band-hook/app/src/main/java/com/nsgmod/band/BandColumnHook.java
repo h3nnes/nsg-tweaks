@@ -19,14 +19,17 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * Hooks a8.h$a (NRNSACellsFragment adapter) to inject an ARFCN column (labelled "Band")
  * at index 1 of the main NR cell row, and removes the NSG info sub-row.
  *
- * Performance design:
- *  - NO convertView null trick: we let NSG recycle views normally.
- *  - First-injection path (6-child main row): inflates once, removes strip, injects column.
- *  - Already-injected path (7-child main row, tag set): only updates text + color — zero
- *    View construction, zero LayoutParams changes, zero strip removal.
- *  - The info strip is present on the original inflated view and absent on recycled ones
- *    (because we already removed it); the already-injected check at child[1] is an int
- *    tag compare — near-zero cost.
+ * ARFCN is read directly from the DataSource via Workspace/Property reflection —
+ * the same pattern as NrNsaBandwidthColumnHook and NrSaCellColumnsHook.
+ * This avoids dependence on NSG's sub-row UI, which is not reliably populated
+ * during log replay.
+ *
+ * Signal paths:
+ *   serving  : NR5G::Cell_Measurements::NR_Cells_ARFCN       (Integer[], index=intraRow)
+ *   detected : NR5G::Detected_Cells::NR_DetectedCells_ARFCN  (Integer[], index=intraRow)
+ *
+ * Row-to-intraRow mapping uses a8.b$b.h(position) → Pair<source, intraRow>
+ * and a8.b$b.e (Object[] sources array).
  *
  * In NSG v4.8.6 the row layout is nr_cell_list_row_double_nsa — a vertical LinearLayout:
  *   child 0: horizontal main row  [Serving, PCI, Beam, RSRP, RSRQ, SINR]  (6 cols)
@@ -38,22 +41,68 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class BandColumnHook {
 
-    private static final String TAG = "NSGBandHook";
+    private static final String TAG = "NSGBandHook_Band";
 
     // Integer tag key used on the main-row LinearLayout to mark injection state.
-    // Value stored: TAG_ARFCN_VIEW_KEY points to the injected ARFCN TextView directly.
-    private static final int BAND_TAG_KEY      = "nsg_band_injected".hashCode();
+    private static final int    BAND_TAG_KEY      = "nsg_band_injected".hashCode();
     private static final String TAG_BAND_INJECTED = "nsg_band_injected";
 
-    // Second tag slot: store the injected TextView reference for O(1) update on recycle.
+    // Tag slot: store the injected ARFCN TextView reference for O(1) update on recycle.
     private static final int ARFCN_VIEW_TAG_KEY = "nsg_band_arfcn_view".hashCode();
 
     private final XposedInterface xposed;
     private final ClassLoader     loader;
 
+    // Workspace / DataSource / Property reflection — resolved once.
+    private Field  wsSingleton;
+    private Field  wsModuleIndex;
+    private Field  wsDataSource;
+    private Field  wsCurrentTime;   // field "g" — replay cursor, -1 in live mode
+    private Method dsGetProperty;
+    private Method propIterMethod;
+    private Method propGetMethod;
+    private Method iterEndMethod;
+    private Method iterKeyMethod;
+
+    // Adapter intraRow resolution — a8.b$b (base class of a8.h$a)
+    private Field  eField;   // a8.b$b.e — Object[] sources array
+    private Method hMethod;  // a8.b$b.h(int) — returns Pair<source, intraRow>
+
+    private boolean reflectionReady = false;
+
     public BandColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
         this.loader = loader;
+        initReflection();
+    }
+
+    private void initReflection() {
+        try {
+            Class<?> wsClass   = loader.loadClass("com.qtrun.sys.Workspace");
+            Class<?> dsClass   = loader.loadClass("com.qtrun.sys.DataSource");
+            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
+            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
+            Class<?> bbClass   = loader.loadClass("a8.b$b");
+
+            wsSingleton    = wsClass.getField("j");
+            wsModuleIndex  = wsClass.getField("a");
+            wsDataSource   = wsClass.getField("c");
+            wsCurrentTime  = wsClass.getField("g");
+
+            dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
+            propIterMethod = propClass.getMethod("b", long.class);
+            propGetMethod  = propClass.getMethod("get", long.class);
+            iterEndMethod  = iterClass.getMethod("end");
+            iterKeyMethod  = iterClass.getMethod("key");
+
+            eField  = bbClass.getField("e");   // Object[] sources array
+            hMethod = bbClass.getMethod("h", int.class);  // Pair<source, intraRow>
+
+            reflectionReady = true;
+            Log.i(TAG, "BandColumnHook: reflection ready");
+        } catch (Exception e) {
+            Log.e(TAG, "BandColumnHook: initReflection failed: " + e);
+        }
     }
 
     public void install() {
@@ -62,17 +111,98 @@ public class BandColumnHook {
     }
 
     // -----------------------------------------------------------------------
+    // ARFCN reading — direct DataSource access, no sub-row UI dependency
+    // -----------------------------------------------------------------------
+
+    /**
+     * Read the NR ARFCN for a given cell row from the DataSource.
+     *
+     * @param isServing true = serving bucket (PCell/SCells); false = detected/neighbour
+     * @param intraRow  row index within the bucket (0-based)
+     */
+    private String readArfcn(boolean isServing, int intraRow) {
+        String key = isServing
+                ? "NR5G::Cell_Measurements::NR_Cells_ARFCN"
+                : "NR5G::Detected_Cells::NR_DetectedCells_ARFCN";
+        return readPropertyWithIndex(key, intraRow);
+    }
+
+    private String readPropertyWithIndex(String key, int idx) {
+        try {
+            Object ws = wsSingleton.get(null);
+            if (ws == null) { Log.w(TAG, "Workspace null"); return null; }
+            int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
+            Object ds          = wsDataSource.get(ws);
+            if (ds == null) { Log.w(TAG, "DataSource null"); return null; }
+
+            // Use replay cursor time when available; fall back to Long.MAX_VALUE for live mode.
+            long cursorTime = wsCurrentTime.getLong(ws);
+            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+
+            Object prop = dsGetProperty.invoke(ds, key, moduleIndex);
+            if (prop == null) {
+                Log.d(TAG, "property null key=" + key + " modIdx=" + moduleIndex
+                        + " queryTime=" + queryTime);
+                return null;
+            }
+
+            Object iter = propIterMethod.invoke(prop, queryTime);
+            if (iter == null || (boolean) iterEndMethod.invoke(iter)) {
+                Log.d(TAG, "iterator end key=" + key + " queryTime=" + queryTime);
+                return null;
+            }
+
+            long   sampleKey = (long) iterKeyMethod.invoke(iter);
+            Object value     = propGetMethod.invoke(prop, sampleKey);
+            Log.d(TAG, "key=" + key + "[" + idx + "]"
+                    + " sampleKey=" + sampleKey + " queryTime=" + queryTime
+                    + " type=" + (value != null ? value.getClass().getSimpleName() : "null")
+                    + " value=" + value);
+
+            return extractArrayValue(value, idx);
+        } catch (Exception e) {
+            Log.w(TAG, "readPropertyWithIndex(" + key + ") failed: " + e);
+            return null;
+        }
+    }
+
+    private String extractArrayValue(Object value, int idx) {
+        if (value == null) return null;
+        if (value instanceof Integer[]) {
+            Integer[] arr = (Integer[]) value;
+            if (idx >= 0 && idx < arr.length && arr[idx] != null) return String.valueOf(arr[idx]);
+            return null;
+        }
+        if (value instanceof int[]) {
+            int[] arr = (int[]) value;
+            if (idx >= 0 && idx < arr.length) return String.valueOf(arr[idx]);
+            return null;
+        }
+        // Object[] containing boxed Numbers (seen on some devices)
+        if (value instanceof Object[]) {
+            Object[] arr = (Object[]) value;
+            if (idx >= 0 && idx < arr.length && arr[idx] instanceof Number)
+                return String.valueOf(((Number) arr[idx]).intValue());
+            return null;
+        }
+        if (value instanceof Integer) return String.valueOf((Integer) value);
+        if (value instanceof Long)    return String.valueOf((Long) value);
+        return value.toString();
+    }
+
+    // -----------------------------------------------------------------------
     // Hook: a8.h$a.getView
     // -----------------------------------------------------------------------
     private void hookGetView() {
         try {
             Class<?> adapterClass  = loader.loadClass("a8.h$a");
-            Method   getViewMethod = adapterClass.getMethod("getView", int.class, View.class, ViewGroup.class);
+            Method   getViewMethod = adapterClass.getMethod("getView",
+                    int.class, View.class, ViewGroup.class);
 
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    // Let NSG handle convertView recycling normally — no null trick.
+                    // Let NSG handle convertView recycling normally.
                     Object result = chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
                     View rowView = (View) result;
@@ -89,25 +219,43 @@ public class BandColumnHook {
                     LinearLayout mainRow = (LinearLayout) firstChild;
                     if (mainRow.getOrientation() != LinearLayout.HORIZONTAL) return result;
 
+                    // Hide the info sub-row (child[1]) if present — reclaims vertical space.
+                    if (outerVert.getChildCount() >= 2)
+                        outerVert.getChildAt(1).setVisibility(View.GONE);
+
+                    // Resolve serving/intraRow via adapter reflection.
+                    int     position  = (int) chain.getArg(0);
+                    boolean isServing = false;
+                    int     intraRow  = position;
+                    if (reflectionReady) {
+                        try {
+                            Object   adapter = chain.getThisObject();
+                            Object[] sources = (Object[]) eField.get(adapter);
+                            android.util.Pair<?, ?> pair =
+                                    (android.util.Pair<?, ?>) hMethod.invoke(adapter, position);
+                            if (pair != null && pair.second != null) {
+                                intraRow  = (int) pair.second;
+                                isServing = (pair.first != null && sources != null
+                                        && sources.length > 0 && pair.first == sources[0]);
+                            }
+                        } catch (Exception e) {
+                            Log.w(TAG, "h(position) failed: " + e);
+                        }
+                    }
+
+                    // Read ARFCN directly from DataSource.
+                    String arfcn = readArfcn(isServing, intraRow);
+                    String arfcnText = (arfcn != null) ? arfcn : "-";
+
+                    Log.d(TAG, "getView pos=" + position + " serving=" + isServing
+                            + " intraRow=" + intraRow + " ARFCN=" + arfcnText);
+
                     // ---- Already-injected fast path (recycled view) ----
-                    // The ARFCN TextView is stored as a tag on the main row for O(1) update.
                     Object arfcnTag = mainRow.getTag(ARFCN_VIEW_TAG_KEY);
                     if (arfcnTag instanceof TextView) {
-                        // NSG has already updated everything except our injected column.
-                        // Read ARFCN from the info strip if it is still present (happens when
-                        // NSG inflated a fresh view before we recycled it, which can occur on
-                        // the first pass of a new list population).
-                        String arfcn = null;
-                        if (outerVert.getChildCount() >= 2) {
-                            arfcn = readArfcnFromSubRow(outerVert);
-                            hideInfoStrip(outerVert); // hide but keep for NSG's findViewById
-                        }
                         TextView arfcnView = (TextView) arfcnTag;
-                        if (arfcn != null) {
-                            arfcnView.setText(arfcn);
-                        }
-                        // Re-read color from PCI each time — NSG updates PCI color per row.
-                        // PCI is child[2] after injection (was child[1] before).
+                        arfcnView.setText(arfcnText);
+                        // Re-read color from PCI (child[2] after injection) each time.
                         android.content.res.ColorStateList color = pciColor(mainRow);
                         if (color != null) arfcnView.setTextColor(color);
                         return result;
@@ -116,25 +264,18 @@ public class BandColumnHook {
                     // ---- First-injection path (fresh inflated view, 6-child main row) ----
                     if (mainRow.getChildCount() != 6) return result;
 
-                    String arfcn = readArfcnFromSubRow(outerVert);
-                    if (arfcn == null) arfcn = "-";
-
-                    hideInfoStrip(outerVert);
-
-                    View refRaw = mainRow.getChildAt(1); // PCI column (child[1] in fresh row)
+                    View refRaw = mainRow.getChildAt(1); // PCI column
                     if (!(refRaw instanceof TextView)) return result;
                     TextView refView = (TextView) refRaw;
 
                     TextView arfcnView = new TextView(rowView.getContext());
-                    arfcnView.setText(arfcn);
+                    arfcnView.setText(arfcnText);
                     arfcnView.setGravity(android.view.Gravity.CENTER);
                     arfcnView.setMaxLines(1);
-                    arfcnView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, refView.getTextSize());
+                    arfcnView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                            refView.getTextSize());
                     arfcnView.setTypeface(refView.getTypeface());
-
-                    // Color from PCI (child[1] in fresh 6-child row = refView itself).
-                    android.content.res.ColorStateList arfcnColor = refView.getTextColors();
-                    arfcnView.setTextColor(arfcnColor);
+                    arfcnView.setTextColor(refView.getTextColors());
 
                     float density = rowView.getContext().getResources().getDisplayMetrics().density;
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -144,9 +285,9 @@ public class BandColumnHook {
 
                     mainRow.addView(arfcnView, 1);
 
-                    // Redistribute 7 columns. NrNsaBandwidthColumnHook will redistribute to 8.
+                    // Redistribute 7 columns. NrNsaBandwidthColumnHook redistributes to 8.
                     float[] weights = {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f};
-                    for (int i = 0; i < 7; i++) {
+                    for (int i = 0; i < 7 && i < mainRow.getChildCount(); i++) {
                         View child = mainRow.getChildAt(i);
                         ViewGroup.LayoutParams rawLp = child.getLayoutParams();
                         if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
@@ -154,7 +295,6 @@ public class BandColumnHook {
                         child.setLayoutParams(rawLp);
                     }
 
-                    // Store injected view reference for fast update on recycle.
                     mainRow.setTag(ARFCN_VIEW_TAG_KEY, arfcnView);
                     mainRow.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
                     return result;
@@ -206,15 +346,18 @@ public class BandColumnHook {
                 View child = listView.getChildAt(i);
                 if (!(child instanceof LinearLayout)) continue;
                 LinearLayout ll = (LinearLayout) child;
-                if (ll.getOrientation() != LinearLayout.HORIZONTAL || ll.getChildCount() != 6) continue;
+                if (ll.getOrientation() != LinearLayout.HORIZONTAL
+                        || ll.getChildCount() != 6) continue;
                 if (TAG_BAND_INJECTED.equals(ll.getTag(BAND_TAG_KEY))) return;
 
                 TextView bandLabel = new TextView(listView.getContext());
                 bandLabel.setText("Band");
                 bandLabel.setGravity(android.view.Gravity.CENTER);
                 bandLabel.setMaxLines(1);
-                bandLabel.setTextColor(resolveColor(listView.getContext(), android.R.attr.textColorTertiary));
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT);
+                bandLabel.setTextColor(resolveColor(listView.getContext(),
+                        android.R.attr.textColorTertiary));
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT);
                 lp.weight = 0.12f;
                 bandLabel.setLayoutParams(lp);
 
@@ -222,7 +365,8 @@ public class BandColumnHook {
 
                 float[] weights = {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f};
                 for (int j = 0; j < ll.getChildCount() && j < weights.length; j++) {
-                    LinearLayout.LayoutParams clp = (LinearLayout.LayoutParams) ll.getChildAt(j).getLayoutParams();
+                    LinearLayout.LayoutParams clp =
+                            (LinearLayout.LayoutParams) ll.getChildAt(j).getLayoutParams();
                     clp.weight = weights[j];
                     ll.getChildAt(j).setLayoutParams(clp);
                 }
@@ -246,29 +390,6 @@ public class BandColumnHook {
         View v = mainRow.getChildAt(2);
         if (!(v instanceof TextView)) return null;
         return ((TextView) v).getTextColors();
-    }
-
-    private String readArfcnFromSubRow(LinearLayout outerVert) {
-        if (outerVert.getChildCount() < 2) return null;
-        View infoStripView = outerVert.getChildAt(1);
-        if (!(infoStripView instanceof LinearLayout)) return null;
-        LinearLayout infoStrip = (LinearLayout) infoStripView;
-        String arfcn = textOf(infoStrip, 1); // tvRowCellName — common case
-        if (arfcn != null) return arfcn;
-        return textOf(infoStrip, 0);           // tvRowRFID — tower-DB match fallback
-    }
-
-    private static String textOf(LinearLayout ll, int idx) {
-        if (ll.getChildCount() <= idx) return null;
-        View v = ll.getChildAt(idx);
-        if (!(v instanceof TextView)) return null;
-        String t = ((TextView) v).getText().toString().trim();
-        return t.isEmpty() ? null : t;
-    }
-
-    private void hideInfoStrip(LinearLayout outerVert) {
-        if (outerVert.getChildCount() >= 2)
-            outerVert.getChildAt(1).setVisibility(View.GONE);
     }
 
     private int resolveColor(android.content.Context ctx, int attr) {

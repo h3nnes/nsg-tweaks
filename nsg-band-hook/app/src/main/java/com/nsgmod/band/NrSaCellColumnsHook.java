@@ -48,7 +48,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class NrSaCellColumnsHook {
 
-    private static final String TAG              = "NSGBandHook";
+    private static final String TAG              = "NSGBandHook_NrSa";
     private static final String TAG_COLS_INJECTED = "nsg_nrsa_cols_injected";
 
     private final XposedInterface xposed;
@@ -58,6 +58,7 @@ public class NrSaCellColumnsHook {
     private Field  wsSingleton;
     private Field  wsModuleIndex;
     private Field  wsDataSource;
+    private Field  wsCurrentTime;  // Workspace.g (f3866g) — replay cursor, -1 in live mode
 
     private Method dsGetProperty;
     private Method propIterMethod;
@@ -89,6 +90,7 @@ public class NrSaCellColumnsHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
+            wsCurrentTime  = wsClass.getField("g");
 
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
@@ -167,36 +169,66 @@ public class NrSaCellColumnsHook {
     private String readPropertyWithIndex(String key, int scellIndex) {
         try {
             Object ws = wsSingleton.get(null);
-            if (ws == null) return null;
+            if (ws == null) { Log.w(TAG, "readProp: Workspace null"); return null; }
             int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
             Object dataSource  = wsDataSource.get(ws);
-            if (dataSource == null) return null;
+            if (dataSource == null) { Log.w(TAG, "readProp: DataSource null"); return null; }
 
-            // Always use Long.MAX_VALUE to get the latest sample (live mode compatible).
-            long queryTime = Long.MAX_VALUE;
+            // Use replay cursor time when available (field "g"); fall back to Long.MAX_VALUE
+            // for live mode where cursor stays at -1.
+            long cursorTime = wsCurrentTime.getLong(ws);
+            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
 
             Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
-            if (property == null) return null;
+            if (property == null) {
+                Log.d(TAG, "readProp: property null key=" + key + " modIdx=" + moduleIndex
+                        + " queryTime=" + queryTime);
+                return null;
+            }
 
             Object iterator = propIterMethod.invoke(property, queryTime);
-            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
+            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) {
+                Log.d(TAG, "readProp: iterator end key=" + key + " queryTime=" + queryTime);
+                return null;
+            }
 
             // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
             long   sampleKey = (long) iterKeyMethod.invoke(iterator);
             Object value     = propGetMethod.invoke(property, sampleKey);
+            Log.d(TAG, "readProp: key=" + key + "[" + scellIndex + "]"
+                    + " sampleKey=" + sampleKey + " queryTime=" + queryTime
+                    + " type=" + (value != null ? value.getClass().getSimpleName() : "null")
+                    + " value=" + value);
             if (value == null) return null;
 
+            return extractArrayValue(value, scellIndex);
+        } catch (Exception e) {
+            Log.w(TAG, "NrSaCellColumnsHook.readProperty(" + key + ") failed: " + e);
+            return null;
+        }
+    }
+
+    /** Extract a value from scalar or array Property values. */
+    private String extractArrayValue(Object value, int idx) {
             // ARFCN property returns Integer[] (one value per cell); index by scellIndex
             if (value instanceof Integer[]) {
                 Integer[] arr = (Integer[]) value;
-                int idx = scellIndex >= 0 ? scellIndex : 0;
-                if (idx < arr.length && arr[idx] != null) return String.valueOf(arr[idx]);
+                int i = idx >= 0 ? idx : 0;
+                if (i < arr.length && arr[i] != null) return String.valueOf(arr[i]);
                 return null;
             }
             if (value instanceof int[]) {
                 int[] arr = (int[]) value;
-                int idx = scellIndex >= 0 ? scellIndex : 0;
-                if (idx < arr.length) return String.valueOf(arr[idx]);
+                int i = idx >= 0 ? idx : 0;
+                if (i < arr.length) return String.valueOf(arr[i]);
+                return null;
+            }
+            // Object[] containing boxed Numbers (seen on some devices)
+            if (value instanceof Object[]) {
+                Object[] arr = (Object[]) value;
+                int i = idx >= 0 ? idx : 0;
+                if (i < arr.length && arr[i] instanceof Number)
+                    return String.valueOf(((Number) arr[i]).intValue());
                 return null;
             }
             if (value instanceof Integer) return String.valueOf((Integer) value);
@@ -204,10 +236,6 @@ public class NrSaCellColumnsHook {
             if (value instanceof Float)   return String.valueOf(((Float) value).intValue());
             if (value instanceof Double)  return String.valueOf(((Double) value).intValue());
             return value.toString();
-        } catch (Exception e) {
-            Log.w(TAG, "NrSaCellColumnsHook.readProperty(" + key + ") failed: " + e);
-            return null;
-        }
     }
 
     // -----------------------------------------------------------------------
@@ -272,6 +300,10 @@ public class NrSaCellColumnsHook {
                         String bw = readBandwidth(intraRow);
                         if (bw != null) bwText = bw;
                     }
+
+                    Log.d(TAG, "getView pos=" + position + " serving=" + isServing
+                            + " intraRow=" + intraRow
+                            + " ARFCN=" + arfcnText + " BW=" + bwText);
 
                     // Already injected — refresh text and color
                     // (NSG's k0() has already set pciView's color correctly for this row)
