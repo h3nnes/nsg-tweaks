@@ -140,24 +140,13 @@ public class BandColumnHook {
             long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
 
             Object prop = dsGetProperty.invoke(ds, key, moduleIndex);
-            if (prop == null) {
-                Log.d(TAG, "property null key=" + key + " modIdx=" + moduleIndex
-                        + " queryTime=" + queryTime);
-                return null;
-            }
+            if (prop == null) return null;
 
             Object iter = propIterMethod.invoke(prop, queryTime);
-            if (iter == null || (boolean) iterEndMethod.invoke(iter)) {
-                Log.d(TAG, "iterator end key=" + key + " queryTime=" + queryTime);
-                return null;
-            }
+            if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
 
             long   sampleKey = (long) iterKeyMethod.invoke(iter);
             Object value     = propGetMethod.invoke(prop, sampleKey);
-            Log.d(TAG, "key=" + key + "[" + idx + "]"
-                    + " sampleKey=" + sampleKey + " queryTime=" + queryTime
-                    + " type=" + (value != null ? value.getClass().getSimpleName() : "null")
-                    + " value=" + value);
 
             return extractArrayValue(value, idx);
         } catch (Exception e) {
@@ -246,9 +235,6 @@ public class BandColumnHook {
                     // Read ARFCN directly from DataSource.
                     String arfcn = readArfcn(isServing, intraRow);
                     String arfcnText = (arfcn != null) ? arfcn : "-";
-
-                    Log.d(TAG, "getView pos=" + position + " serving=" + isServing
-                            + " intraRow=" + intraRow + " ARFCN=" + arfcnText);
 
                     // ---- Already-injected fast path (recycled view) ----
                     Object arfcnTag = mainRow.getTag(ARFCN_VIEW_TAG_KEY);

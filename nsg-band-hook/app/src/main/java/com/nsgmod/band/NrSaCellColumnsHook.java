@@ -180,25 +180,14 @@ public class NrSaCellColumnsHook {
             long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
 
             Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
-            if (property == null) {
-                Log.d(TAG, "readProp: property null key=" + key + " modIdx=" + moduleIndex
-                        + " queryTime=" + queryTime);
-                return null;
-            }
+            if (property == null) return null;
 
             Object iterator = propIterMethod.invoke(property, queryTime);
-            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) {
-                Log.d(TAG, "readProp: iterator end key=" + key + " queryTime=" + queryTime);
-                return null;
-            }
+            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
 
             // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
             long   sampleKey = (long) iterKeyMethod.invoke(iterator);
             Object value     = propGetMethod.invoke(property, sampleKey);
-            Log.d(TAG, "readProp: key=" + key + "[" + scellIndex + "]"
-                    + " sampleKey=" + sampleKey + " queryTime=" + queryTime
-                    + " type=" + (value != null ? value.getClass().getSimpleName() : "null")
-                    + " value=" + value);
             if (value == null) return null;
 
             return extractArrayValue(value, scellIndex);
@@ -300,10 +289,6 @@ public class NrSaCellColumnsHook {
                         String bw = readBandwidth(intraRow);
                         if (bw != null) bwText = bw;
                     }
-
-                    Log.d(TAG, "getView pos=" + position + " serving=" + isServing
-                            + " intraRow=" + intraRow
-                            + " ARFCN=" + arfcnText + " BW=" + bwText);
 
                     // Already injected — refresh text and color
                     // (NSG's k0() has already set pciView's color correctly for this row)
@@ -454,11 +439,8 @@ public class NrSaCellColumnsHook {
                 }
 
                 ll.setTag(TAG_COLS_INJECTED);
-                Log.i(TAG, "NrSaCellColumnsHook: header injected");
                 return;
             }
-            Log.w(TAG, "NrSaCellColumnsHook: header row not found ("
-                    + listView.getChildCount() + " children)");
         } catch (Exception e) {
             Log.w(TAG, "NrSaCellColumnsHook: injectHeaders failed: " + e);
         }
