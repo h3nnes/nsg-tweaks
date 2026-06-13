@@ -66,6 +66,8 @@ public class LteBandwidthColumnHook {
      */
     private final String[] bwCache = new String[MAX_SCELLS + 1];
     private volatile boolean bwCacheValid = false;
+    /** queryTime used when bwCache was last filled; Long.MIN_VALUE = never filled. */
+    private long bwCacheQueryTime = Long.MIN_VALUE;
 
     public LteBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -122,6 +124,7 @@ public class LteBandwidthColumnHook {
             if (dataSource == null) return;
             long cursorTime = wsCurrentTime.getLong(ws);
             long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+            this.bwCacheQueryTime = queryTime;
 
             // PCell
             bwCache[0] = readProperty(dataSource, "LTE::Serving_Cell::LTE_Bandwidth_PCell_DL",
@@ -154,6 +157,18 @@ public class LteBandwidthColumnHook {
     }
 
     private String cachedBw(int intraRow) {
+        // Auto-invalidate if cursor time changed since last fill (covers lock/unlock
+        // window where a8.b$b.g() may not fire between unlock and next getView()).
+        if (bwCacheValid && reflectionReady) {
+            try {
+                Object ws = wsSingleton.get(null);
+                if (ws != null) {
+                    long cursorTime = wsCurrentTime.getLong(ws);
+                    long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+                    if (queryTime != bwCacheQueryTime) bwCacheValid = false;
+                }
+            } catch (Exception ignored) {}
+        }
         if (!bwCacheValid) fillBwCache();
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
         return bwCache[intraRow];
@@ -393,9 +408,8 @@ public class LteBandwidthColumnHook {
             xposed.hook(gMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result = chain.proceed();
                     invalidateBwCache();
-                    return result;
+                    return chain.proceed();
                 }
             });
             Log.i(TAG, "LteBandwidthColumnHook: cache-invalidation hook on a8.b$b.g() installed");

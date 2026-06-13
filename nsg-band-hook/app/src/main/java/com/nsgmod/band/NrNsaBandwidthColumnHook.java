@@ -75,6 +75,8 @@ public class NrNsaBandwidthColumnHook {
     /** BW cache: index 0 = PCell, 1..4 = SCell 1..4. Null = not available → show "-". */
     private final String[] bwCache = new String[MAX_SCELLS + 1];
     private volatile boolean bwCacheValid = false;
+    /** queryTime used when bwCache was last filled; Long.MIN_VALUE = never filled. */
+    private long bwCacheQueryTime = Long.MIN_VALUE;
 
     public NrNsaBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -131,6 +133,7 @@ public class NrNsaBandwidthColumnHook {
             if (dataSource == null) return;
             long cursorTime = wsCurrentTime.getLong(ws);
             long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+            this.bwCacheQueryTime = queryTime;
 
             // PCell BW — scalar property
             bwCache[0] = readScalarBw(dataSource, KEY_PCELL_BW, moduleIndex, queryTime);
@@ -174,6 +177,18 @@ public class NrNsaBandwidthColumnHook {
 
     /** Returns cached BW for the given intraRow (0=PCell, 1..4=SCell N). */
     private String cachedBw(int intraRow) {
+        // Auto-invalidate if cursor time changed since last fill (covers lock/unlock
+        // window where a8.b$b.g() may not fire between unlock and next getView()).
+        if (bwCacheValid && reflectionReady) {
+            try {
+                Object ws = wsSingleton.get(null);
+                if (ws != null) {
+                    long cursorTime = wsCurrentTime.getLong(ws);
+                    long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
+                    if (queryTime != bwCacheQueryTime) bwCacheValid = false;
+                }
+            } catch (Exception ignored) {}
+        }
         if (!bwCacheValid) fillBwCache();
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
         return bwCache[intraRow];
@@ -390,9 +405,8 @@ public class NrNsaBandwidthColumnHook {
             xposed.hook(gMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result = chain.proceed();
                     invalidateBwCache();
-                    return result;
+                    return chain.proceed();
                 }
             });
             Log.i(TAG, "NrNsaBandwidthColumnHook: cache-invalidation hook on a8.b$b.g() installed");
