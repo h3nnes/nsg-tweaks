@@ -72,6 +72,8 @@ public class NrSaCellColumnsHook {
     private Method gMethod;      // g(int) → Pair<a8.d.a, Integer>
 
     private boolean ready = false;
+    /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
+    private Field  f5509cField;
 
     public NrSaCellColumnsHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -102,6 +104,7 @@ public class NrSaCellColumnsHook {
 
             sourcesField = dbClass.getField("d");   // a8.d.a[] sources
             gMethod      = dbClass.getMethod("g", int.class);
+            f5509cField  = loader.loadClass("k8.c").getField("c"); // data sample key (f5509c)
 
             ready = true;
             Log.i(TAG, "NrSaCellColumnsHook: reflection ready");
@@ -142,42 +145,37 @@ public class NrSaCellColumnsHook {
      * @param isServing true = serving bucket (PCell/SCells); false = detected/neighbour bucket
      * @param intraRow  bucket-relative row index (0-based; 0=PCell, 1=SCell1, 2=SCell2 …)
      */
-    private String readArfcn(boolean isServing, int intraRow) {
+    private String readArfcn(boolean isServing, int intraRow, long queryTime) {
         if (!isServing) {
             return readPropertyWithIndex(
-                    "NR5G::Detected_Cells::NR_DetectedCells_ARFCN", intraRow);
+                    "NR5G::Detected_Cells::NR_DetectedCells_ARFCN", intraRow, queryTime);
         }
         // Both PCell (intraRow=0) and SCells (intraRow≥1) are in the same flat array.
         return readPropertyWithIndex(
-                "NR5G::Cell_Measurements::NR_Cells_ARFCN", intraRow);
+                "NR5G::Cell_Measurements::NR_Cells_ARFCN", intraRow, queryTime);
     }
 
     /**
      * Read DL bandwidth for a serving row.
      * @param intraRow 0=PCell, ≥1=SCell (1-based index: SCell1 = intraRow 1)
      */
-    private String readBandwidth(int intraRow) {
+    private String readBandwidth(int intraRow, long queryTime) {
         String key;
         if (intraRow == 0) {
             key = "NR5G::Serving_Cell::NR_Bandwidth_DL";
         } else {
             key = "NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL";
         }
-        return readPropertyWithIndex(key, intraRow > 0 ? intraRow - 1 : -1);
+        return readPropertyWithIndex(key, intraRow > 0 ? intraRow - 1 : -1, queryTime);
     }
 
-    private String readPropertyWithIndex(String key, int scellIndex) {
+    private String readPropertyWithIndex(String key, int scellIndex, long queryTime) {
         try {
             Object ws = wsSingleton.get(null);
             if (ws == null) { Log.w(TAG, "readProp: Workspace null"); return null; }
             int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
             Object dataSource  = wsDataSource.get(ws);
             if (dataSource == null) { Log.w(TAG, "readProp: DataSource null"); return null; }
-
-            // Use replay cursor time when available (field "g"); fall back to Long.MAX_VALUE
-            // for live mode where cursor stays at -1.
-            long cursorTime = wsCurrentTime.getLong(ws);
-            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
 
             Object property = dsGetProperty.invoke(dataSource, key, moduleIndex);
             if (property == null) return null;
@@ -265,6 +263,9 @@ public class NrSaCellColumnsHook {
                     // Resolve serving/intraRow
                     boolean isServing = false;
                     int     intraRow  = 0;
+                    // queryTime: use adapter's f5509c (the sample key the adapter used for
+                    // its own data) rather than Workspace.g which can lag after scrub+unfreeze.
+                    long    queryTime = Long.MAX_VALUE;
                     try {
                         Object   adapter = chain.getThisObject();
                         Object[] sources = (Object[]) sourcesField.get(adapter);
@@ -274,19 +275,32 @@ public class NrSaCellColumnsHook {
                             intraRow  = (int) pair.second;
                             isServing = (pair.first != null && sources != null
                                     && sources.length > 0 && pair.first == sources[0]);
+                            if (f5509cField != null && pair.first != null) {
+                                long sk = f5509cField.getLong(pair.first);
+                                if (sk > 0) queryTime = sk;
+                            }
                         }
                     } catch (Exception e) {
                         Log.w(TAG, "NrSaCellColumnsHook: g(position) failed: " + e);
                     }
+                    if (queryTime == Long.MAX_VALUE) {
+                        try {
+                            Object ws = wsSingleton.get(null);
+                            if (ws != null) {
+                                long ct = wsCurrentTime.getLong(ws);
+                                if (ct >= 0) queryTime = ct;
+                            }
+                        } catch (Exception ignored) {}
+                    }
 
-                    // Read values
+                    // Read values using adapter-aligned sample key (not Workspace.g).
                     String arfcnText = "-";
-                    String arfcn = readArfcn(isServing, intraRow);
+                    String arfcn = readArfcn(isServing, intraRow, queryTime);
                     if (arfcn != null) arfcnText = arfcn;
 
                     String bwText = "-";
                     if (isServing) {
-                        String bw = readBandwidth(intraRow);
+                        String bw = readBandwidth(intraRow, queryTime);
                         if (bw != null) bwText = bw;
                     }
 

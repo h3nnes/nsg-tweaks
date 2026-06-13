@@ -69,6 +69,8 @@ public class BandColumnHook {
     private Method hMethod;  // a8.b$b.h(int) — returns Pair<source, intraRow>
 
     private boolean reflectionReady = false;
+    /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
+    private Field  f5509cField;
 
     public BandColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -97,6 +99,7 @@ public class BandColumnHook {
 
             eField  = bbClass.getField("e");   // Object[] sources array
             hMethod = bbClass.getMethod("h", int.class);  // Pair<source, intraRow>
+            f5509cField = loader.loadClass("k8.c").getField("c"); // data sample key (f5509c)
 
             reflectionReady = true;
             Log.i(TAG, "BandColumnHook: reflection ready");
@@ -120,24 +123,20 @@ public class BandColumnHook {
      * @param isServing true = serving bucket (PCell/SCells); false = detected/neighbour
      * @param intraRow  row index within the bucket (0-based)
      */
-    private String readArfcn(boolean isServing, int intraRow) {
+    private String readArfcn(boolean isServing, int intraRow, long queryTime) {
         String key = isServing
                 ? "NR5G::Cell_Measurements::NR_Cells_ARFCN"
                 : "NR5G::Detected_Cells::NR_DetectedCells_ARFCN";
-        return readPropertyWithIndex(key, intraRow);
+        return readPropertyWithIndex(key, intraRow, queryTime);
     }
 
-    private String readPropertyWithIndex(String key, int idx) {
+    private String readPropertyWithIndex(String key, int idx, long queryTime) {
         try {
             Object ws = wsSingleton.get(null);
             if (ws == null) { Log.w(TAG, "Workspace null"); return null; }
             int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
             Object ds          = wsDataSource.get(ws);
             if (ds == null) { Log.w(TAG, "DataSource null"); return null; }
-
-            // Use replay cursor time when available; fall back to Long.MAX_VALUE for live mode.
-            long cursorTime = wsCurrentTime.getLong(ws);
-            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
 
             Object prop = dsGetProperty.invoke(ds, key, moduleIndex);
             if (prop == null) return null;
@@ -216,6 +215,10 @@ public class BandColumnHook {
                     int     position  = (int) chain.getArg(0);
                     boolean isServing = false;
                     int     intraRow  = position;
+                    // queryTime: prefer adapter's f5509c (the sample key actually used by the
+                    // adapter for its data) over Workspace.g, which can lag behind after
+                    // scrub+unfreeze when Workspace.a() is called with a key != f3866g.
+                    long    queryTime = Long.MAX_VALUE;
                     if (reflectionReady) {
                         try {
                             Object   adapter = chain.getThisObject();
@@ -226,14 +229,28 @@ public class BandColumnHook {
                                 intraRow  = (int) pair.second;
                                 isServing = (pair.first != null && sources != null
                                         && sources.length > 0 && pair.first == sources[0]);
+                                if (f5509cField != null && pair.first != null) {
+                                    long sk = f5509cField.getLong(pair.first);
+                                    if (sk > 0) queryTime = sk;
+                                }
                             }
                         } catch (Exception e) {
                             Log.w(TAG, "h(position) failed: " + e);
                         }
                     }
+                    if (queryTime == Long.MAX_VALUE) {
+                        // Fallback: Workspace.g (live mode or init)
+                        try {
+                            Object ws = wsSingleton.get(null);
+                            if (ws != null) {
+                                long ct = wsCurrentTime.getLong(ws);
+                                if (ct >= 0) queryTime = ct;
+                            }
+                        } catch (Exception ignored) {}
+                    }
 
-                    // Read ARFCN directly from DataSource.
-                    String arfcn = readArfcn(isServing, intraRow);
+                    // Read ARFCN using adapter-aligned sample key (not Workspace.g).
+                    String arfcn = readArfcn(isServing, intraRow, queryTime);
                     String arfcnText = (arfcn != null) ? arfcn : "-";
 
                     // ---- Already-injected fast path (recycled view) ----

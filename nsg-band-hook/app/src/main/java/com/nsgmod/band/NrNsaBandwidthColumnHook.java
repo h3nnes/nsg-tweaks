@@ -75,8 +75,10 @@ public class NrNsaBandwidthColumnHook {
     /** BW cache: index 0 = PCell, 1..4 = SCell 1..4. Null = not available → show "-". */
     private final String[] bwCache = new String[MAX_SCELLS + 1];
     private volatile boolean bwCacheValid = false;
-    /** queryTime used when bwCache was last filled; Long.MIN_VALUE = never filled. */
-    private long bwCacheQueryTime = Long.MIN_VALUE;
+    /** Data sample key (sources[0].f5509c) used when bwCache was last filled; -1 = never filled. */
+    private long bwCacheSampleKey = -1;
+    /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
+    private Field f5509cField;
 
     public NrNsaBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -105,6 +107,7 @@ public class NrNsaBandwidthColumnHook {
 
             eField  = bbClass.getField("e");
             hMethod = bbClass.getMethod("h", int.class);
+            f5509cField = loader.loadClass("k8.c").getField("c"); // data sample key (f5509c)
 
             reflectionReady = true;
             Log.i(TAG, "NrNsaBandwidthColumnHook: reflection ready");
@@ -121,8 +124,9 @@ public class NrNsaBandwidthColumnHook {
         bwCacheValid = false;
     }
 
-    private void fillBwCache() {
+    private void fillBwCache(long queryTime) {
         for (int i = 0; i <= MAX_SCELLS; i++) bwCache[i] = null;
+        bwCacheSampleKey = queryTime;
         bwCacheValid = true;
         if (!reflectionReady) return;
         try {
@@ -131,9 +135,6 @@ public class NrNsaBandwidthColumnHook {
             int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
             Object dataSource  = wsDataSource.get(ws);
             if (dataSource == null) return;
-            long cursorTime = wsCurrentTime.getLong(ws);
-            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
-            this.bwCacheQueryTime = queryTime;
 
             // PCell BW — scalar property
             bwCache[0] = readScalarBw(dataSource, KEY_PCELL_BW, moduleIndex, queryTime);
@@ -175,23 +176,33 @@ public class NrNsaBandwidthColumnHook {
         }
     }
 
-    /** Returns cached BW for the given intraRow (0=PCell, 1..4=SCell N). */
-    private String cachedBw(int intraRow) {
-        // Auto-invalidate if cursor time changed since last fill (covers lock/unlock
-        // window where a8.b$b.g() may not fire between unlock and next getView()).
-        if (bwCacheValid && reflectionReady) {
-            try {
-                Object ws = wsSingleton.get(null);
-                if (ws != null) {
-                    long cursorTime = wsCurrentTime.getLong(ws);
-                    long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
-                    if (queryTime != bwCacheQueryTime) bwCacheValid = false;
-                }
-            } catch (Exception ignored) {}
+    /**
+     * Returns cached BW for the given intraRow (0=PCell, 1..4=SCell N).
+     * @param adapterSampleKey sources[0].f5509c — the sample key the adapter used for its data.
+     *                         Pass -1 as fallback if unavailable.
+     */
+    private String cachedBw(int intraRow, long adapterSampleKey) {
+        // Invalidate when the adapter's data sample changed (covers scrub+unfreeze mismatch).
+        if (adapterSampleKey > 0 && adapterSampleKey != bwCacheSampleKey) {
+            bwCacheValid = false;
         }
-        if (!bwCacheValid) fillBwCache();
+        if (!bwCacheValid) {
+            long qt = adapterSampleKey > 0 ? adapterSampleKey : getWorkspaceQueryTime();
+            fillBwCache(qt);
+        }
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
         return bwCache[intraRow];
+    }
+
+    private long getWorkspaceQueryTime() {
+        try {
+            Object ws = wsSingleton.get(null);
+            if (ws != null) {
+                long ct = wsCurrentTime.getLong(ws);
+                return (ct >= 0) ? ct : Long.MAX_VALUE;
+            }
+        } catch (Exception ignored) {}
+        return Long.MAX_VALUE;
     }
 
     private static String bwEnumToMhz(int i) {
@@ -236,6 +247,7 @@ public class NrNsaBandwidthColumnHook {
                     int     position  = (int) chain.getArg(0);
                     boolean isSource0 = false;
                     int     intraRow  = position;
+                    long    adapterSampleKey = -1;
                     try {
                         Object   adapter = chain.getThisObject();
                         Object[] sources = (Object[]) eField.get(adapter);
@@ -246,11 +258,14 @@ public class NrNsaBandwidthColumnHook {
                             isSource0 = (pair.first != null && sources != null
                                     && sources.length > 0 && pair.first == sources[0]);
                         }
+                        if (f5509cField != null && sources != null && sources.length > 0) {
+                            adapterSampleKey = f5509cField.getLong(sources[0]);
+                        }
                     } catch (Exception ex) {
                         Log.w(TAG, "NrNsaBandwidthColumnHook: h(position) failed: " + ex);
                     }
 
-                    String bwText = isSource0 ? cachedBw(intraRow) : null;
+                    String bwText = isSource0 ? cachedBw(intraRow, adapterSampleKey) : null;
 
                     // ---- Already-injected fast path ----
                     Object bvTag = row.getTag(BW_VIEW_TAG_KEY);

@@ -66,8 +66,10 @@ public class LteBandwidthColumnHook {
      */
     private final String[] bwCache = new String[MAX_SCELLS + 1];
     private volatile boolean bwCacheValid = false;
-    /** queryTime used when bwCache was last filled; Long.MIN_VALUE = never filled. */
-    private long bwCacheQueryTime = Long.MIN_VALUE;
+    /** Data sample key (sources[0].f5509c) used when bwCache was last filled; -1 = never filled. */
+    private long bwCacheSampleKey = -1;
+    /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
+    private Field f5509cField;
 
     public LteBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -96,6 +98,7 @@ public class LteBandwidthColumnHook {
 
             eField  = bbClass.getField("e");
             hMethod = bbClass.getMethod("h", int.class);
+            f5509cField = loader.loadClass("k8.c").getField("c"); // data sample key (f5509c)
 
             reflectionReady = true;
             Log.i(TAG, "LteBandwidthColumnHook: reflection ready");
@@ -112,8 +115,9 @@ public class LteBandwidthColumnHook {
         bwCacheValid = false;
     }
 
-    private void fillBwCache() {
+    private void fillBwCache(long queryTime) {
         for (int i = 0; i <= MAX_SCELLS; i++) bwCache[i] = null;
+        bwCacheSampleKey = queryTime;
         bwCacheValid = true;
         if (!reflectionReady) return;
         try {
@@ -122,9 +126,6 @@ public class LteBandwidthColumnHook {
             int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
             Object dataSource  = wsDataSource.get(ws);
             if (dataSource == null) return;
-            long cursorTime = wsCurrentTime.getLong(ws);
-            long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
-            this.bwCacheQueryTime = queryTime;
 
             // PCell
             bwCache[0] = readProperty(dataSource, "LTE::Serving_Cell::LTE_Bandwidth_PCell_DL",
@@ -156,22 +157,28 @@ public class LteBandwidthColumnHook {
         }
     }
 
-    private String cachedBw(int intraRow) {
-        // Auto-invalidate if cursor time changed since last fill (covers lock/unlock
-        // window where a8.b$b.g() may not fire between unlock and next getView()).
-        if (bwCacheValid && reflectionReady) {
-            try {
-                Object ws = wsSingleton.get(null);
-                if (ws != null) {
-                    long cursorTime = wsCurrentTime.getLong(ws);
-                    long queryTime  = (cursorTime >= 0) ? cursorTime : Long.MAX_VALUE;
-                    if (queryTime != bwCacheQueryTime) bwCacheValid = false;
-                }
-            } catch (Exception ignored) {}
+    private String cachedBw(int intraRow, long adapterSampleKey) {
+        // Invalidate when the adapter's data sample changed (covers scrub+unfreeze mismatch).
+        if (adapterSampleKey > 0 && adapterSampleKey != bwCacheSampleKey) {
+            bwCacheValid = false;
         }
-        if (!bwCacheValid) fillBwCache();
+        if (!bwCacheValid) {
+            long qt = adapterSampleKey > 0 ? adapterSampleKey : getWorkspaceQueryTime();
+            fillBwCache(qt);
+        }
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
         return bwCache[intraRow];
+    }
+
+    private long getWorkspaceQueryTime() {
+        try {
+            Object ws = wsSingleton.get(null);
+            if (ws != null) {
+                long ct = wsCurrentTime.getLong(ws);
+                return (ct >= 0) ? ct : Long.MAX_VALUE;
+            }
+        } catch (Exception ignored) {}
+        return Long.MAX_VALUE;
     }
 
     private static String bwEnumToString(int i) {
@@ -229,9 +236,10 @@ public class LteBandwidthColumnHook {
                         TextView bwView = (TextView) bvTag;
                         // Re-resolve (isSource0, intraRow) every time — prevents stale-tag
                         // bug where a recycled row from source-1 keeps wrong intraRow.
-                        int     position2   = (int) chain.getArg(0);
-                        boolean isServing2  = false;
-                        int     intraRow2   = position2;
+                        int     position2        = (int) chain.getArg(0);
+                        boolean isServing2       = false;
+                        int     intraRow2        = position2;
+                        long    adapterSampleKey2 = -1;
                         try {
                             Object   adapter2 = chain.getThisObject();
                             Object[] sources2 = (Object[]) eField.get(adapter2);
@@ -242,10 +250,13 @@ public class LteBandwidthColumnHook {
                                 isServing2 = (pair2.first != null && sources2 != null
                                         && sources2.length > 0 && pair2.first == sources2[0]);
                             }
+                            if (f5509cField != null && sources2 != null && sources2.length > 0) {
+                                adapterSampleKey2 = f5509cField.getLong(sources2[0]);
+                            }
                         } catch (Exception ex) {
                             Log.w(TAG, "LteBWHook: fast-path h(position) failed: " + ex);
                         }
-                        String bwText = isServing2 ? cachedBw(intraRow2) : null;
+                        String bwText = isServing2 ? cachedBw(intraRow2, adapterSampleKey2) : null;
                         String display = (bwText != null) ? bwText : "-";
                         bwView.setText(display);
                         if (bwText != null) {
@@ -261,8 +272,9 @@ public class LteBandwidthColumnHook {
                     if (row.getChildCount() != 6) return result;
 
                     // Resolve (isServingSource, intraRow) via reflection — first injection only.
-                    boolean isServingSource = true;
-                    int     intraRow        = (int) chain.getArg(0);
+                    boolean isServingSource  = true;
+                    int     intraRow         = (int) chain.getArg(0);
+                    long    adapterSampleKey = -1;
                     try {
                         Object   adapter = chain.getThisObject();
                         Object[] sources = (Object[]) eField.get(adapter);
@@ -273,11 +285,14 @@ public class LteBandwidthColumnHook {
                             isServingSource = (pair.first != null && sources != null
                                     && sources.length > 0 && pair.first == sources[0]);
                         }
+                        if (f5509cField != null && sources != null && sources.length > 0) {
+                            adapterSampleKey = f5509cField.getLong(sources[0]);
+                        }
                     } catch (Exception e) {
                         Log.w(TAG, "LteBWHook: h(position) failed: " + e);
                     }
 
-                    String bwText = isServingSource ? cachedBw(intraRow) : null;
+                    String bwText = isServingSource ? cachedBw(intraRow, adapterSampleKey) : null;
                     String display = (bwText != null) ? bwText : "-";
 
                     // Copy style from Band column (child[1]).
