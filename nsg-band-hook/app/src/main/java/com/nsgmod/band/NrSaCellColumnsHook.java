@@ -74,6 +74,8 @@ public class NrSaCellColumnsHook {
     private boolean ready = false;
     /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
     private Field  f5509cField;
+    /** Last System.currentTimeMillis() when getView fired — for gap-detection logging. */
+    private volatile long lastGetViewMs = 0;
 
     public NrSaCellColumnsHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -181,14 +183,24 @@ public class NrSaCellColumnsHook {
             if (property == null) return null;
 
             Object iterator = propIterMethod.invoke(property, queryTime);
-            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
+            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) {
+                Log.i(TAG, "DIAG iter.end key=" + key + " qt=" + queryTime + " idx=" + scellIndex);
+                return null;
+            }
 
             // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
             long   sampleKey = (long) iterKeyMethod.invoke(iterator);
             Object value     = propGetMethod.invoke(property, sampleKey);
-            if (value == null) return null;
+            if (value == null) {
+                Log.i(TAG, "DIAG null val key=" + key + " sk=" + sampleKey + " idx=" + scellIndex);
+                return null;
+            }
 
-            return extractArrayValue(value, scellIndex);
+            String extracted = extractArrayValue(value, scellIndex);
+            if (extracted == null)
+                Log.i(TAG, "DIAG null extract key=" + key + " sk=" + sampleKey
+                        + " type=" + value.getClass().getSimpleName() + " idx=" + scellIndex);
+            return extracted;
         } catch (Exception e) {
             Log.w(TAG, "NrSaCellColumnsHook.readProperty(" + key + ") failed: " + e);
             return null;
@@ -292,6 +304,17 @@ public class NrSaCellColumnsHook {
                             }
                         } catch (Exception ignored) {}
                     }
+
+                    // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
+                    long nowMs = System.currentTimeMillis();
+                    if (nowMs - lastGetViewMs > 1000) {
+                        long wsGLog = -99;
+                        try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
+                        Log.i(TAG, "DIAG woke pos=" + position + " isServing=" + isServing
+                                + " intraRow=" + intraRow + " qt=" + queryTime
+                                + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
+                    }
+                    lastGetViewMs = nowMs;
 
                     // Read values using adapter-aligned sample key (not Workspace.g).
                     String arfcnText = "-";

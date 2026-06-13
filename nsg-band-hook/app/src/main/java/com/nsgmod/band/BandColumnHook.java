@@ -71,6 +71,8 @@ public class BandColumnHook {
     private boolean reflectionReady = false;
     /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
     private Field  f5509cField;
+    /** Last System.currentTimeMillis() when getView fired — for gap-detection logging. */
+    private volatile long lastGetViewMs = 0;
 
     public BandColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -142,12 +144,20 @@ public class BandColumnHook {
             if (prop == null) return null;
 
             Object iter = propIterMethod.invoke(prop, queryTime);
-            if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
+            if (iter == null || (boolean) iterEndMethod.invoke(iter)) {
+                Log.i(TAG, "DIAG iter.end key=" + key + " qt=" + queryTime + " idx=" + idx);
+                return null;
+            }
 
             long   sampleKey = (long) iterKeyMethod.invoke(iter);
             Object value     = propGetMethod.invoke(prop, sampleKey);
 
-            return extractArrayValue(value, idx);
+            String extracted = extractArrayValue(value, idx);
+            if (extracted == null)
+                Log.i(TAG, "DIAG null val key=" + key + " sk=" + sampleKey
+                        + " type=" + (value == null ? "null" : value.getClass().getSimpleName())
+                        + " idx=" + idx);
+            return extracted;
         } catch (Exception e) {
             Log.w(TAG, "readPropertyWithIndex(" + key + ") failed: " + e);
             return null;
@@ -248,6 +258,17 @@ public class BandColumnHook {
                             }
                         } catch (Exception ignored) {}
                     }
+
+                    // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
+                    long nowMs = System.currentTimeMillis();
+                    if (nowMs - lastGetViewMs > 1000) {
+                        long wsGLog = -99;
+                        try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
+                        Log.i(TAG, "DIAG woke pos=" + position + " isServing=" + isServing
+                                + " intraRow=" + intraRow + " qt=" + queryTime
+                                + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
+                    }
+                    lastGetViewMs = nowMs;
 
                     // Read ARFCN using adapter-aligned sample key (not Workspace.g).
                     String arfcn = readArfcn(isServing, intraRow, queryTime);

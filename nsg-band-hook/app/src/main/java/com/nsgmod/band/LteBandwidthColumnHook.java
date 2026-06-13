@@ -70,6 +70,8 @@ public class LteBandwidthColumnHook {
     private long bwCacheSampleKey = -1;
     /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
     private Field f5509cField;
+    /** Last System.currentTimeMillis() when getView fired — for gap-detection logging. */
+    private volatile long lastGetViewMs = 0;
 
     public LteBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -113,9 +115,11 @@ public class LteBandwidthColumnHook {
 
     private void invalidateBwCache() {
         bwCacheValid = false;
+        Log.i(TAG, "DIAG LteBW: cache invalidated");
     }
 
     private void fillBwCache(long queryTime) {
+        Log.i(TAG, "DIAG LteBW: fillBwCache qt=" + queryTime);
         for (int i = 0; i <= MAX_SCELLS; i++) bwCache[i] = null;
         bwCacheSampleKey = queryTime;
         bwCacheValid = true;
@@ -137,6 +141,7 @@ public class LteBandwidthColumnHook {
                         "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell" + n + "_DL",
                         moduleIndex, queryTime);
             }
+            Log.i(TAG, "DIAG LteBW: fill done PCell=" + bwCache[0] + " SC1=" + bwCache[1]);
         } catch (Exception e) {
             Log.w(TAG, "LteBandwidthColumnHook: fillBwCache failed: " + e);
         }
@@ -160,6 +165,8 @@ public class LteBandwidthColumnHook {
     private String cachedBw(int intraRow, long adapterSampleKey) {
         // Invalidate when the adapter's data sample changed (covers scrub+unfreeze mismatch).
         if (adapterSampleKey > 0 && adapterSampleKey != bwCacheSampleKey) {
+            Log.i(TAG, "DIAG LteBW: sk mismatch adapter=" + adapterSampleKey
+                    + " cache=" + bwCacheSampleKey + " -> invalidate");
             bwCacheValid = false;
         }
         if (!bwCacheValid) {
@@ -256,6 +263,17 @@ public class LteBandwidthColumnHook {
                         } catch (Exception ex) {
                             Log.w(TAG, "LteBWHook: fast-path h(position) failed: " + ex);
                         }
+                        // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
+                        long nowMs = System.currentTimeMillis();
+                        if (nowMs - lastGetViewMs > 1000) {
+                            long wsGLog = -99;
+                            try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored3) {}
+                            Log.i(TAG, "DIAG LteBW woke pos=" + position2 + " isServing=" + isServing2
+                                    + " intraRow=" + intraRow2 + " adsk=" + adapterSampleKey2
+                                    + " cacheSk=" + bwCacheSampleKey + " cacheValid=" + bwCacheValid
+                                    + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
+                        }
+                        lastGetViewMs = nowMs;
                         String bwText = isServing2 ? cachedBw(intraRow2, adapterSampleKey2) : null;
                         String display = (bwText != null) ? bwText : "-";
                         bwView.setText(display);
@@ -423,6 +441,9 @@ public class LteBandwidthColumnHook {
             xposed.hook(gMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    long qtArg = -1;
+                    try { qtArg = (long) chain.getArg(0); } catch (Exception ignored) {}
+                    Log.i(TAG, "DIAG LteBW: a8.b$b.g() fired qt=" + qtArg);
                     invalidateBwCache();
                     return chain.proceed();
                 }

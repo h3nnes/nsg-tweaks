@@ -79,6 +79,8 @@ public class NrNsaBandwidthColumnHook {
     private long bwCacheSampleKey = -1;
     /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
     private Field f5509cField;
+    /** Last System.currentTimeMillis() when getView fired — for gap-detection logging. */
+    private volatile long lastGetViewMs = 0;
 
     public NrNsaBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -122,9 +124,11 @@ public class NrNsaBandwidthColumnHook {
 
     void invalidateBwCache() {
         bwCacheValid = false;
+        Log.i(TAG, "DIAG NrNsaBW: cache invalidated");
     }
 
     private void fillBwCache(long queryTime) {
+        Log.i(TAG, "DIAG NrNsaBW: fillBwCache qt=" + queryTime);
         for (int i = 0; i <= MAX_SCELLS; i++) bwCache[i] = null;
         bwCacheSampleKey = queryTime;
         bwCacheValid = true;
@@ -157,6 +161,8 @@ public class NrNsaBandwidthColumnHook {
                     }
                 }
             }
+            Log.i(TAG, "DIAG NrNsaBW: fill done PCell=" + bwCache[0]
+                    + " SC1=" + bwCache[1] + " SC2=" + bwCache[2]);
         } catch (Exception e) {
             Log.w(TAG, "NrNsaBandwidthColumnHook: fillBwCache failed: " + e);
         }
@@ -184,6 +190,8 @@ public class NrNsaBandwidthColumnHook {
     private String cachedBw(int intraRow, long adapterSampleKey) {
         // Invalidate when the adapter's data sample changed (covers scrub+unfreeze mismatch).
         if (adapterSampleKey > 0 && adapterSampleKey != bwCacheSampleKey) {
+            Log.i(TAG, "DIAG NrNsaBW: sk mismatch adapter=" + adapterSampleKey
+                    + " cache=" + bwCacheSampleKey + " -> invalidate");
             bwCacheValid = false;
         }
         if (!bwCacheValid) {
@@ -264,6 +272,18 @@ public class NrNsaBandwidthColumnHook {
                     } catch (Exception ex) {
                         Log.w(TAG, "NrNsaBandwidthColumnHook: h(position) failed: " + ex);
                     }
+
+                    // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
+                    long nowMs = System.currentTimeMillis();
+                    if (nowMs - lastGetViewMs > 1000) {
+                        long wsGLog = -99;
+                        try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
+                        Log.i(TAG, "DIAG NrNsaBW woke pos=" + position + " isSource0=" + isSource0
+                                + " intraRow=" + intraRow + " adsk=" + adapterSampleKey
+                                + " cacheSk=" + bwCacheSampleKey + " cacheValid=" + bwCacheValid
+                                + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
+                    }
+                    lastGetViewMs = nowMs;
 
                     String bwText = isSource0 ? cachedBw(intraRow, adapterSampleKey) : null;
 
@@ -420,6 +440,9 @@ public class NrNsaBandwidthColumnHook {
             xposed.hook(gMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    long qtArg = -1;
+                    try { qtArg = (long) chain.getArg(0); } catch (Exception ignored) {}
+                    Log.i(TAG, "DIAG NrNsaBW: a8.b$b.g() fired qt=" + qtArg);
                     invalidateBwCache();
                     return chain.proceed();
                 }
