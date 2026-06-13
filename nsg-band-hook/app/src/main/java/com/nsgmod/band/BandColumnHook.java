@@ -225,9 +225,11 @@ public class BandColumnHook {
                     int     position  = (int) chain.getArg(0);
                     boolean isServing = false;
                     int     intraRow  = position;
-                    // queryTime: prefer adapter's f5509c (the sample key actually used by the
-                    // adapter for its data) over Workspace.g, which can lag behind after
-                    // scrub+unfreeze when Workspace.a() is called with a key != f3866g.
+                    // queryTime: always Long.MAX_VALUE — reads from the absolute latest
+                    // sample. Using Workspace.g or f5509c causes permanent stale reads
+                    // after lock/unlock or freeze/unfreeze: wsG is set once at the first
+                    // post-event dispatch and never advances; new ticks land at sk > wsG
+                    // and Property.b(wsG) cannot see them.
                     long    queryTime = Long.MAX_VALUE;
                     if (reflectionReady) {
                         try {
@@ -239,24 +241,10 @@ public class BandColumnHook {
                                 intraRow  = (int) pair.second;
                                 isServing = (pair.first != null && sources != null
                                         && sources.length > 0 && pair.first == sources[0]);
-                                if (f5509cField != null && pair.first != null) {
-                                    long sk = f5509cField.getLong(pair.first);
-                                    if (sk > 0) queryTime = sk;
-                                }
                             }
                         } catch (Exception e) {
                             Log.w(TAG, "h(position) failed: " + e);
                         }
-                    }
-                    if (queryTime == Long.MAX_VALUE) {
-                        // Fallback: Workspace.g (live mode or init)
-                        try {
-                            Object ws = wsSingleton.get(null);
-                            if (ws != null) {
-                                long ct = wsCurrentTime.getLong(ws);
-                                if (ct >= 0) queryTime = ct;
-                            }
-                        } catch (Exception ignored) {}
                     }
 
                     // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
@@ -265,7 +253,7 @@ public class BandColumnHook {
                         long wsGLog = -99;
                         try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
                         Log.i(TAG, "DIAG woke pos=" + position + " isServing=" + isServing
-                                + " intraRow=" + intraRow + " qt=" + queryTime
+                                + " intraRow=" + intraRow + " qt=MAX"
                                 + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
                     }
                     lastGetViewMs = nowMs;

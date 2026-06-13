@@ -275,8 +275,11 @@ public class NrSaCellColumnsHook {
                     // Resolve serving/intraRow
                     boolean isServing = false;
                     int     intraRow  = 0;
-                    // queryTime: use adapter's f5509c (the sample key the adapter used for
-                    // its own data) rather than Workspace.g which can lag after scrub+unfreeze.
+                    // queryTime: always Long.MAX_VALUE — reads from the absolute latest
+                    // sample in the property store. Using Workspace.g or f5509c causes
+                    // permanent stale reads after lock/unlock or freeze/unfreeze because
+                    // wsG is set to the first post-event timestamp and never advances
+                    // (new ticks arrive at sk > wsG; Property.b(wsG) cannot see them).
                     long    queryTime = Long.MAX_VALUE;
                     try {
                         Object   adapter = chain.getThisObject();
@@ -287,22 +290,9 @@ public class NrSaCellColumnsHook {
                             intraRow  = (int) pair.second;
                             isServing = (pair.first != null && sources != null
                                     && sources.length > 0 && pair.first == sources[0]);
-                            if (f5509cField != null && pair.first != null) {
-                                long sk = f5509cField.getLong(pair.first);
-                                if (sk > 0) queryTime = sk;
-                            }
                         }
                     } catch (Exception e) {
                         Log.w(TAG, "NrSaCellColumnsHook: g(position) failed: " + e);
-                    }
-                    if (queryTime == Long.MAX_VALUE) {
-                        try {
-                            Object ws = wsSingleton.get(null);
-                            if (ws != null) {
-                                long ct = wsCurrentTime.getLong(ws);
-                                if (ct >= 0) queryTime = ct;
-                            }
-                        } catch (Exception ignored) {}
                     }
 
                     // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
@@ -311,7 +301,7 @@ public class NrSaCellColumnsHook {
                         long wsGLog = -99;
                         try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
                         Log.i(TAG, "DIAG woke pos=" + position + " isServing=" + isServing
-                                + " intraRow=" + intraRow + " qt=" + queryTime
+                                + " intraRow=" + intraRow + " qt=MAX"
                                 + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
                     }
                     lastGetViewMs = nowMs;

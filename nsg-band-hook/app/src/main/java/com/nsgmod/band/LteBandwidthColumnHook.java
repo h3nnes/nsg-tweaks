@@ -119,7 +119,7 @@ public class LteBandwidthColumnHook {
     }
 
     private void fillBwCache(long queryTime) {
-        Log.i(TAG, "DIAG LteBW: fillBwCache qt=" + queryTime);
+        Log.i(TAG, "DIAG LteBW: fillBwCache qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
         for (int i = 0; i <= MAX_SCELLS; i++) bwCache[i] = null;
         bwCacheSampleKey = queryTime;
         bwCacheValid = true;
@@ -163,15 +163,12 @@ public class LteBandwidthColumnHook {
     }
 
     private String cachedBw(int intraRow, long adapterSampleKey) {
-        // Invalidate when the adapter's data sample changed (covers scrub+unfreeze mismatch).
-        if (adapterSampleKey > 0 && adapterSampleKey != bwCacheSampleKey) {
-            Log.i(TAG, "DIAG LteBW: sk mismatch adapter=" + adapterSampleKey
-                    + " cache=" + bwCacheSampleKey + " -> invalidate");
-            bwCacheValid = false;
-        }
+        // Always refill from Long.MAX_VALUE (latest sample) when cache is invalid.
+        // Using adapterSampleKey or Workspace.g causes permanent stale reads after
+        // lock/unlock or freeze/unfreeze (wsG frozen at first post-event tick;
+        // new ticks land at sk > wsG, invisible to Property.b(wsG)).
         if (!bwCacheValid) {
-            long qt = adapterSampleKey > 0 ? adapterSampleKey : getWorkspaceQueryTime();
-            fillBwCache(qt);
+            fillBwCache(Long.MAX_VALUE);
         }
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
         return bwCache[intraRow];
