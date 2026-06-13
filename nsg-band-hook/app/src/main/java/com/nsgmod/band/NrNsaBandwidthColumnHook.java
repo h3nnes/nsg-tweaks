@@ -65,6 +65,7 @@ public class NrNsaBandwidthColumnHook {
     private Method propGetMethod;
     private Method iterEndMethod;
     private Method iterKeyMethod;
+    private Method iterValueMethod;
 
     // Adapter reflection — h(position) and sources field.
     private Field  eField;   // a8.b$b.e  — Object[] sources array
@@ -106,6 +107,7 @@ public class NrNsaBandwidthColumnHook {
             propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
+            iterValueMethod = iterClass.getMethod("value");
 
             eField  = bbClass.getField("e");
             hMethod = bbClass.getMethod("h", int.class);
@@ -148,8 +150,9 @@ public class NrNsaBandwidthColumnHook {
             if (scelProp != null) {
                 Object iter = propIterMethod.invoke(scelProp, queryTime);
                 if (iter != null && !(boolean) iterEndMethod.invoke(iter)) {
-                    long key = (long) iterKeyMethod.invoke(iter);
-                    Object val = propGetMethod.invoke(scelProp, key);
+                    // Use iter.value() — NSG's h8/b pattern; property.get(sk) returns null
+                    // for array-type properties (Object[] with one Integer per active SCell).
+                    Object val = iterValueMethod.invoke(iter);
                     if (val != null && val.getClass().isArray()) {
                         Object[] arr = (Object[]) val;
                         for (int si = 0; si < arr.length && si < MAX_SCELLS; si++) {
@@ -188,12 +191,11 @@ public class NrNsaBandwidthColumnHook {
      *                         Pass -1 as fallback if unavailable.
      */
     private String cachedBw(int intraRow, long adapterSampleKey) {
-        // Always refill from Long.MAX_VALUE (latest sample) when cache is invalid.
-        // Using adapterSampleKey or Workspace.g causes permanent stale reads after
-        // lock/unlock or freeze/unfreeze (wsG frozen at first post-event tick;
-        // new ticks land at sk > wsG, invisible to Property.b(wsG)).
+        // Refill from adapterSampleKey when > 0 (aligns BW reads with the tick the adapter
+        // is displaying), falling back to Long.MAX_VALUE when f5509c is reset to -1.
+        // Do NOT use Workspace.g — frozen at first post-event dispatch, never advances.
         if (!bwCacheValid) {
-            fillBwCache(Long.MAX_VALUE);
+            fillBwCache(adapterSampleKey > 0 ? adapterSampleKey : Long.MAX_VALUE);
         }
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
         return bwCache[intraRow];

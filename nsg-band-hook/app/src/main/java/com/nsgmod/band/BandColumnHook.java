@@ -225,11 +225,12 @@ public class BandColumnHook {
                     int     position  = (int) chain.getArg(0);
                     boolean isServing = false;
                     int     intraRow  = position;
-                    // queryTime: always Long.MAX_VALUE — reads from the absolute latest
-                    // sample. Using Workspace.g or f5509c causes permanent stale reads
-                    // after lock/unlock or freeze/unfreeze: wsG is set once at the first
-                    // post-event dispatch and never advances; new ticks land at sk > wsG
-                    // and Property.b(wsG) cannot see them.
+                    // queryTime: use f5509c (adapter's own sample key) when > 0, otherwise
+                    // fall back to Long.MAX_VALUE. f5509c is set by a8.b$b.g() before
+                    // notifyDataSetChanged(), so it is valid by the time getView fires.
+                    // Do NOT use Workspace.g — it is frozen at the first post-event dispatch
+                    // and never advances; new ticks land at sk > wsG and Property.b(wsG)
+                    // cannot see them. Long.MAX_VALUE fallback handles reset state (f5509c=-1).
                     long    queryTime = Long.MAX_VALUE;
                     if (reflectionReady) {
                         try {
@@ -242,6 +243,10 @@ public class BandColumnHook {
                                 isServing = (pair.first != null && sources != null
                                         && sources.length > 0 && pair.first == sources[0]);
                             }
+                            if (f5509cField != null && sources != null && sources.length > 0) {
+                                long sk = f5509cField.getLong(sources[0]);
+                                if (sk > 0) queryTime = sk;
+                            }
                         } catch (Exception e) {
                             Log.w(TAG, "h(position) failed: " + e);
                         }
@@ -253,7 +258,8 @@ public class BandColumnHook {
                         long wsGLog = -99;
                         try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
                         Log.i(TAG, "DIAG woke pos=" + position + " isServing=" + isServing
-                                + " intraRow=" + intraRow + " qt=MAX"
+                                + " intraRow=" + intraRow
+                                + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime)
                                 + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
                     }
                     lastGetViewMs = nowMs;

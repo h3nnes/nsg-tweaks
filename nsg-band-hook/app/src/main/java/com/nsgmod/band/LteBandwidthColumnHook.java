@@ -163,12 +163,11 @@ public class LteBandwidthColumnHook {
     }
 
     private String cachedBw(int intraRow, long adapterSampleKey) {
-        // Always refill from Long.MAX_VALUE (latest sample) when cache is invalid.
-        // Using adapterSampleKey or Workspace.g causes permanent stale reads after
-        // lock/unlock or freeze/unfreeze (wsG frozen at first post-event tick;
-        // new ticks land at sk > wsG, invisible to Property.b(wsG)).
+        // Refill from adapterSampleKey when > 0 (aligns BW reads with the tick the adapter
+        // is displaying), falling back to Long.MAX_VALUE when f5509c is reset to -1.
+        // Do NOT use Workspace.g — frozen at first post-event dispatch, never advances.
         if (!bwCacheValid) {
-            fillBwCache(Long.MAX_VALUE);
+            fillBwCache(adapterSampleKey > 0 ? adapterSampleKey : Long.MAX_VALUE);
         }
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
         return bwCache[intraRow];

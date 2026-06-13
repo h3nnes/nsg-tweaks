@@ -188,11 +188,13 @@ public class NrSaCellColumnsHook {
                 return null;
             }
 
-            // Use property.get(iterator.key()) — matches NSG's own k8.b.f() read pattern.
+            // Use iter.value() — matches NSG's own h8/b.java read pattern.
+            // property.get(sk) returns null for array-type properties (e.g. SCell BW
+            // Object[]) even though the iterator IS positioned at a valid sample key.
             long   sampleKey = (long) iterKeyMethod.invoke(iterator);
-            Object value     = propGetMethod.invoke(property, sampleKey);
+            Object value     = iterValueMethod.invoke(iterator);
             if (value == null) {
-                Log.i(TAG, "DIAG null val key=" + key + " sk=" + sampleKey + " idx=" + scellIndex);
+                Log.i(TAG, "DIAG null iterval key=" + key + " sk=" + sampleKey + " idx=" + scellIndex);
                 return null;
             }
 
@@ -275,11 +277,11 @@ public class NrSaCellColumnsHook {
                     // Resolve serving/intraRow
                     boolean isServing = false;
                     int     intraRow  = 0;
-                    // queryTime: always Long.MAX_VALUE — reads from the absolute latest
-                    // sample in the property store. Using Workspace.g or f5509c causes
-                    // permanent stale reads after lock/unlock or freeze/unfreeze because
-                    // wsG is set to the first post-event timestamp and never advances
-                    // (new ticks arrive at sk > wsG; Property.b(wsG) cannot see them).
+                    // queryTime: use f5509c (adapter's own sample key) when > 0, otherwise
+                    // fall back to Long.MAX_VALUE. f5509c is set by a8.b$b.g() before
+                    // notifyDataSetChanged() so it is valid by getView time.
+                    // Do NOT use Workspace.g — frozen at first post-event dispatch, never
+                    // advances; new ticks at sk > wsG are invisible to Property.b(wsG).
                     long    queryTime = Long.MAX_VALUE;
                     try {
                         Object   adapter = chain.getThisObject();
@@ -291,6 +293,10 @@ public class NrSaCellColumnsHook {
                             isServing = (pair.first != null && sources != null
                                     && sources.length > 0 && pair.first == sources[0]);
                         }
+                        if (f5509cField != null && sources != null && sources.length > 0) {
+                            long sk = f5509cField.getLong(sources[0]);
+                            if (sk > 0) queryTime = sk;
+                        }
                     } catch (Exception e) {
                         Log.w(TAG, "NrSaCellColumnsHook: g(position) failed: " + e);
                     }
@@ -301,7 +307,8 @@ public class NrSaCellColumnsHook {
                         long wsGLog = -99;
                         try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
                         Log.i(TAG, "DIAG woke pos=" + position + " isServing=" + isServing
-                                + " intraRow=" + intraRow + " qt=MAX"
+                                + " intraRow=" + intraRow
+                                + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime)
                                 + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
                     }
                     lastGetViewMs = nowMs;
