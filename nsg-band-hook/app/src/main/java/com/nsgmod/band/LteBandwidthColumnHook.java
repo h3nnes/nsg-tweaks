@@ -47,7 +47,6 @@ public class LteBandwidthColumnHook {
     private Field  wsSingleton;
     private Field  wsModuleIndex;
     private Field  wsDataSource;
-    private Field  wsCurrentTime;
     private Method dsGetProperty;
     private Method propIterMethod;
     private Method iterEndMethod;
@@ -60,9 +59,6 @@ public class LteBandwidthColumnHook {
     private Field  f5509cField;  // k8.c.c — adapter's current data sample key
 
     private boolean reflectionReady = false;
-
-    /** For gap-detection logging: last wall-clock time getView fired. */
-    private volatile long lastGetViewMs = 0;
 
     public LteBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -81,7 +77,6 @@ public class LteBandwidthColumnHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
-            wsCurrentTime  = wsClass.getField("g");
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -215,21 +210,6 @@ public class LteBandwidthColumnHook {
                         } catch (Exception ex) {
                             Log.w(TAG, "LteBWHook: fast-path h(position) failed: " + ex);
                         }
-                        // Gap-detection log.
-                        long nowMs = System.currentTimeMillis();
-                        if (nowMs - lastGetViewMs > 1000) {
-                            long wsGLog = -99;
-                            try {
-                                Object wsL = wsSingleton.get(null);
-                                if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL);
-                            } catch (Exception ignored3) {}
-                            Log.i(TAG, "DIAG LteBW woke pos=" + position2
-                                    + " isServing=" + isServing2 + " intraRow=" + intraRow2
-                                    + " adsk=" + adapterSampleKey2 + " wsG=" + wsGLog
-                                    + " gap=" + (nowMs - lastGetViewMs) + "ms");
-                        }
-                        lastGetViewMs = nowMs;
-
                         // Read BW fresh — no persistent cache.
                         String bwText = null;
                         if (isServing2 && reflectionReady) {

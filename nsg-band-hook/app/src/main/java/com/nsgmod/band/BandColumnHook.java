@@ -57,10 +57,8 @@ public class BandColumnHook {
     private Field  wsSingleton;
     private Field  wsModuleIndex;
     private Field  wsDataSource;
-    private Field  wsCurrentTime;   // field "g" — replay cursor, -1 in live mode
     private Method dsGetProperty;
     private Method propIterMethod;
-    private Method propGetMethod;
     private Method iterEndMethod;
     private Method iterKeyMethod;
     private Method iterValueMethod;
@@ -72,8 +70,6 @@ public class BandColumnHook {
     private boolean reflectionReady = false;
     /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
     private Field  f5509cField;
-    /** Last System.currentTimeMillis() when getView fired — for gap-detection logging. */
-    private volatile long lastGetViewMs = 0;
 
     public BandColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -92,11 +88,9 @@ public class BandColumnHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
-            wsCurrentTime  = wsClass.getField("g");
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
-            propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
@@ -147,7 +141,6 @@ public class BandColumnHook {
 
             Object iter = propIterMethod.invoke(prop, queryTime);
             if (iter == null || (boolean) iterEndMethod.invoke(iter)) {
-                Log.i(TAG, "DIAG iter.end key=" + key + " qt=" + queryTime + " idx=" + idx);
                 return null;
             }
 
@@ -156,8 +149,6 @@ public class BandColumnHook {
 
             if (value == null) {
                 // Prev-tick fallback: head entry not yet fully committed.
-                Log.i(TAG, "DIAG null iterval key=" + key + " sk=" + sampleKey
-                        + " idx=" + idx + " trying prev");
                 iter = propIterMethod.invoke(prop, sampleKey - 1);
                 if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
                 sampleKey = (long) iterKeyMethod.invoke(iter);
@@ -168,17 +159,11 @@ public class BandColumnHook {
             String extracted = extractArrayValue(value, idx);
             if (extracted == null && value != null) {
                 // Array element is null — prev-tick fallback.
-                Log.i(TAG, "DIAG null extract key=" + key + " sk=" + sampleKey
-                        + " type=" + value.getClass().getSimpleName()
-                        + " idx=" + idx + " trying prev");
                 Object prevIter = propIterMethod.invoke(prop, sampleKey - 1);
                 if (prevIter != null && !(boolean) iterEndMethod.invoke(prevIter)) {
                     Object prevVal = iterValueMethod.invoke(prevIter);
                     extracted = extractArrayValue(prevVal, idx);
                 }
-                if (extracted == null)
-                    Log.i(TAG, "DIAG null extract+prev key=" + key + " sk=" + sampleKey
-                            + " idx=" + idx);
             }
             return extracted;
         } catch (Exception e) {
@@ -275,25 +260,8 @@ public class BandColumnHook {
                         }
                     }
 
-                    // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
-                    long nowMs = System.currentTimeMillis();
-                    if (nowMs - lastGetViewMs > 1000) {
-                        long wsGLog = -99;
-                        try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
-                        Log.i(TAG, "DIAG woke pos=" + position + " isServing=" + isServing
-                                + " intraRow=" + intraRow
-                                + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime)
-                                + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
-                    }
-                    lastGetViewMs = nowMs;
-
                     // Read ARFCN using adapter-aligned sample key (not Workspace.g).
                     String arfcn = readArfcn(isServing, intraRow, queryTime);
-                    if (arfcn == null && isServing) {
-                        Log.i(TAG, "DIAG Band: null arfcn serving pos=" + position
-                                + " ir=" + intraRow
-                                + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
-                    }
                     String arfcnText = (arfcn != null) ? arfcn : "-";
 
                     // ---- Already-injected fast path (recycled view) ----

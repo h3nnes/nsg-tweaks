@@ -58,14 +58,12 @@ public class NrSaCellColumnsHook {
     private Field  wsSingleton;
     private Field  wsModuleIndex;
     private Field  wsDataSource;
-    private Field  wsCurrentTime;  // Workspace.g (f3866g) — replay cursor, -1 in live mode
 
     private Method dsGetProperty;
     private Method propIterMethod;
-    private Method propGetMethod;   // Property.get(long key) → Object
     private Method iterEndMethod;
     private Method iterKeyMethod;   // Property$Iterator.key() → long
-    private Method iterValueMethod; // kept as fallback
+    private Method iterValueMethod;
 
     // Adapter reflection — a8.d$b
     private Field  sourcesField; // actual bytecode name "d"  (JADX: f135d) — a8.d.a[]
@@ -78,8 +76,6 @@ public class NrSaCellColumnsHook {
      * Instead we hook the data-callback to capture j10 before getView() fires.
      */
     private volatile long lastNrSaSampleKey = 0L;
-    /** Last System.currentTimeMillis() when getView fired — for gap-detection logging. */
-    private volatile long lastGetViewMs = 0;
 
     public NrSaCellColumnsHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -98,12 +94,9 @@ public class NrSaCellColumnsHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
-            wsCurrentTime  = wsClass.getField("g");
-
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
-            propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
@@ -226,7 +219,6 @@ public class NrSaCellColumnsHook {
 
             Object iterator = propIterMethod.invoke(property, queryTime);
             if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) {
-                Log.i(TAG, "DIAG iter.end key=" + key + " qt=" + queryTime + " idx=" + scellIndex);
                 return null;
             }
 
@@ -237,15 +229,11 @@ public class NrSaCellColumnsHook {
             Object value     = iterValueMethod.invoke(iterator);
             if (value == null) {
                 // Prev-tick fallback: head entry not yet fully committed.
-                Log.i(TAG, "DIAG null iterval key=" + key + " sk=" + sampleKey
-                        + " idx=" + scellIndex + " trying prev");
                 iterator = propIterMethod.invoke(property, sampleKey - 1);
                 if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
                 sampleKey = (long) iterKeyMethod.invoke(iterator);
                 value = iterValueMethod.invoke(iterator);
                 if (value == null) {
-                    Log.i(TAG, "DIAG null iterval key=" + key + " prevSk=" + sampleKey
-                            + " idx=" + scellIndex + " also null");
                     return null;
                 }
             }
@@ -253,17 +241,11 @@ public class NrSaCellColumnsHook {
             String extracted = extractArrayValue(value, scellIndex);
             if (extracted == null && value != null) {
                 // Array element is null — prev-tick fallback.
-                Log.i(TAG, "DIAG null extract key=" + key + " sk=" + sampleKey
-                        + " type=" + value.getClass().getSimpleName()
-                        + " idx=" + scellIndex + " trying prev");
                 Object prevIter = propIterMethod.invoke(property, sampleKey - 1);
                 if (prevIter != null && !(boolean) iterEndMethod.invoke(prevIter)) {
                     Object prevVal = iterValueMethod.invoke(prevIter);
                     extracted = extractArrayValue(prevVal, scellIndex);
                 }
-                if (extracted == null)
-                    Log.i(TAG, "DIAG null extract+prev key=" + key + " sk=" + sampleKey
-                            + " idx=" + scellIndex);
             }
             return extracted;
         } catch (Exception e) {
@@ -359,36 +341,14 @@ public class NrSaCellColumnsHook {
                         Log.w(TAG, "NrSaCellColumnsHook: g(position) failed: " + e);
                     }
 
-                    // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
-                    long nowMs = System.currentTimeMillis();
-                    if (nowMs - lastGetViewMs > 1000) {
-                        long wsGLog = -99;
-                        try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored2) {}
-                        Log.i(TAG, "DIAG woke pos=" + position + " isServing=" + isServing
-                                + " intraRow=" + intraRow
-                                + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime)
-                                + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
-                    }
-                    lastGetViewMs = nowMs;
-
                     // Read values using adapter-aligned sample key (not Workspace.g).
                     String arfcnText = "-";
                     String arfcn = readArfcn(isServing, intraRow, queryTime);
-                    if (arfcn == null && isServing) {
-                        Log.i(TAG, "DIAG NrSa: null arfcn serving pos=" + position
-                                + " ir=" + intraRow
-                                + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
-                    }
                     if (arfcn != null) arfcnText = arfcn;
 
                     String bwText = "-";
                     if (isServing) {
                         String bw = readBandwidth(intraRow, queryTime);
-                        if (bw == null) {
-                            Log.i(TAG, "DIAG NrSa: null bw serving pos=" + position
-                                    + " ir=" + intraRow
-                                    + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
-                        }
                         if (bw != null) bwText = bw;
                     }
 

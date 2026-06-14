@@ -59,7 +59,6 @@ public class NrNsaBandwidthColumnHook {
     private Field  wsSingleton;
     private Field  wsModuleIndex;
     private Field  wsDataSource;
-    private Field  wsCurrentTime;
     private Method dsGetProperty;
     private Method propIterMethod;
     private Method iterEndMethod;
@@ -72,9 +71,6 @@ public class NrNsaBandwidthColumnHook {
     private Field  f5509cField;  // k8.c.c — adapter's current data sample key
 
     private boolean reflectionReady = false;
-
-    /** For gap-detection logging: last wall-clock time getView fired. */
-    private volatile long lastGetViewMs = 0;
 
     public NrNsaBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -93,7 +89,6 @@ public class NrNsaBandwidthColumnHook {
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
             wsDataSource   = wsClass.getField("c");
-            wsCurrentTime  = wsClass.getField("g");
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -254,21 +249,6 @@ public class NrNsaBandwidthColumnHook {
                         Log.w(TAG, "NrNsaBandwidthColumnHook: h(position) failed: " + ex);
                     }
 
-                    // Gap-detection: log first getView after ≥ 1 s of silence.
-                    long nowMs = System.currentTimeMillis();
-                    if (nowMs - lastGetViewMs > 1000) {
-                        long wsGLog = -99;
-                        try {
-                            Object wsL = wsSingleton.get(null);
-                            if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL);
-                        } catch (Exception ignored2) {}
-                        Log.i(TAG, "DIAG NrNsaBW woke pos=" + position
-                                + " isSource0=" + isSource0 + " intraRow=" + intraRow
-                                + " adsk=" + adapterSampleKey + " wsG=" + wsGLog
-                                + " gap=" + (nowMs - lastGetViewMs) + "ms");
-                    }
-                    lastGetViewMs = nowMs;
-
                     // Read BW fresh from DataSource — mirrors v6/f.java pattern.
                     String bwText = null;
                     if (isSource0 && reflectionReady) {
@@ -284,10 +264,6 @@ public class NrNsaBandwidthColumnHook {
                             }
                         } catch (Exception ex) {
                             Log.w(TAG, "NrNsaBW getView: ws read failed: " + ex);
-                        }
-                        if (bwText == null && intraRow <= MAX_SCELLS) {
-                            Log.i(TAG, "DIAG NrNsaBW null ir=" + intraRow
-                                    + " adsk=" + adapterSampleKey);
                         }
                     }
 
