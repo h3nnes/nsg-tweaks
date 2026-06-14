@@ -40,7 +40,6 @@ public class MainHook extends XposedModule {
         new NrSaCellColumnsHook(this, param.getClassLoader()).install();
         new NrSaCellColorHook(this, param.getClassLoader(),
                 NrSaCsiSnrRowHook.saK2aCarriers).install();
-        new SubscriberHook(this, param.getClassLoader()).install();
         new ReplayStatusBarHook(this, param.getClassLoader()).install();
         new GranularSeekBarHook(this, param.getClassLoader()).install();
         new RtPlayHook(this, param.getClassLoader()).install();

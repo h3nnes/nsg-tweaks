@@ -25,8 +25,6 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 public class SettingsToggleHook {
 
     private static final String TAG               = "NSGBandHook_Settings";
-    static final String  PREFS_FILE               = "nsgmod_prefs";
-    static final String  PREF_KEY                 = "nsgmod.subscriber_bypass";
     static final String  PREF_KEY_CELL_MODS       = "nsgmod.cell_mods_enabled";
     static final String  PREF_KEY_CELL_ID_MATCH   = "nsgmod.cell_id_match_enabled";
     static final String  PREF_KEY_RT_PLAY         = "nsgmod.rt_play_enabled";
@@ -165,7 +163,7 @@ public class SettingsToggleHook {
                 break;
             }
         }
-        if (findPref != null && findPref.invoke(prefScreen, PREF_KEY) != null) {
+        if (findPref != null && findPref.invoke(prefScreen, PREF_KEY_CELL_MODS) != null) {
             return; // already injected
         }
 
@@ -286,11 +284,6 @@ public class SettingsToggleHook {
         ctorArgs[0] = ctx;
 
         // --- 6. Inject toggles ---
-        injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
-                iconSpaceField, setDefaultValue, attachMethod, parentField,
-                PREF_KEY, "NSGMod: Subscriber bypass", "Unlock all premium features",
-                false, prefManager, prefScreen, children);
-
         if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_CELL_MODS) == null) {
             injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
