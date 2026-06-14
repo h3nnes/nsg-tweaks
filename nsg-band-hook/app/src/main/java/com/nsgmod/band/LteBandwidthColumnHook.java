@@ -115,7 +115,8 @@ public class LteBandwidthColumnHook {
 
     private void invalidateBwCache() {
         bwCacheValid = false;
-        Log.i(TAG, "DIAG LteBW: cache invalidated");
+        Log.i(TAG, "DIAG LteBW: cache invalidated cacheSk="
+                + (bwCacheSampleKey == Long.MAX_VALUE ? "MAX" : bwCacheSampleKey));
     }
 
     private void fillBwCache(long queryTime) {
@@ -163,10 +164,18 @@ public class LteBandwidthColumnHook {
     }
 
     private String cachedBw(int intraRow, long adapterSampleKey) {
-        // Refill from adapterSampleKey when > 0 (aligns BW reads with the tick the adapter
-        // is displaying), falling back to Long.MAX_VALUE when f5509c is reset to -1.
-        // Do NOT use Workspace.g — frozen at first post-event dispatch, never advances.
-        if (!bwCacheValid) {
+        // Refill when cache is invalid OR when adapterSampleKey advanced without our
+        // invalidation hook firing (NSG can call notifyDataSetChanged() via b(wsG,…)
+        // on onResume without going through a8.b$b.g(), leaving the cache stale).
+        boolean stale = bwCacheValid
+                && adapterSampleKey > 0
+                && adapterSampleKey != bwCacheSampleKey
+                && bwCacheSampleKey != Long.MAX_VALUE;
+        if (stale) {
+            Log.i(TAG, "DIAG LteBW: STALE adsk=" + adapterSampleKey
+                    + " cacheSk=" + bwCacheSampleKey + " — refilling");
+        }
+        if (!bwCacheValid || stale) {
             fillBwCache(adapterSampleKey > 0 ? adapterSampleKey : Long.MAX_VALUE);
         }
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
@@ -271,6 +280,10 @@ public class LteBandwidthColumnHook {
                         }
                         lastGetViewMs = nowMs;
                         String bwText = isServing2 ? cachedBw(intraRow2, adapterSampleKey2) : null;
+                        if (isServing2 && bwText == null && intraRow2 <= MAX_SCELLS) {
+                            Log.i(TAG, "DIAG LteBW: null serving ir=" + intraRow2
+                                    + " adsk=" + adapterSampleKey2 + " cacheSk=" + bwCacheSampleKey);
+                        }
                         String display = (bwText != null) ? bwText : "-";
                         bwView.setText(display);
                         if (bwText != null) {
@@ -307,6 +320,10 @@ public class LteBandwidthColumnHook {
                     }
 
                     String bwText = isServingSource ? cachedBw(intraRow, adapterSampleKey) : null;
+                    if (isServingSource && bwText == null && intraRow <= MAX_SCELLS) {
+                        Log.i(TAG, "DIAG LteBW: null serving(first) ir=" + intraRow
+                                + " adsk=" + adapterSampleKey + " cacheSk=" + bwCacheSampleKey);
+                    }
                     String display = (bwText != null) ? bwText : "-";
 
                     // Copy style from Band column (child[1]).

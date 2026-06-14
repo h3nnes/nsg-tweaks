@@ -126,7 +126,8 @@ public class NrNsaBandwidthColumnHook {
 
     void invalidateBwCache() {
         bwCacheValid = false;
-        Log.i(TAG, "DIAG NrNsaBW: cache invalidated");
+        Log.i(TAG, "DIAG NrNsaBW: cache invalidated cacheSk="
+                + (bwCacheSampleKey == Long.MAX_VALUE ? "MAX" : bwCacheSampleKey));
     }
 
     private void fillBwCache(long queryTime) {
@@ -153,7 +154,10 @@ public class NrNsaBandwidthColumnHook {
                     // Use iter.value() — NSG's h8/b pattern; property.get(sk) returns null
                     // for array-type properties (Object[] with one Integer per active SCell).
                     Object val = iterValueMethod.invoke(iter);
-                    if (val != null && val.getClass().isArray()) {
+                    if (val == null) {
+                        Log.i(TAG, "DIAG NrNsaBW: SCell BW iterval null qt="
+                                + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
+                    } else if (val.getClass().isArray()) {
                         Object[] arr = (Object[]) val;
                         for (int si = 0; si < arr.length && si < MAX_SCELLS; si++) {
                             if (arr[si] instanceof Number)
@@ -162,7 +166,12 @@ public class NrNsaBandwidthColumnHook {
                     } else if (val instanceof Number) {
                         bwCache[1] = bwEnumToMhz(((Number) val).intValue());
                     }
+                } else {
+                    Log.i(TAG, "DIAG NrNsaBW: SCell BW iter.end qt="
+                            + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
                 }
+            } else {
+                Log.i(TAG, "DIAG NrNsaBW: SCell BW prop null");
             }
             Log.i(TAG, "DIAG NrNsaBW: fill done PCell=" + bwCache[0]
                     + " SC1=" + bwCache[1] + " SC2=" + bwCache[2]);
@@ -191,10 +200,18 @@ public class NrNsaBandwidthColumnHook {
      *                         Pass -1 as fallback if unavailable.
      */
     private String cachedBw(int intraRow, long adapterSampleKey) {
-        // Refill from adapterSampleKey when > 0 (aligns BW reads with the tick the adapter
-        // is displaying), falling back to Long.MAX_VALUE when f5509c is reset to -1.
-        // Do NOT use Workspace.g — frozen at first post-event dispatch, never advances.
-        if (!bwCacheValid) {
+        // Refill when cache is invalid OR when adapterSampleKey advanced without our
+        // invalidation hook firing (NSG can call notifyDataSetChanged() via b(wsG,…)
+        // on onResume without going through a8.b$b.g(), leaving the cache stale).
+        boolean stale = bwCacheValid
+                && adapterSampleKey > 0
+                && adapterSampleKey != bwCacheSampleKey
+                && bwCacheSampleKey != Long.MAX_VALUE;
+        if (stale) {
+            Log.i(TAG, "DIAG NrNsaBW: STALE adsk=" + adapterSampleKey
+                    + " cacheSk=" + bwCacheSampleKey + " — refilling");
+        }
+        if (!bwCacheValid || stale) {
             fillBwCache(adapterSampleKey > 0 ? adapterSampleKey : Long.MAX_VALUE);
         }
         if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
@@ -285,6 +302,10 @@ public class NrNsaBandwidthColumnHook {
                     lastGetViewMs = nowMs;
 
                     String bwText = isSource0 ? cachedBw(intraRow, adapterSampleKey) : null;
+                    if (isSource0 && bwText == null && intraRow <= MAX_SCELLS) {
+                        Log.i(TAG, "DIAG NrNsaBW: null serving ir=" + intraRow
+                                + " adsk=" + adapterSampleKey + " cacheSk=" + bwCacheSampleKey);
+                    }
 
                     // ---- Already-injected fast path ----
                     Object bvTag = row.getTag(BW_VIEW_TAG_KEY);

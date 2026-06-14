@@ -266,6 +266,11 @@ public class BandColumnHook {
 
                     // Read ARFCN using adapter-aligned sample key (not Workspace.g).
                     String arfcn = readArfcn(isServing, intraRow, queryTime);
+                    if (arfcn == null && isServing) {
+                        Log.i(TAG, "DIAG Band: null arfcn serving pos=" + position
+                                + " ir=" + intraRow
+                                + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
+                    }
                     String arfcnText = (arfcn != null) ? arfcn : "-";
 
                     // ---- Already-injected fast path (recycled view) ----

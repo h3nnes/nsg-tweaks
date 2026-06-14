@@ -316,11 +316,21 @@ public class NrSaCellColumnsHook {
                     // Read values using adapter-aligned sample key (not Workspace.g).
                     String arfcnText = "-";
                     String arfcn = readArfcn(isServing, intraRow, queryTime);
+                    if (arfcn == null && isServing) {
+                        Log.i(TAG, "DIAG NrSa: null arfcn serving pos=" + position
+                                + " ir=" + intraRow
+                                + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
+                    }
                     if (arfcn != null) arfcnText = arfcn;
 
                     String bwText = "-";
                     if (isServing) {
                         String bw = readBandwidth(intraRow, queryTime);
+                        if (bw == null) {
+                            Log.i(TAG, "DIAG NrSa: null bw serving pos=" + position
+                                    + " ir=" + intraRow
+                                    + " qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
+                        }
                         if (bw != null) bwText = bw;
                     }
 
