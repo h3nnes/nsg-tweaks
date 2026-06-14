@@ -72,8 +72,12 @@ public class NrSaCellColumnsHook {
     private Method gMethod;      // g(int) → Pair<a8.d.a, Integer>
 
     private boolean ready = false;
-    /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
-    private Field  f5509cField;
+    /**
+     * Sample key captured from a8.d.b(DataSource, long j10, …) callback.
+     * a8.d.a extends k8.b, NOT k8.c, so there is no f5509c field to read.
+     * Instead we hook the data-callback to capture j10 before getView() fires.
+     */
+    private volatile long lastNrSaSampleKey = 0L;
     /** Last System.currentTimeMillis() when getView fired — for gap-detection logging. */
     private volatile long lastGetViewMs = 0;
 
@@ -106,7 +110,8 @@ public class NrSaCellColumnsHook {
 
             sourcesField = dbClass.getField("d");   // a8.d.a[] sources
             gMethod      = dbClass.getMethod("g", int.class);
-            f5509cField  = loader.loadClass("k8.c").getField("c"); // data sample key (f5509c)
+            // NOTE: a8.d.a extends k8.b (not k8.c), so there is no f5509c field.
+            // Sample key is captured via hookDataCallback() instead.
 
             ready = true;
             Log.i(TAG, "NrSaCellColumnsHook: reflection ready");
@@ -124,9 +129,46 @@ public class NrSaCellColumnsHook {
             Log.w(TAG, "NrSaCellColumnsHook: skipping install — reflection not ready");
             return;
         }
+        hookDataCallback();
         hookGetView();
         hookOnCreateView();
         hookH8bQ();
+    }
+
+    // -----------------------------------------------------------------------
+    // Data-callback hook — captures the sample key used to fill the buffer
+    // -----------------------------------------------------------------------
+
+    /**
+     * Hook a8.d.b(DataSource, long j10, short, Object) — the Workspace.a callback
+     * invoked when new data arrives.  Captures j10 (arg index 1) into lastNrSaSampleKey.
+     *
+     * This runs BEFORE notifyDataSetChanged() / getView(), so by the time getView()
+     * fires the field already holds the correct sample key for this render cycle.
+     *
+     * All a8.d subclasses share this callback; capturing from any of them is fine
+     * because they all receive the same monotonically-increasing sample key stream.
+     */
+    private void hookDataCallback() {
+        try {
+            Class<?> dClass  = loader.loadClass("a8.d");
+            Class<?> dsClass = loader.loadClass("com.qtrun.sys.DataSource");
+            Method   bMethod = dClass.getDeclaredMethod("b",
+                    dsClass, long.class, short.class, Object.class);
+
+            xposed.hook(bMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    long sk = (long) chain.getArg(1);
+                    if (sk > 0) lastNrSaSampleKey = sk;
+                    return result;
+                }
+            });
+            Log.i(TAG, "NrSaCellColumnsHook: hookDataCallback installed");
+        } catch (Exception e) {
+            Log.e(TAG, "NrSaCellColumnsHook: hookDataCallback failed: " + e);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -298,12 +340,11 @@ public class NrSaCellColumnsHook {
                     // Resolve serving/intraRow
                     boolean isServing = false;
                     int     intraRow  = 0;
-                    // queryTime: use f5509c (adapter's own sample key) when > 0, otherwise
-                    // fall back to Long.MAX_VALUE. f5509c is set by a8.b$b.g() before
-                    // notifyDataSetChanged() so it is valid by getView time.
-                    // Do NOT use Workspace.g — frozen at first post-event dispatch, never
-                    // advances; new ticks at sk > wsG are invisible to Property.b(wsG).
-                    long    queryTime = Long.MAX_VALUE;
+                    // queryTime: use lastNrSaSampleKey captured from the a8.d.b() data
+                    // callback (set before notifyDataSetChanged → getView).  Falls back
+                    // to Long.MAX_VALUE on first render before any callback fires
+                    // (live mode: MAX_VALUE = latest data = correct).
+                    long    queryTime = lastNrSaSampleKey > 0 ? lastNrSaSampleKey : Long.MAX_VALUE;
                     try {
                         Object   adapter = chain.getThisObject();
                         Object[] sources = (Object[]) sourcesField.get(adapter);
@@ -313,10 +354,6 @@ public class NrSaCellColumnsHook {
                             intraRow  = (int) pair.second;
                             isServing = (pair.first != null && sources != null
                                     && sources.length > 0 && pair.first == sources[0]);
-                        }
-                        if (f5509cField != null && sources != null && sources.length > 0) {
-                            long sk = f5509cField.getLong(sources[0]);
-                            if (sk > 0) queryTime = sk;
                         }
                     } catch (Exception e) {
                         Log.w(TAG, "NrSaCellColumnsHook: g(position) failed: " + e);
