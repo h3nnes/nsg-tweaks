@@ -23,12 +23,12 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell{N}_DL  (intraRow 1–7)
  * Enum: 0=1.4, 1=3, 2=5, 3=10, 4=15, 5=20 (MHz)
  *
- * Performance design (mirrors NrNsaBandwidthColumnHook):
- *  - Bandwidth values are cached in bwCache[] per data-tick, NOT re-read per row.
- *  - Cache invalidated by hooking a8.b$b.g(long, DataSource, short) — fires once per tick.
- *  - On every getView: h(position) is called to resolve (isSource0, intraRow) freshly,
- *    preventing stale-tag recycle bug. BW TextView ref is still cached as tag for O(1) setText.
- *  - No convertView null trick; views recycle normally.
+ * Data is read fresh on every getView() call using the adapter's own sample key (f5509c)
+ * as the queryTime anchor. This mirrors NSG's v6/f.java (QtGridValueBar.a()) pattern:
+ *   Property.b(queryTime) → iter.value()
+ * No persistent cache — avoids any stale-data risk.
+ *
+ * A prev-tick fallback handles partially-written head entries where iter.value() returns null.
  */
 public class LteBandwidthColumnHook {
 
@@ -43,34 +43,25 @@ public class LteBandwidthColumnHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // Workspace / Property reflection — used only when filling cache.
-    private Field wsSingleton;
-    private Field wsModuleIndex;
-    private Field wsDataSource;
-    private Field wsCurrentTime;
+    // Workspace / Property reflection.
+    private Field  wsSingleton;
+    private Field  wsModuleIndex;
+    private Field  wsDataSource;
+    private Field  wsCurrentTime;
     private Method dsGetProperty;
     private Method propIterMethod;
-    private Method propGetMethod;
     private Method iterEndMethod;
     private Method iterKeyMethod;
+    private Method iterValueMethod;
 
-    // Adapter reflection — used only on first injection of a row.
-    private Field  eField;
-    private Method hMethod;
+    // Adapter reflection.
+    private Field  eField;       // a8.b$b.e — Object[] sources array
+    private Method hMethod;      // a8.b$b.h(int) — returns Pair<source, intraRow>
+    private Field  f5509cField;  // k8.c.c — adapter's current data sample key
 
     private boolean reflectionReady = false;
 
-    /**
-     * BW cache indexed by intraRow (0=PCell, 1..7=SCell N).
-     * Null = not available / show "-".
-     */
-    private final String[] bwCache = new String[MAX_SCELLS + 1];
-    private volatile boolean bwCacheValid = false;
-    /** Data sample key (sources[0].f5509c) used when bwCache was last filled; -1 = never filled. */
-    private long bwCacheSampleKey = -1;
-    /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
-    private Field f5509cField;
-    /** Last System.currentTimeMillis() when getView fired — for gap-detection logging. */
+    /** For gap-detection logging: last wall-clock time getView fired. */
     private volatile long lastGetViewMs = 0;
 
     public LteBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
@@ -94,13 +85,13 @@ public class LteBandwidthColumnHook {
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
-            propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
+            iterValueMethod = iterClass.getMethod("value");
 
-            eField  = bbClass.getField("e");
-            hMethod = bbClass.getMethod("h", int.class);
-            f5509cField = loader.loadClass("k8.c").getField("c"); // data sample key (f5509c)
+            eField      = bbClass.getField("e");
+            hMethod     = bbClass.getMethod("h", int.class);
+            f5509cField = loader.loadClass("k8.c").getField("c");
 
             reflectionReady = true;
             Log.i(TAG, "LteBandwidthColumnHook: reflection ready");
@@ -110,87 +101,44 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // BW cache
+    // BW reading — fresh on every getView(), no persistent cache.
+    // Pattern: NSG v6/f.java — Property.b(queryTime) → iter.value().
+    // Prev-tick fallback for partially-written head entries.
     // -----------------------------------------------------------------------
 
-    private void invalidateBwCache() {
-        bwCacheValid = false;
-        Log.i(TAG, "DIAG LteBW: cache invalidated cacheSk="
-                + (bwCacheSampleKey == Long.MAX_VALUE ? "MAX" : bwCacheSampleKey));
+    /**
+     * Read LTE BW for the given row fresh from the DataSource.
+     * @param adsk adapter's current sample key (f5509c); used as queryTime anchor.
+     * @param intraRow 0 = PCell, 1..7 = SCell N (matches the SCell number in the key).
+     */
+    private String readLteBwFresh(Object ds, int modIdx, long adsk, int intraRow) {
+        long qt = (adsk > 0) ? adsk : Long.MAX_VALUE;
+        String key = (intraRow == 0)
+                ? "LTE::Serving_Cell::LTE_Bandwidth_PCell_DL"
+                : "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell" + intraRow + "_DL";
+        return readScalarBw(ds, key, modIdx, qt);
     }
 
-    private void fillBwCache(long queryTime) {
-        Log.i(TAG, "DIAG LteBW: fillBwCache qt=" + (queryTime == Long.MAX_VALUE ? "MAX" : queryTime));
-        for (int i = 0; i <= MAX_SCELLS; i++) bwCache[i] = null;
-        bwCacheSampleKey = queryTime;
-        bwCacheValid = true;
-        if (!reflectionReady) return;
+    private String readScalarBw(Object ds, String key, int modIdx, long qt) {
         try {
-            Object ws = wsSingleton.get(null);
-            if (ws == null) return;
-            int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
-            Object dataSource  = wsDataSource.get(ws);
-            if (dataSource == null) return;
-
-            // PCell
-            bwCache[0] = readProperty(dataSource, "LTE::Serving_Cell::LTE_Bandwidth_PCell_DL",
-                    moduleIndex, queryTime);
-
-            // SCells
-            for (int n = 1; n <= MAX_SCELLS; n++) {
-                bwCache[n] = readProperty(dataSource,
-                        "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell" + n + "_DL",
-                        moduleIndex, queryTime);
-            }
-            Log.i(TAG, "DIAG LteBW: fill done PCell=" + bwCache[0] + " SC1=" + bwCache[1]);
-        } catch (Exception e) {
-            Log.w(TAG, "LteBandwidthColumnHook: fillBwCache failed: " + e);
-        }
-    }
-
-    private String readProperty(Object dataSource, String key, int moduleIndex, long queryTime) {
-        try {
-            Object prop = dsGetProperty.invoke(dataSource, key, moduleIndex);
+            Object prop = dsGetProperty.invoke(ds, key, modIdx);
             if (prop == null) return null;
-            Object iter = propIterMethod.invoke(prop, queryTime);
+            Object iter = propIterMethod.invoke(prop, qt);
             if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
-            long sampleKey = (long) iterKeyMethod.invoke(iter);
-            Object val = propGetMethod.invoke(prop, sampleKey);
+            long sk = (long) iterKeyMethod.invoke(iter);
+            Object val = iterValueMethod.invoke(iter);
+            if (val == null) {
+                // Prev-tick fallback: head entry not yet fully committed.
+                iter = propIterMethod.invoke(prop, sk - 1);
+                if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
+                val = iterValueMethod.invoke(iter);
+            }
             if (!(val instanceof Integer)) return null;
             return bwEnumToString((Integer) val);
         } catch (Exception e) {
+            Log.w(TAG, "LteBW readScalarBw(" + key + ") failed: " + e);
             return null;
         }
-    }
-
-    private String cachedBw(int intraRow, long adapterSampleKey) {
-        // Refill when cache is invalid OR when adapterSampleKey advanced without our
-        // invalidation hook firing (NSG can call notifyDataSetChanged() via b(wsG,…)
-        // on onResume without going through a8.b$b.g(), leaving the cache stale).
-        boolean stale = bwCacheValid
-                && adapterSampleKey > 0
-                && adapterSampleKey != bwCacheSampleKey
-                && bwCacheSampleKey != Long.MAX_VALUE;
-        if (stale) {
-            Log.i(TAG, "DIAG LteBW: STALE adsk=" + adapterSampleKey
-                    + " cacheSk=" + bwCacheSampleKey + " — refilling");
-        }
-        if (!bwCacheValid || stale) {
-            fillBwCache(adapterSampleKey > 0 ? adapterSampleKey : Long.MAX_VALUE);
-        }
-        if (intraRow < 0 || intraRow > MAX_SCELLS) return null;
-        return bwCache[intraRow];
-    }
-
-    private long getWorkspaceQueryTime() {
-        try {
-            Object ws = wsSingleton.get(null);
-            if (ws != null) {
-                long ct = wsCurrentTime.getLong(ws);
-                return (ct >= 0) ? ct : Long.MAX_VALUE;
-            }
-        } catch (Exception ignored) {}
-        return Long.MAX_VALUE;
     }
 
     private static String bwEnumToString(int i) {
@@ -233,7 +181,6 @@ public class LteBandwidthColumnHook {
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    // No convertView null trick — recycle normally.
                     Object result = chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
                     View rowView = (View) result;
@@ -246,8 +193,8 @@ public class LteBandwidthColumnHook {
                     Object bvTag = row.getTag(BW_VIEW_TAG_KEY);
                     if (bvTag instanceof TextView) {
                         TextView bwView = (TextView) bvTag;
-                        // Re-resolve (isSource0, intraRow) every time — prevents stale-tag
-                        // bug where a recycled row from source-1 keeps wrong intraRow.
+                        // Re-resolve (isServing, intraRow, adsk) every time — prevents
+                        // stale-tag bug where a recycled row keeps wrong intraRow.
                         int     position2        = (int) chain.getArg(0);
                         boolean isServing2       = false;
                         int     intraRow2        = position2;
@@ -268,21 +215,37 @@ public class LteBandwidthColumnHook {
                         } catch (Exception ex) {
                             Log.w(TAG, "LteBWHook: fast-path h(position) failed: " + ex);
                         }
-                        // Gap-detection diagnostic: log first getView after ≥ 1 s of silence.
+                        // Gap-detection log.
                         long nowMs = System.currentTimeMillis();
                         if (nowMs - lastGetViewMs > 1000) {
                             long wsGLog = -99;
-                            try { Object wsL = wsSingleton.get(null); if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL); } catch (Exception ignored3) {}
-                            Log.i(TAG, "DIAG LteBW woke pos=" + position2 + " isServing=" + isServing2
-                                    + " intraRow=" + intraRow2 + " adsk=" + adapterSampleKey2
-                                    + " cacheSk=" + bwCacheSampleKey + " cacheValid=" + bwCacheValid
-                                    + " wsG=" + wsGLog + " gap=" + (nowMs - lastGetViewMs) + "ms");
+                            try {
+                                Object wsL = wsSingleton.get(null);
+                                if (wsL != null) wsGLog = wsCurrentTime.getLong(wsL);
+                            } catch (Exception ignored3) {}
+                            Log.i(TAG, "DIAG LteBW woke pos=" + position2
+                                    + " isServing=" + isServing2 + " intraRow=" + intraRow2
+                                    + " adsk=" + adapterSampleKey2 + " wsG=" + wsGLog
+                                    + " gap=" + (nowMs - lastGetViewMs) + "ms");
                         }
                         lastGetViewMs = nowMs;
-                        String bwText = isServing2 ? cachedBw(intraRow2, adapterSampleKey2) : null;
-                        if (isServing2 && bwText == null && intraRow2 <= MAX_SCELLS) {
-                            Log.i(TAG, "DIAG LteBW: null serving ir=" + intraRow2
-                                    + " adsk=" + adapterSampleKey2 + " cacheSk=" + bwCacheSampleKey);
+
+                        // Read BW fresh — no persistent cache.
+                        String bwText = null;
+                        if (isServing2 && reflectionReady) {
+                            try {
+                                Object ws = wsSingleton.get(null);
+                                if (ws != null) {
+                                    int modIdx = ((Number) wsModuleIndex.get(ws)).intValue();
+                                    Object ds  = wsDataSource.get(ws);
+                                    if (ds != null) {
+                                        bwText = readLteBwFresh(ds, modIdx,
+                                                adapterSampleKey2, intraRow2);
+                                    }
+                                }
+                            } catch (Exception ex) {
+                                Log.w(TAG, "LteBW fast path: ws read failed: " + ex);
+                            }
                         }
                         String display = (bwText != null) ? bwText : "-";
                         bwView.setText(display);
@@ -298,7 +261,6 @@ public class LteBandwidthColumnHook {
                     // ---- First injection — must have exactly 6 children ----
                     if (row.getChildCount() != 6) return result;
 
-                    // Resolve (isServingSource, intraRow) via reflection — first injection only.
                     boolean isServingSource  = true;
                     int     intraRow         = (int) chain.getArg(0);
                     long    adapterSampleKey = -1;
@@ -319,10 +281,22 @@ public class LteBandwidthColumnHook {
                         Log.w(TAG, "LteBWHook: h(position) failed: " + e);
                     }
 
-                    String bwText = isServingSource ? cachedBw(intraRow, adapterSampleKey) : null;
-                    if (isServingSource && bwText == null && intraRow <= MAX_SCELLS) {
-                        Log.i(TAG, "DIAG LteBW: null serving(first) ir=" + intraRow
-                                + " adsk=" + adapterSampleKey + " cacheSk=" + bwCacheSampleKey);
+                    // Read BW fresh — no persistent cache.
+                    String bwText = null;
+                    if (isServingSource && reflectionReady) {
+                        try {
+                            Object ws = wsSingleton.get(null);
+                            if (ws != null) {
+                                int modIdx = ((Number) wsModuleIndex.get(ws)).intValue();
+                                Object ds  = wsDataSource.get(ws);
+                                if (ds != null) {
+                                    bwText = readLteBwFresh(ds, modIdx,
+                                            adapterSampleKey, intraRow);
+                                }
+                            }
+                        } catch (Exception ex) {
+                            Log.w(TAG, "LteBW first-inject: ws read failed: " + ex);
+                        }
                     }
                     String display = (bwText != null) ? bwText : "-";
 
@@ -432,38 +406,6 @@ public class LteBandwidthColumnHook {
                     + listView.getChildCount() + " children)");
         } catch (Exception e) {
             Log.w(TAG, "LteBWHook: injectBwHeader failed: " + e);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Cache invalidation — called from MainHook after construction.
-    // -----------------------------------------------------------------------
-
-    /**
-     * Install cache-invalidation hook on a8.b$b.g(long, DataSource, short).
-     * This fires once per data tick for both NR-NSA and LTE adapters,
-     * right before notifyDataSetChanged() — ensuring BW cache is stale when getView runs.
-     * Called from MainHook after LteBandwidthColumnHook is constructed.
-     */
-    public void installCacheInvalidationHook() {
-        if (!reflectionReady) return;
-        try {
-            Class<?> bbClass = loader.loadClass("a8.b$b");
-            Class<?> dsClass = loader.loadClass("com.qtrun.sys.DataSource");
-            Method   gMethod = bbClass.getMethod("g", long.class, dsClass, short.class);
-            xposed.hook(gMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    long qtArg = -1;
-                    try { qtArg = (long) chain.getArg(0); } catch (Exception ignored) {}
-                    Log.i(TAG, "DIAG LteBW: a8.b$b.g() fired qt=" + qtArg);
-                    invalidateBwCache();
-                    return chain.proceed();
-                }
-            });
-            Log.i(TAG, "LteBandwidthColumnHook: cache-invalidation hook on a8.b$b.g() installed");
-        } catch (Exception e) {
-            Log.w(TAG, "LteBandwidthColumnHook: cache-invalidation hook failed: " + e);
         }
     }
 

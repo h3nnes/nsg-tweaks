@@ -63,6 +63,7 @@ public class BandColumnHook {
     private Method propGetMethod;
     private Method iterEndMethod;
     private Method iterKeyMethod;
+    private Method iterValueMethod;
 
     // Adapter intraRow resolution — a8.b$b (base class of a8.h$a)
     private Field  eField;   // a8.b$b.e — Object[] sources array
@@ -98,6 +99,7 @@ public class BandColumnHook {
             propGetMethod  = propClass.getMethod("get", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
+            iterValueMethod = iterClass.getMethod("value");
 
             eField  = bbClass.getField("e");   // Object[] sources array
             hMethod = bbClass.getMethod("h", int.class);  // Pair<source, intraRow>
@@ -150,13 +152,34 @@ public class BandColumnHook {
             }
 
             long   sampleKey = (long) iterKeyMethod.invoke(iter);
-            Object value     = propGetMethod.invoke(prop, sampleKey);
+            Object value     = iterValueMethod.invoke(iter);
+
+            if (value == null) {
+                // Prev-tick fallback: head entry not yet fully committed.
+                Log.i(TAG, "DIAG null iterval key=" + key + " sk=" + sampleKey
+                        + " idx=" + idx + " trying prev");
+                iter = propIterMethod.invoke(prop, sampleKey - 1);
+                if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
+                sampleKey = (long) iterKeyMethod.invoke(iter);
+                value = iterValueMethod.invoke(iter);
+                if (value == null) return null;
+            }
 
             String extracted = extractArrayValue(value, idx);
-            if (extracted == null)
-                Log.i(TAG, "DIAG null val key=" + key + " sk=" + sampleKey
-                        + " type=" + (value == null ? "null" : value.getClass().getSimpleName())
-                        + " idx=" + idx);
+            if (extracted == null && value != null) {
+                // Array element is null — prev-tick fallback.
+                Log.i(TAG, "DIAG null extract key=" + key + " sk=" + sampleKey
+                        + " type=" + value.getClass().getSimpleName()
+                        + " idx=" + idx + " trying prev");
+                Object prevIter = propIterMethod.invoke(prop, sampleKey - 1);
+                if (prevIter != null && !(boolean) iterEndMethod.invoke(prevIter)) {
+                    Object prevVal = iterValueMethod.invoke(prevIter);
+                    extracted = extractArrayValue(prevVal, idx);
+                }
+                if (extracted == null)
+                    Log.i(TAG, "DIAG null extract+prev key=" + key + " sk=" + sampleKey
+                            + " idx=" + idx);
+            }
             return extracted;
         } catch (Exception e) {
             Log.w(TAG, "readPropertyWithIndex(" + key + ") failed: " + e);

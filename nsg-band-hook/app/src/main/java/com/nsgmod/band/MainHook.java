@@ -24,14 +24,12 @@ public class MainHook extends XposedModule {
         Log.i(TAG, "hooking " + TARGET_PACKAGE);
         NrNsaBandwidthColumnHook nrNsaBwHook = new NrNsaBandwidthColumnHook(this, param.getClassLoader());
         nrNsaBwHook.install();
-        nrNsaBwHook.installCacheInvalidationHook();
         new BandColumnHook(this, param.getClassLoader()).install();
         new SignalingShareHook(this, param.getClassLoader()).install();
         new ScrollBarHook(this, param.getClassLoader()).install();
         new SignalingSearchHook(this, param.getClassLoader()).install();
         LteBandwidthColumnHook lteBwHook = new LteBandwidthColumnHook(this, param.getClassLoader());
         lteBwHook.install();
-        lteBwHook.installCacheInvalidationHook();
         new LteRsrpRowHook(this, param.getClassLoader()).install();
         new EutraRsrpRowHook(this, param.getClassLoader()).install();
         new NrSaRsrpRowHook(this, param.getClassLoader(),

@@ -194,14 +194,35 @@ public class NrSaCellColumnsHook {
             long   sampleKey = (long) iterKeyMethod.invoke(iterator);
             Object value     = iterValueMethod.invoke(iterator);
             if (value == null) {
-                Log.i(TAG, "DIAG null iterval key=" + key + " sk=" + sampleKey + " idx=" + scellIndex);
-                return null;
+                // Prev-tick fallback: head entry not yet fully committed.
+                Log.i(TAG, "DIAG null iterval key=" + key + " sk=" + sampleKey
+                        + " idx=" + scellIndex + " trying prev");
+                iterator = propIterMethod.invoke(property, sampleKey - 1);
+                if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
+                sampleKey = (long) iterKeyMethod.invoke(iterator);
+                value = iterValueMethod.invoke(iterator);
+                if (value == null) {
+                    Log.i(TAG, "DIAG null iterval key=" + key + " prevSk=" + sampleKey
+                            + " idx=" + scellIndex + " also null");
+                    return null;
+                }
             }
 
             String extracted = extractArrayValue(value, scellIndex);
-            if (extracted == null)
+            if (extracted == null && value != null) {
+                // Array element is null — prev-tick fallback.
                 Log.i(TAG, "DIAG null extract key=" + key + " sk=" + sampleKey
-                        + " type=" + value.getClass().getSimpleName() + " idx=" + scellIndex);
+                        + " type=" + value.getClass().getSimpleName()
+                        + " idx=" + scellIndex + " trying prev");
+                Object prevIter = propIterMethod.invoke(property, sampleKey - 1);
+                if (prevIter != null && !(boolean) iterEndMethod.invoke(prevIter)) {
+                    Object prevVal = iterValueMethod.invoke(prevIter);
+                    extracted = extractArrayValue(prevVal, scellIndex);
+                }
+                if (extracted == null)
+                    Log.i(TAG, "DIAG null extract+prev key=" + key + " sk=" + sampleKey
+                            + " idx=" + scellIndex);
+            }
             return extracted;
         } catch (Exception e) {
             Log.w(TAG, "NrSaCellColumnsHook.readProperty(" + key + ") failed: " + e);
