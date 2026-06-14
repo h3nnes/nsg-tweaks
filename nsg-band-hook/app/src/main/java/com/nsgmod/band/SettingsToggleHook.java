@@ -307,6 +307,14 @@ public class SettingsToggleHook {
                     true, prefManager, prefScreen, children);
         }
 
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_CELL_ID_MATCH) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_CELL_ID_MATCH, "NSGMod: Use CellID instead of PCI",
+                    "Match neighbour cells by EARFCN+CellID rather than EARFCN+PCI",
+                    true, prefManager, prefScreen, children);
+        }
+
         // --- 7. Trigger adapter refresh ---
         // Send handler message 1 — replicates what j0() does when view is already created.
         // If the view is not yet created the adapter is built fresh from Q in onViewCreated.
