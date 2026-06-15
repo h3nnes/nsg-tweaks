@@ -133,7 +133,7 @@ When a log file is open, a persistent status bar remains visible at the top show
 
 #### Real-time playback button
 
-A teal **RT-Play** button is added between the existing `< 0.5s` and `0.5s >` step buttons in the playback control bar. Tapping it plays the log at its recorded speed: a 433 ms gap between records plays back as 433 ms of real time. The button label changes to **■ Stop** while playing. Playback stops automatically at end-of-log.
+A teal **RT-Play** button is added between the existing `< 0.5s` and `0.5s >` step buttons in the playback control bar. Tapping it starts automatic playback that advances the log by one second per step, pausing one second of real time between each step. The button label changes to **■ Stop** while playing. Playback stops automatically at end-of-log.
 
 Controlled by the **"NSGMod: RT-Play button"** toggle (default: on).
 
@@ -172,7 +172,7 @@ Note: the CA Matrix row additions (RSRP rows, CSI SNR, modulation utilisation ro
 - **Cell-ID matching is LTE-only.** NR-SA, NR-NSA, WCDMA, and GSM cell lookups are not affected.
 - **CSI-RSRP, 16QAM Util., and QPSK Util. rows show PCell only**, even with multiple SCells active.
 - **NR-NSA BW covers up to 4 SCells; LTE BW covers up to 7 SCells.**
-- **RT-Play advances in 1-second ticks.** Sub-second record timing within a 1-second window is not reproduced.
+- **RT-Play advances in fixed 1-second steps** with a 1-second pause between each step.
 - **Search results are capped at 200 matches** to keep the search responsive on very long messages.
 - **NSG version sensitivity.** The module targets NSG v4.8.6. If NSG updates and renames its obfuscated classes, individual hooks will silently deactivate (a warning is logged; NSG itself will not crash).
 
