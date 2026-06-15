@@ -8,7 +8,6 @@ An LSPosed module that extends [NSG (QuickTest)](https://play.google.com/store/a
 
 - **NSG** v4.8.6 (`com.qtrun.QuickTest`)
 - **LSPosed** with API 101 support
-- Android 6.0 or newer
 
 ---
 
@@ -182,3 +181,9 @@ Note: the CA Matrix row additions (RSRP rows, CSI SNR, modulation utilisation ro
 ## License
 
 MIT
+
+---
+
+## Development note
+
+Parts of this module were developed with the assistance of AI coding tools.
