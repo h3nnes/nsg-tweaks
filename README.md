@@ -176,3 +176,9 @@ Note: the CA Matrix row additions (RSRP rows, CSI SNR, modulation utilisation ro
 - **RT-Play advances in 1-second ticks.** Sub-second record timing within a 1-second window is not reproduced.
 - **Search results are capped at 200 matches** to keep the search responsive on very long messages.
 - **NSG version sensitivity.** The module targets NSG v4.8.6. If NSG updates and renames its obfuscated classes, individual hooks will silently deactivate (a warning is logged; NSG itself will not crash).
+
+---
+
+## License
+
+MIT
