@@ -28,6 +28,8 @@ public class SettingsToggleHook {
     static final String  PREF_KEY_CELL_MODS       = "nsgmod.cell_mods_enabled";
     static final String  PREF_KEY_CELL_ID_MATCH   = "nsgmod.cell_id_match_enabled";
     static final String  PREF_KEY_RT_PLAY         = "nsgmod.rt_play_enabled";
+    static final String  PREF_KEY_NRNSA_EXT_CELLS = "nsgmod.nrnsa_ext_cells_enabled";
+    static final String  PREF_KEY_LTE_EXT_CELLS   = "nsgmod.lte_ext_cells_enabled";
 
     /** Returns true when the cell-table modifications toggle is enabled (default: true). */
     public static boolean cellModsEnabled() {
@@ -74,6 +76,38 @@ public class SettingsToggleHook {
         } catch (Throwable t) {
             android.util.Log.w(TAG, "rtPlayEnabled check failed: " + t);
             return true; // fail open — keep button visible
+        }
+    }
+
+    /** Returns true when NR-NSA extended cell count (16 rows) is enabled (default: true). */
+    public static boolean nrNsaExtCellsEnabled() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            android.app.Application app =
+                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app == null) return true;
+            SharedPreferences prefs = app.getSharedPreferences(
+                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+            return prefs.getBoolean(PREF_KEY_NRNSA_EXT_CELLS, true); // default ON
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "nrNsaExtCellsEnabled check failed: " + t);
+            return true; // fail open
+        }
+    }
+
+    /** Returns true when LTE extended cell count (16 rows) is enabled (default: true). */
+    public static boolean lteExtCellsEnabled() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            android.app.Application app =
+                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app == null) return true;
+            SharedPreferences prefs = app.getSharedPreferences(
+                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+            return prefs.getBoolean(PREF_KEY_LTE_EXT_CELLS, true); // default ON
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "lteExtCellsEnabled check failed: " + t);
+            return true; // fail open
         }
     }
 
@@ -305,6 +339,22 @@ public class SettingsToggleHook {
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
                     PREF_KEY_CELL_ID_MATCH, "NSGMod: Use CellID instead of PCI",
                     "Match neighbour cells by EARFCN+CellID rather than EARFCN+PCI",
+                    true, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_NRNSA_EXT_CELLS) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_NRNSA_EXT_CELLS, "NSGMod: NR-NSA 16-cell table",
+                    "Show up to 16 cells in NR-NSA NR cell table (default is 8)",
+                    true, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_LTE_EXT_CELLS) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_LTE_EXT_CELLS, "NSGMod: LTE 16-cell table",
+                    "Show up to 16 cells in LTE cell table (LTE mode and NR-NSA mode)",
                     true, prefManager, prefScreen, children);
         }
 

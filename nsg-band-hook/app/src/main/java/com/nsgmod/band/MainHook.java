@@ -44,6 +44,7 @@ public class MainHook extends XposedModule {
         new GranularSeekBarHook(this, param.getClassLoader()).install();
         new RtPlayHook(this, param.getClassLoader()).install();
         new CellIdMatchHook(this, param.getClassLoader()).install();
+        new NrNsaExtCellsHook(this, param.getClassLoader()).install();
         new SettingsToggleHook(this, param.getClassLoader()).install();
     }
 }
