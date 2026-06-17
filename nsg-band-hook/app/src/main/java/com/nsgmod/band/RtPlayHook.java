@@ -85,6 +85,13 @@ public class RtPlayHook {
     private SharedPreferences.OnSharedPreferenceChangeListener rtPlayPrefListener = null;
     private SharedPreferences rtPlayPrefs = null;
 
+    /**
+     * The currently active RtPlayController; replaced each time a new fragment instance is
+     * created. Read by the AdvancedActivity.J() hook to stop playback when the replay bar
+     * is removed (lock icon click or any other J() caller).
+     */
+    private static volatile RtPlayController activeController = null;
+
     public RtPlayHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
         this.loader = loader;
@@ -178,6 +185,30 @@ public class RtPlayHook {
         });
 
         Log.i(TAG, "installed on k8.f.I (onCreateView)");
+
+        // Stop RT-Play when the replay bar is removed (lock icon click, load new test, etc.)
+        // AdvancedActivity.J() is the single method that tears down the playback bar fragment.
+        // Without this, the old stepRunnable keeps running after J() destroys the view, and
+        // the next attachButton() creates a second loop → double playback speed.
+        try {
+            Class<?> advActClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            Method jMethod = advActClass.getDeclaredMethod("J");
+            xposed.hook(jMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    RtPlayController ctrl = activeController;
+                    if (ctrl != null) {
+                        ctrl.stop();
+                        activeController = null;
+                        Log.i(TAG, "RT-Play stopped — replay bar removed by J()");
+                    }
+                    return chain.proceed();
+                }
+            });
+            Log.i(TAG, "installed before-hook on AdvancedActivity.J()");
+        } catch (Throwable t) {
+            Log.w(TAG, "AdvancedActivity.J() hook failed: " + t);
+        }
     }
 
     // ── Button injection ──────────────────────────────────────────────────────
@@ -317,6 +348,7 @@ public class RtPlayHook {
                 fragmentYField, advActAField, fragmentZField,
                 fragmentI0Method, maAMMethod);
         btn.setOnClickListener(v -> controller.toggle());
+        activeController = controller; // expose to J() hook so it can stop the loop
 
         // Register a preference listener so toggling off immediately stops + removes the button
         try {
