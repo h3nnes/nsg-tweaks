@@ -19,8 +19,8 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * Hooks a8.h$a (NRNSACellsFragment adapter) to inject a BW column after the Band column
  * already injected by BandColumnHook.
  *
- * Final column order: [Serving, Band, BW, PCI, Beam, RSRP, RSRQ, SINR]
- * Final weights:      {0.03f,  0.12f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f}
+ * Final column order: [Serving, ARFCN, PCI, BW, Beam, RSRP, RSRQ, SINR]
+ * Final weights:      {0.03f,  0.18f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f}
  *
  * Data is read fresh on every getView() call using the adapter's own sample key (f5509c)
  * as the queryTime anchor. This mirrors NSG's v6/f.java (QtGridValueBar.a()) pattern:
@@ -48,9 +48,9 @@ public class NrNsaBandwidthColumnHook {
     private static final int    BW_VIEW_TAG_KEY = "nsg_nsa_bw_view".hashCode();
     private static final String TAG_BW_INJECTED = "nsg_nsa_bw_injected";
 
-    // Final 8-column weights: [Serving, Band, BW, PCI, Beam, RSRP, RSRQ, SINR]
+    // Final 8-column weights: [Serving, ARFCN, PCI, BW, Beam, RSRP, RSRQ, SINR]
     private static final float[] FINAL_WEIGHTS =
-            {0.03f, 0.12f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f};
+            {0.03f, 0.18f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f};
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -275,9 +275,9 @@ public class NrNsaBandwidthColumnHook {
                         if (bwText != null) {
                             bwView.setTextColor(0xFFFFFFFF);
                         } else {
-                            if (childCount > 3 && row.getChildAt(3) instanceof TextView)
-                                bwView.setTextColor(
-                                        ((TextView) row.getChildAt(3)).getTextColors());
+                        if (childCount > 2 && row.getChildAt(2) instanceof TextView)
+                            bwView.setTextColor(
+                                    ((TextView) row.getChildAt(2)).getTextColors());
                         }
                         return result;
                     }
@@ -313,7 +313,7 @@ public class NrNsaBandwidthColumnHook {
                     lp.weight = FINAL_WEIGHTS[2];
                     bwView.setLayoutParams(lp);
 
-                    row.addView(bwView, 2);
+                    row.addView(bwView, 3);
 
                     for (int i = 0; i < 8 && i < row.getChildCount(); i++) {
                         View child = row.getChildAt(i);
@@ -388,7 +388,7 @@ public class NrNsaBandwidthColumnHook {
                 lp.weight = FINAL_WEIGHTS[2];
                 bwLabel.setLayoutParams(lp);
 
-                ll.addView(bwLabel, 2);
+                ll.addView(bwLabel, 3);
 
                 for (int j = 0; j < ll.getChildCount() && j < FINAL_WEIGHTS.length; j++) {
                     LinearLayout.LayoutParams clp =

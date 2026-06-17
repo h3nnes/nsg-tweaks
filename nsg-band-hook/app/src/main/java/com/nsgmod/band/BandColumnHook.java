@@ -365,7 +365,7 @@ public class BandColumnHook {
                 if (TAG_BAND_INJECTED.equals(ll.getTag(BAND_TAG_KEY))) return;
 
                 TextView bandLabel = new TextView(listView.getContext());
-                bandLabel.setText("Band");
+                bandLabel.setText("ARFCN");
                 bandLabel.setGravity(android.view.Gravity.CENTER);
                 bandLabel.setMaxLines(1);
                 bandLabel.setTextColor(resolveColor(listView.getContext(),

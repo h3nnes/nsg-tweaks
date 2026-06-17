@@ -315,6 +315,17 @@ public class NrSaCellColumnsHook {
                     LinearLayout topRow = (LinearLayout) topChild;
                     if (topRow.getOrientation() != LinearLayout.HORIZONTAL) return result;
 
+                    // Match NR-NSA row height: container 22dp, children 21dp
+                    android.content.Context ctx = rowView.getContext();
+                    float density = ctx.getResources().getDisplayMetrics().density;
+                    int   rowH    = (int) (21 * density + 0.5f);
+                    int   topH    = (int) (22 * density + 0.5f);
+                    ViewGroup.LayoutParams topRowLp = topRow.getLayoutParams();
+                    if (topRowLp != null) {
+                        topRowLp.height = topH;
+                        topRow.setLayoutParams(topRowLp);
+                    }
+
                     // Sub-row (child[1]) — hide it always
                     View subRow = outer.getChildAt(1);
                     if (subRow != null) subRow.setVisibility(View.GONE);
@@ -374,9 +385,15 @@ public class NrSaCellColumnsHook {
 
                     // Copy style from PCI column (child[1]) for new text views
                     TextView pciView = (TextView) topRow.getChildAt(1);
-                    android.content.Context ctx = rowView.getContext();
-                    float density = ctx.getResources().getDisplayMetrics().density;
-                    int   rowH    = (int) (26 * density + 0.5f); // match XML layout_height="26dp"
+
+                    // Resize all 6 pre-existing NSG children from 26dp to 21dp to match NR-NSA
+                    for (int i = 0; i < topRow.getChildCount(); i++) {
+                        ViewGroup.LayoutParams lp = topRow.getChildAt(i).getLayoutParams();
+                        if (lp != null) {
+                            lp.height = rowH;
+                            topRow.getChildAt(i).setLayoutParams(lp);
+                        }
+                    }
 
                     // --- ARFCN TextView ---
                     TextView tvArfcn = new TextView(ctx);
