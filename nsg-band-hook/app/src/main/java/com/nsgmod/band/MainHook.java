@@ -39,6 +39,7 @@ public class MainHook extends XposedModule {
                 NrSaCsiSnrRowHook.carrierCountInO0).install();
         new NrSaCellColumnsHook(this, param.getClassLoader()).install();
         new NrSaPucchTxRowHook(this, param.getClassLoader()).install();
+        new NrSaMimoFormatHook(this, param.getClassLoader()).install();
         new NrSaBwpIdHook(this, param.getClassLoader()).install();
         new NrSaCellColorHook(this, param.getClassLoader(),
                 NrSaCsiSnrRowHook.saK2aCarriers).install();
