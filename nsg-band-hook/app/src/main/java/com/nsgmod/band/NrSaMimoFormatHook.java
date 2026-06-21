@@ -35,6 +35,7 @@ public class NrSaMimoFormatHook {
 
     // Workspace / DataSource reflection (shared pattern)
     private Field  wsJ;           // Workspace.j singleton
+    private Field  wsG;           // Workspace.g — current sample key (cursor)
     private Field  wsModuleIndex; // Workspace.a (module index)
     private Field  wsDataSource;  // Workspace.c (DataSource)
     private Method dsGetProperty; // DataSource.getProperty(String, int)
@@ -59,6 +60,7 @@ public class NrSaMimoFormatHook {
             Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
 
             wsJ = wsClass.getField("j");
+            wsG = wsClass.getDeclaredField("g"); wsG.setAccessible(true);
             wsModuleIndex = wsClass.getField("a");
             wsDataSource = wsClass.getField("c");
 
@@ -120,11 +122,14 @@ public class NrSaMimoFormatHook {
         }
     }
 
-    /** Read NR_PCell_Num_CSI_Ports from DataSource (latest sample). */
+    /** Read NR_PCell_Num_CSI_Ports from DataSource at the current cursor sample key.
+     *  Uses Workspace.g (sample key) so replay/freeze mode shows the historical value
+     *  that matches the MIMO value being formatted, not the latest head sample. */
     private Integer readCsiPorts() {
         try {
             Object ws = wsJ.get(null);
             if (ws == null) return null;
+            long sampleKey = wsG.getLong(ws);
             int moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
             Object ds = wsDataSource.get(ws);
             if (ds == null) return null;
@@ -134,7 +139,7 @@ public class NrSaMimoFormatHook {
                     moduleIndex);
             if (property == null) return null;
 
-            Object iterator = propBMethod.invoke(property, Long.MAX_VALUE);
+            Object iterator = propBMethod.invoke(property, sampleKey);
             if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) {
                 return null;
             }
