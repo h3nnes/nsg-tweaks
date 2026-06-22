@@ -31,9 +31,9 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *     CSI-RSRP: PCell bar at row 14.3 h=1.4 col=30 only.
  *
  *   Path C  carriers>=4 (3 SCells, l0())  — single-height rows (h=1.0, barOffset=0, barH=1.0)
- *     ARFCN/PCI at row 10 (sub-rows 10+11). Insert SS-RSRP at 12, CSI-RSRP at 14. Shift ≥12 by +4.0.
+ *     ARFCN/PCI at row 10 (sub-rows 10+11). Insert SS-RSRP at 12, CSI-RSRP at 14. Shift ≥12 by +3.0.
  *     SS-RSRP:  PCell col=30 row=12; SCell[0] col=30 row=13; SCell[1] col=65 row=12; SCell[2] col=65 row=13.
- *     CSI-RSRP: PCell col=30 row=14 only.
+ *     CSI-RSRP: PCell col=30 row=14 only (same style as CSI SNR / ModUsage in l0()).
  *
  * Property keys:
  *   PCell SS-RSRP  : NR5G::Downlink_Measurements::NR_SS_RSRP       index=-1  format="%.1f dBm"
@@ -199,12 +199,18 @@ public class NrSaRsrpRowHook {
                 csiRsrpRow  = 11.0f;
                 shiftFrom   = 10.0f;
                 shiftAmount = 2.0f;
-            } else {
-                // Both inline-3 (Path B) and l0/4+ (Path C) insert at 12 and 14
+            } else if (isInline3) {
+                // Path B: double-height rows, each logical row h=2.0 → 2 rows × 2.0 = 4.0
                 ssRsrpRow   = 12.0f;
                 csiRsrpRow  = 14.0f;
                 shiftFrom   = 12.0f;
                 shiftAmount = 4.0f;
+            } else {
+                // Path C: SS-RSRP 2 sub-rows + CSI-RSRP 1 sub-row = 3.0
+                ssRsrpRow   = 12.0f;
+                csiRsrpRow  = 14.0f;
+                shiftFrom   = 12.0f;
+                shiftAmount = 3.0f;
             }
 
             // Shift all existing elements that fall at or after the insertion point
@@ -379,6 +385,7 @@ public class NrSaRsrpRowHook {
     /**
      * Path C: carriers>=4 (3 SCells), single-height rows (h=1.0, barOffset=0, barH=1.0).
      * Each logical row occupies 2 sub-rows: col=30 gets PCell+SCell[0], col=65 gets SCell[1]+SCell[2].
+     * CSI-RSRP is PCell-only with same single-height style as CSI SNR / ModUsage in l0().
      *
      * SS-RSRP at ssRsrpRow (=12.0):
      *   label row=12.0 h=1.0 col=0 w=27
@@ -443,7 +450,7 @@ public class NrSaRsrpRowHook {
             vfF8120g.set(ssSCell2Bar, prop);
         }
 
-        // CSI-RSRP label
+        // CSI-RSRP label — single-height, same style as CSI SNR / ModUsage in l0()
         Object csiLabel = k2aRMethod.invoke(k2aObj, csiRsrpRow, h, 0.0f, 27.0f);
         if (csiLabel != null) {
             veF.set(csiLabel, "CSI-RSRP");
