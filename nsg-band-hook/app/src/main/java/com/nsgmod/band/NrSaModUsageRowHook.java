@@ -209,7 +209,7 @@ public class NrSaModUsageRowHook {
             //
             // Original (pre-hook) Phy.Thput positions:
             //   Path A carriers==2 : 24  — RSRP +2.0, CSI SNR +1.0  → 27
-            //   Path B carriers>=4 : 40  — RSRP +4.0, CSI SNR +1.0  → 45
+            //   Path B carriers>=4 : 40  — RSRP +3.0, CSI SNR +1.0  → 44
             //   Path C carriers==3 : 40  — RSRP +4.0, CSI SNR +2.0  → 46
             float insertRow;
             if (isPathA) {
@@ -217,7 +217,7 @@ public class NrSaModUsageRowHook {
             } else if (isInline3) {
                 insertRow = 46.0f;  // 40 + 2 (CSI SNR) + 4 (SS-RSRP+CSI-RSRP rows)
             } else {
-                insertRow = 45.0f;  // 40 + 1 (CSI SNR) + 4 (SS-RSRP+CSI-RSRP rows)
+                insertRow = 44.0f;  // 40 + 1 (CSI SNR) + 3 (SS-RSRP+CSI-RSRP rows)
             }
             float labelHeight = isInline3 ? 2.0f : 1.0f;
             float barHeight   = isInline3 ? 1.4f : 1.0f;

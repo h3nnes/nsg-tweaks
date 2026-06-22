@@ -207,11 +207,18 @@ public class NrSaCsiSnrRowHook {
                     if (inO0 && k2aArg != null) {
                         // Record this k2.a as belonging to the SA CA Matrix screen
                         saK2aCarriers.put(k2aArg, carriers);
-                        // carriers == 2: 1 SCell — SNR at row 14, inject before RBs at 15
-                        // carriers >= 3: 2+ SCells — SNR at row 20, inject before RBs at 22
+                        // carriers == 2: 1 SCell (Path A) — RSRP shift +2.0
+                        // carriers == 3: 2 SCells (Path B) — RSRP shift +4.0
+                        // carriers >= 4: 3 SCells (Path C) — RSRP shift +3.0
                         // row param is used to compute insertRow = ceil(row)
-                        // +2.0 (carriers==2) or +4.0 (carriers>=3) to account for SS-RSRP and CSI-RSRP rows injected before us
-                        float row = (carriers != null && carriers >= 3) ? 25.5f : 16.5f;
+                        float row;
+                        if (carriers >= 4) {
+                            row = 24.5f;  // Path C: SNR at 20+3=23, insert before RBs at 24
+                        } else if (carriers == 3) {
+                            row = 25.5f;  // Path B: SNR at 20+4=24, insert before RBs at 25
+                        } else {
+                            row = 16.5f;  // Path A: SNR at 14+2=16, insert before RBs at 17
+                        }
                         injectCsiSnrRow(k2aArg, row, carriers != null ? carriers : 2);
                     }
                     return chain.proceed();
