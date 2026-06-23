@@ -50,6 +50,7 @@ public class MainHook extends XposedModule {
         new NrNsaExtCellsHook(this, param.getClassLoader()).install();
         new NrSaCarrierCountHook(this, param.getClassLoader(),
                 NrSaCsiSnrRowHook.carrierCountInO0).install();
+        new LteCaMatrixUlQpskHook(this, param.getClassLoader()).install();
         new SettingsToggleHook(this, param.getClassLoader()).install();
     }
 }
