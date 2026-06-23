@@ -30,6 +30,7 @@ public class SettingsToggleHook {
     static final String  PREF_KEY_RT_PLAY         = "nsgmod.rt_play_enabled";
     static final String  PREF_KEY_NRNSA_EXT_CELLS = "nsgmod.nrnsa_ext_cells_enabled";
     static final String  PREF_KEY_LTE_EXT_CELLS   = "nsgmod.lte_ext_cells_enabled";
+    static final String  PREF_KEY_FAST_REFRESH    = "nsgmod.fast_refresh_enabled";
 
     /** Returns true when the cell-table modifications toggle is enabled (default: true). */
     public static boolean cellModsEnabled() {
@@ -60,6 +61,22 @@ public class SettingsToggleHook {
         } catch (Throwable t) {
             android.util.Log.w(TAG, "cellIdMatchEnabled check failed: " + t);
             return true; // fail open
+        }
+    }
+
+    /** Returns true when the fast-refresh toggle is enabled (default: false). */
+    public static boolean fastRefreshEnabled() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            android.app.Application app =
+                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app == null) return false;
+            SharedPreferences prefs = app.getSharedPreferences(
+                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+            return prefs.getBoolean(PREF_KEY_FAST_REFRESH, false); // default OFF
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "fastRefreshEnabled check failed: " + t);
+            return false; // fail closed
         }
     }
 
@@ -356,6 +373,14 @@ public class SettingsToggleHook {
                     PREF_KEY_LTE_EXT_CELLS, "NSGMod: LTE 16-cell table",
                     "Show up to 16 cells in LTE cell table (LTE mode and NR-NSA mode)",
                     true, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_FAST_REFRESH) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_FAST_REFRESH, "NSGMod: Fast refresh",
+                    "Double UI refresh rate (440 ms instead of 880 ms)",
+                    false, prefManager, prefScreen, children);
         }
 
         // --- 7. Trigger adapter refresh ---
