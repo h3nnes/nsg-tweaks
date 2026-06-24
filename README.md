@@ -16,7 +16,7 @@ An LSPosed module that extends [NSG (QuickTest)](https://play.google.com/store/a
 1. Install the module APK.
 2. In LSPosed → Modules, enable **NSG Tweaks** and set the scope to **NSG (QuickTest)**.
 3. Force-stop NSG and reopen it.
-4. All features are active by default. Three toggles in **NSG → Settings → Experiments** let you turn individual features on or off.
+4. All features are active by default. Six toggles in **NSG → Settings → Experiments** let you turn individual features on or off.
 
 ---
 
@@ -34,7 +34,7 @@ Both the serving bucket (PCell + SCells) and the detected/neighbour bucket displ
 
 #### NR-SA cell table — ARFCN and bandwidth columns
 
-The same treatment for the NR-SA cell table: ARFCN and BW columns are injected, the sub-row is hidden, and column headers ("ARFCN", "BW") are added.
+The same treatment for the NR-SA cell table: ARFCN and BW columns are injected, the sub-row is hidden, and column headers ("ARFCN", "BW") are added. Row heights are also reduced (top row 28 dp → 22 dp, child rows 26 dp → 21 dp) so more rows fit on screen.
 
 Final column order: **Serving | ARFCN | PCI | BW | Beam | RSRP | RSRQ | SINR**
 
@@ -42,17 +42,21 @@ Final column order: **Serving | ARFCN | PCI | BW | Beam | RSRP | RSRQ | SINR**
 
 A **BW** column is inserted between the Band and EARFCN columns in the LTE cell table. It shows the DL channel bandwidth (1.4, 3, 5, 10, 15, or 20 MHz) for the PCell and up to seven SCells. Detected/neighbour rows show "—".
 
-#### LTE cell lookup — match by CellID instead of PCI
+#### NR-NSA 16-cell table
 
-When NSG queries its internal cell database for a serving LTE cell, it normally matches by EARFCN + PCI. Two physically adjacent cells can share the same PCI on the same frequency, leading to false matches. With this feature enabled, the lookup uses **EARFCN + ECellID** (the globally unique 28-bit E-UTRAN Cell Identity) instead, so the correct cell record is always retrieved.
+Extends the NR-NSA NR cell table from 8 to up to 16 rows.
 
-If the ECellID is unavailable the original PCI-based match is used as a fallback.
+Controlled by the **"NSGMod: NR-NSA 16-cell table"** toggle (default: on).
 
-Controlled by the **"NSGMod: Use CellID instead of PCI"** toggle (default: on).
+#### LTE 16-cell table
+
+Extends the LTE cell table from 8 to up to 16 rows (in both pure-LTE mode and NR-NSA mode).
+
+Controlled by the **"NSGMod: LTE 16-cell table"** toggle (default: on).
 
 ---
 
-### CA Matrix Enhancements
+### CA Matrix Enhancements (DL)
 
 #### LTE CA Matrix DL — RSRP row
 
@@ -94,6 +98,35 @@ Each SCell's value labels on the NR-SA CA Matrix DL page are coloured distinctly
 | SCell 4 | Green `#4CAF50` |
 
 Colours survive fragment recreation and all CA carrier-count configurations (2–4 carriers).
+
+#### NR-SA CA Matrix DL — carrier count indicator fix
+
+Fixes the green "-" carrier count indicator on the NR-SA CA Matrix DL. NSG's `NR_CarrierCount` property has no data in NR-SA mode, so the hook computes the actual carrier count from SCell ARFCN/PCI arrays in the Workspace.
+
+#### NR-SA CA Matrix DL — honest MIMO format
+
+Reformats the MIMO display to be honest about what is known:
+
+- **PCell**: "{CSI_PORTS} x {RX_ANTENNAS}" (e.g. "2 x 4")
+- **SCell**: "{N}Rx" (e.g. "4Rx", "2Rx")
+
+NSG's default hardcodes symmetric "NxN" strings which misleadingly implies gNB TX knowledge. The hook uses the actual `NR_PCell_Num_CSI_Ports` value for the PCell TX side.
+
+---
+
+### CA Matrix Enhancements (UL)
+
+#### NR-SA CA Matrix UL — PUCCH TX power row
+
+A **PUCCH TX** row is inserted at position 8.0 on the NR-SA CA Matrix UL page, shifting the TxPower and subsequent rows down by one position. It shows PUCCH transmit power in dBm (PCell only; no SCell PUCCH TX data is available in NSG).
+
+#### NR-SA status panel — BWP-ID column
+
+A **BWP-ID** column is added to the NR-SA status panel, showing the active DL BWP ID. The existing four columns are resized to accommodate the new fifth column.
+
+#### LTE CA Matrix UL — QPSK utilisation row
+
+A **QPSK Util.** row is inserted between the CQI row and the 16Q Usage row on the LTE CA Matrix UL page. It shows UL PCell QPSK modulation percentage in deep blue.
 
 ---
 
@@ -151,19 +184,46 @@ Zone 2 and 3 bypass the 100-step integer scale and address individual data recor
 
 ---
 
+### Cell Database
+
+#### LTE cell lookup — match by CellID instead of PCI
+
+When NSG queries its internal cell database for a serving LTE cell, it normally matches by EARFCN + PCI. Two physically adjacent cells can share the same PCI on the same frequency, leading to false matches. With this feature enabled, the lookup uses **EARFCN + ECellID** (the globally unique 28-bit E-UTRAN Cell Identity) instead, so the correct cell record is always retrieved.
+
+If the ECellID is unavailable the original PCI-based match is used as a fallback.
+
+Controlled by the **"NSGMod: Use CellID instead of PCI"** toggle (default: on).
+
+---
+
+### Performance
+
+#### Fast refresh toggle
+
+Doubles the UI refresh rate from 880 ms to 440 ms when enabled. The hook intercepts `t7.g0.E()` to cancel the default `ScheduledFuture` and reschedule with the shorter interval. A `SharedPreferences` listener detects toggle changes mid-test and reschedules the active test so you do not need to restart.
+
+Controlled by the **"NSGMod: Fast refresh"** toggle (default: off).
+
+> **Note:** the native modem data collection rate is the real bottleneck. This toggle only makes the UI poll cached data more frequently; it does not increase the rate at which new data arrives from the modem.
+
+---
+
 ## Settings
 
-Three toggle switches are injected at the bottom of **NSG → Settings → Experiments**:
+Six toggle switches are injected at the bottom of **NSG → Settings → Experiments**:
 
 | Toggle | Default | Effect |
 |--------|---------|--------|
 | NSGMod: Cell table mods | On | Enables/disables ARFCN and BW column injection in the LTE, NR-NSA, and NR-SA cell tables |
 | NSGMod: RT-Play button | On | Shows or hides the RT-Play real-time playback button |
 | NSGMod: Use CellID instead of PCI | On | Switches LTE cell database lookup from EARFCN+PCI to EARFCN+CellID |
+| NSGMod: NR-NSA 16-cell table | On | Extends the NR-NSA NR cell table from 8 to up to 16 rows |
+| NSGMod: LTE 16-cell table | On | Extends the LTE cell table from 8 to up to 16 rows |
+| NSGMod: Fast refresh | Off | Doubles the UI refresh rate from 880 ms to 440 ms |
 
-Preferences are stored in NSG's own settings file and survive module reinstalls. If a preference cannot be read, the feature defaults to **on** (fail-open).
+Preferences are stored in NSG's own settings file and survive module reinstalls. If a preference cannot be read, the feature defaults to **on** (fail-open), except for Fast refresh which defaults to **off** (fail-closed).
 
-Note: the CA Matrix row additions (RSRP rows, CSI SNR, modulation utilisation rows) and per-SCell colours are always active and are not covered by the "Cell table mods" toggle.
+Note: the CA Matrix row additions (RSRP rows, CSI SNR, modulation utilisation rows) and per-SCell colours are always active and are not covered by the "Cell table mods" toggle. The PUCCH TX, BWP-ID, MIMO format, carrier count fix, and QPSK UL features are also always active and not toggle-controlled. Fast refresh is controlled by its own dedicated toggle.
 
 ---
 
@@ -174,6 +234,7 @@ Note: the CA Matrix row additions (RSRP rows, CSI SNR, modulation utilisation ro
 - **NR-NSA BW covers up to 4 SCells; LTE BW covers up to 7 SCells.**
 - **RT-Play advances in fixed 1-second steps** with a 1-second pause between each step.
 - **Search results are capped at 200 matches** to keep the search responsive on very long messages.
+- **Fast refresh is UI-only.** The native modem data collection rate is the real bottleneck; this toggle only makes the UI poll cached data more frequently.
 - **NSG version sensitivity.** The module targets NSG v4.8.6. If NSG updates and renames its obfuscated classes, individual hooks will silently deactivate (a warning is logged; NSG itself will not crash).
 
 ---
