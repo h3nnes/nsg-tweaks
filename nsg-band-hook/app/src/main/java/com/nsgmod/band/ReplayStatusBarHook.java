@@ -630,6 +630,7 @@ public class ReplayStatusBarHook {
 
                     // X dismiss control — TextView avoids Button's forced minHeight
                     TextView xBtn = new TextView(activity);
+                    xBtn.setTag("nsgmod_replay_x");
                     xBtn.setText("\u2715");  // ✕
                     xBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
                     xBtn.setTextColor(Color.WHITE);
@@ -656,6 +657,12 @@ public class ReplayStatusBarHook {
             }
 
             layout.setVisibility(View.VISIBLE);
+
+            // Ensure the X button is visible when showing the replay bar
+            View xBtnRestore = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
+            if (xBtnRestore != null) {
+                xBtnRestore.setVisibility(View.VISIBLE);
+            }
 
         } catch (Throwable t) {
             Log.w(TAG, "showReplayBar failed: " + t);
@@ -695,8 +702,29 @@ public class ReplayStatusBarHook {
                 tipsView.setText("Stopping…");
             }
             layout.setVisibility(View.VISIBLE);
+
+            // Hide the X dismiss button if it was added by showReplayBar()
+            View xBtn = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
+            if (xBtn != null) {
+                xBtn.setVisibility(View.GONE);
+            }
         } catch (Throwable t) {
             Log.w(TAG, "showExitSpinner failed: " + t);
         }
+    }
+
+    /** Recursively searches for a view with the given tag inside a ViewGroup. */
+    private View findViewWithTagRecursive(ViewGroup root, Object tag) {
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View child = root.getChildAt(i);
+            if (tag.equals(child.getTag())) {
+                return child;
+            }
+            if (child instanceof ViewGroup) {
+                View found = findViewWithTagRecursive((ViewGroup) child, tag);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 }
