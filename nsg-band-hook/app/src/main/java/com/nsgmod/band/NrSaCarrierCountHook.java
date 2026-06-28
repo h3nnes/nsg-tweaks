@@ -250,7 +250,15 @@ public class NrSaCarrierCountHook {
         try {
             int arfcnLen = readArrayLength(scellArfcnBinding, timestamp, tick);
             int pciLen = readArrayLength(scellPciBinding, timestamp, tick);
-            int scellCount = Math.max(arfcnLen, pciLen);
+
+            // When no SCells are active, the SCell ARFCN/PCI signals are not live
+            // in the Workspace and both reads return -1. In that case there are 0 SCells.
+            if (arfcnLen == -1 && pciLen == -1) {
+                return 1; // PCell only
+            }
+
+            // At least one signal is live — take the max valid length
+            int scellCount = Math.max(Math.max(arfcnLen, 0), Math.max(pciLen, 0));
             return scellCount + 1;
         } catch (Exception e) {
             Log.w(TAG, "NrSaCarrierCountHook: computeCarrierCount failed: " + e);

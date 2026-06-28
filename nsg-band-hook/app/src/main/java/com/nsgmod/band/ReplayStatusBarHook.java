@@ -190,6 +190,7 @@ public class ReplayStatusBarHook {
         installProngD();
         installProngE();
         installProngF();
+        installProngG();
     }
 
     // -----------------------------------------------------------------------
@@ -540,6 +541,50 @@ public class ReplayStatusBarHook {
     }
 
     // -----------------------------------------------------------------------
+    // Prong G: AdvancedActivity.I(int) — hide X button when NSG shows
+    // progress messages ("Stopping…", "Saving…", etc.) that reuse the
+    // wait_progress_layout.
+    //
+    // NSG's exit/stop/save paths call I(int) to show progress. The X button
+    // added by showReplayBar() remains in the layout, so it must be hidden.
+    // showReplayBar() will restore it when a new replay starts.
+    // -----------------------------------------------------------------------
+    private void installProngG() {
+        try {
+            Class<?> advClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            Method iMethod = advClass.getDeclaredMethod("I", int.class);
+            iMethod.setAccessible(true);
+
+            xposed.hook(iMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    try {
+                        Activity activity = (Activity) chain.getThisObject();
+                        String pkg = "com.qtrun.QuickTest";
+                        int layoutId = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
+                        if (layoutId == 0) return result;
+                        View layout = activity.findViewById(layoutId);
+                        if (layout instanceof ViewGroup) {
+                            View xBtn = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
+                            if (xBtn != null) {
+                                xBtn.setVisibility(View.GONE);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Prong G failed: " + t);
+                    }
+                    return result;
+                }
+            });
+
+            Log.i(TAG, "Prong G installed on AdvancedActivity.I(int)");
+        } catch (Exception e) {
+            Log.e(TAG, "installProngG failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
@@ -630,6 +675,7 @@ public class ReplayStatusBarHook {
 
                     // X dismiss control — TextView avoids Button's forced minHeight
                     TextView xBtn = new TextView(activity);
+                    xBtn.setTag("nsgmod_replay_x");
                     xBtn.setText("\u2715");  // ✕
                     xBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f);
                     xBtn.setTextColor(Color.WHITE);
@@ -656,6 +702,12 @@ public class ReplayStatusBarHook {
             }
 
             layout.setVisibility(View.VISIBLE);
+
+            // Ensure the X button is visible when showing the replay bar
+            View xBtnRestore = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
+            if (xBtnRestore != null) {
+                xBtnRestore.setVisibility(View.VISIBLE);
+            }
 
         } catch (Throwable t) {
             Log.w(TAG, "showReplayBar failed: " + t);
@@ -695,8 +747,29 @@ public class ReplayStatusBarHook {
                 tipsView.setText("Stopping…");
             }
             layout.setVisibility(View.VISIBLE);
+
+            // Hide the X dismiss button if it was added by showReplayBar()
+            View xBtn = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
+            if (xBtn != null) {
+                xBtn.setVisibility(View.GONE);
+            }
         } catch (Throwable t) {
             Log.w(TAG, "showExitSpinner failed: " + t);
         }
+    }
+
+    /** Recursively searches for a view with the given tag inside a ViewGroup. */
+    private View findViewWithTagRecursive(ViewGroup root, Object tag) {
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View child = root.getChildAt(i);
+            if (tag.equals(child.getTag())) {
+                return child;
+            }
+            if (child instanceof ViewGroup) {
+                View found = findViewWithTagRecursive((ViewGroup) child, tag);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 }
