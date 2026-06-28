@@ -190,6 +190,7 @@ public class ReplayStatusBarHook {
         installProngD();
         installProngE();
         installProngF();
+        installProngG();
     }
 
     // -----------------------------------------------------------------------
@@ -536,6 +537,50 @@ public class ReplayStatusBarHook {
             Log.i(TAG, "Prong F installed on t7.e.b(Object)");
         } catch (Exception e) {
             Log.e(TAG, "installProngF failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Prong G: AdvancedActivity.I(int) — hide X button when NSG shows
+    // progress messages ("Stopping…", "Saving…", etc.) that reuse the
+    // wait_progress_layout.
+    //
+    // NSG's exit/stop/save paths call I(int) to show progress. The X button
+    // added by showReplayBar() remains in the layout, so it must be hidden.
+    // showReplayBar() will restore it when a new replay starts.
+    // -----------------------------------------------------------------------
+    private void installProngG() {
+        try {
+            Class<?> advClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            Method iMethod = advClass.getDeclaredMethod("I", int.class);
+            iMethod.setAccessible(true);
+
+            xposed.hook(iMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    try {
+                        Activity activity = (Activity) chain.getThisObject();
+                        String pkg = "com.qtrun.QuickTest";
+                        int layoutId = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
+                        if (layoutId == 0) return result;
+                        View layout = activity.findViewById(layoutId);
+                        if (layout instanceof ViewGroup) {
+                            View xBtn = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
+                            if (xBtn != null) {
+                                xBtn.setVisibility(View.GONE);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Prong G failed: " + t);
+                    }
+                    return result;
+                }
+            });
+
+            Log.i(TAG, "Prong G installed on AdvancedActivity.I(int)");
+        } catch (Exception e) {
+            Log.e(TAG, "installProngG failed: " + e);
         }
     }
 
