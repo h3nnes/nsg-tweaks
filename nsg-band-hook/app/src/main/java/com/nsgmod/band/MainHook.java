@@ -53,5 +53,6 @@ public class MainHook extends XposedModule {
         new LteCaMatrixUlQpskHook(this, param.getClassLoader()).install();
         new SettingsToggleHook(this, param.getClassLoader()).install();
         new RefreshIntervalHook(this, param.getClassLoader()).install();
+        new PageDotJumpHook(this, param.getClassLoader()).install();
     }
 }
