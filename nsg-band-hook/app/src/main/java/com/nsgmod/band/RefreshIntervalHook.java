@@ -45,11 +45,11 @@ public class RefreshIntervalHook {
     // Reflection cache
     private Class<?> g0Class;
     private Method   eMethod;          // g0.E()
-    private Field    f7773xField;      // g0.f7773x (ScheduledFuture<?>)
-    private Field    f3852jField;      // TestService.f3852j (ScheduledExecutorService)
+    private Field    f7773xField;      // g0: ScheduledFuture<?> field (found by type)
+    private Field    f3852jField;      // TestService: ScheduledExecutorService field (found by type)
     private Class<?> e0Class;          // t7.e0 (Runnable tick handler)
     private Constructor<?> e0Ctor;     // e0(g0, int)
-    private Field    e0CaseField;      // e0.f7753a (case selector)
+    private Field    e0CaseField;      // e0: int case-selector field (found by type)
 
     private boolean ready = false;
 
@@ -69,19 +69,46 @@ public class RefreshIntervalHook {
             eMethod = g0Class.getDeclaredMethod("E");
             eMethod.setAccessible(true);
 
-            f7773xField = g0Class.getDeclaredField("f7773x");
-            f7773xField.setAccessible(true);
+            // Find ScheduledFuture<?> field on t7.g0 by type (name varies between builds)
+            for (Field f : g0Class.getDeclaredFields()) {
+                if (ScheduledFuture.class.isAssignableFrom(f.getType())) {
+                    f.setAccessible(true);
+                    f7773xField = f;
+                    break;
+                }
+            }
+            if (f7773xField == null) {
+                throw new NoSuchFieldException("No ScheduledFuture field in t7.g0");
+            }
 
+            // Find ScheduledExecutorService field on TestService by type
             Class<?> testServiceClass = loader.loadClass("com.qtrun.sys.TestService");
-            f3852jField = testServiceClass.getDeclaredField("f3852j");
-            f3852jField.setAccessible(true);
+            for (Field f : testServiceClass.getDeclaredFields()) {
+                if (ScheduledExecutorService.class.isAssignableFrom(f.getType())) {
+                    f.setAccessible(true);
+                    f3852jField = f;
+                    break;
+                }
+            }
+            if (f3852jField == null) {
+                throw new NoSuchFieldException("No ScheduledExecutorService field in TestService");
+            }
 
             e0Class = loader.loadClass("t7.e0");
             e0Ctor = e0Class.getDeclaredConstructor(g0Class, int.class);
             e0Ctor.setAccessible(true);
 
-            e0CaseField = e0Class.getDeclaredField("f7753a");
-            e0CaseField.setAccessible(true);
+            // Find int case-selector field on t7.e0 by type
+            for (Field f : e0Class.getDeclaredFields()) {
+                if (f.getType() == int.class) {
+                    f.setAccessible(true);
+                    e0CaseField = f;
+                    break;
+                }
+            }
+            if (e0CaseField == null) {
+                throw new NoSuchFieldException("No int field in t7.e0");
+            }
 
             ready = true;
         } catch (Exception e) {
