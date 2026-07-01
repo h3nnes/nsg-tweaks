@@ -89,7 +89,6 @@ public class LteBandwidthColumnHook {
             f5509cField = loader.loadClass("k8.c").getField("c");
 
             reflectionReady = true;
-            Log.i(TAG, "LteBandwidthColumnHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "LteBandwidthColumnHook: initReflection failed: " + e);
         }
@@ -315,7 +314,7 @@ public class LteBandwidthColumnHook {
                     return result;
                 }
             });
-            Log.i(TAG, "LteBWHook: hookGetView installed");
+            Log.i(TAG, "LteBandwidthColumnHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "LteBWHook: hookGetView failed: " + e);
         }
@@ -343,7 +342,6 @@ public class LteBandwidthColumnHook {
                     return result;
                 }
             });
-            Log.i(TAG, "LteBWHook: hookOnCreateView installed");
         } catch (Exception e) {
             Log.e(TAG, "LteBWHook: hookOnCreateView failed: " + e);
         }
@@ -379,7 +377,6 @@ public class LteBandwidthColumnHook {
                 }
 
                 ll.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
-                Log.i(TAG, "LteBWHook: injectBwHeader done at child " + i);
                 return;
             }
             Log.w(TAG, "LteBWHook: injectBwHeader: header row not found ("

@@ -101,7 +101,6 @@ public class SignalingSearchHook {
             u7fPopupField.setAccessible(true);
 
             reflectionReady = true;
-            Log.i(TAG, "SignalingSearchHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "SignalingSearchHook: initReflection failed: " + e);
         }
@@ -590,7 +589,7 @@ public class SignalingSearchHook {
                     return result;
                 }
             });
-            Log.i(TAG, "SignalingSearchHook: hookOnItemClick installed");
+            Log.i(TAG, "SignalingSearchHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "SignalingSearchHook: hookOnItemClick failed: " + e);
         }

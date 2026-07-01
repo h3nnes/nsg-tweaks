@@ -120,7 +120,6 @@ public class NrSaCellColorHook {
             }
 
             ready = true;
-            Log.i(TAG, "NrSaCellColorHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCellColorHook: initReflection failed: " + e);
         }
@@ -149,7 +148,7 @@ public class NrSaCellColorHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaCellColorHook: v6.b.k0 hook installed");
+            Log.i(TAG, "NrSaCellColorHook: installed");
 
             // Hook 2: v6.b.I(LayoutInflater, ViewGroup, Bundle) — after k2.a.j() has run,
             // all TextViews in f8100a are live. Walk this.Y's element list and setTextColor.
@@ -174,7 +173,6 @@ public class NrSaCellColorHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaCellColorHook: v6.b.I hook installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCellColorHook: install failed: " + e);
         }
@@ -230,9 +228,6 @@ public class NrSaCellColorHook {
                     }
                 } catch (Exception ignored) {}
             }
-            Log.i(TAG, "NrSaCellColorHook: applied " + applied
-                    + " colors (carriers=" + carriers
-                    + " elements=" + elements.size() + ")");
         } catch (Exception e) {
             Log.w(TAG, "NrSaCellColorHook: applyLiveTextColors failed: " + e);
         }

@@ -35,7 +35,7 @@ android {
 }
 
 dependencies {
-    compileOnly fileTree(dir: '../libs', include: ['*.jar'])
+    compileOnly files('../libs/libxposed-api-102.jar')
     compileOnly 'androidx.annotation:annotation:1.9.1'
     compileOnly 'androidx.preference:preference:1.2.1'
 }
