@@ -82,7 +82,6 @@ public class ScrollBarHook {
             u7fPopupField.setAccessible(true);
 
             reflectionReady = true;
-            Log.i(TAG, "ScrollBarHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "ScrollBarHook: initReflection failed: " + e);
         }
@@ -286,7 +285,7 @@ public class ScrollBarHook {
                     return result;
                 }
             });
-            Log.i(TAG, "ScrollBarHook: hookOnItemClick installed");
+            Log.i(TAG, "ScrollBarHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "ScrollBarHook: hookOnItemClick failed: " + e);
         }

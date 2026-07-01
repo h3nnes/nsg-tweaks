@@ -48,7 +48,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class NrSaCellColumnsHook {
 
-    private static final String TAG              = "NSGBandHook_NrSa";
+    private static final String TAG              = "NSGBandHook";
     private static final String TAG_COLS_INJECTED = "nsg_nrsa_cols_injected";
 
     private final XposedInterface xposed;
@@ -107,7 +107,6 @@ public class NrSaCellColumnsHook {
             // Sample key is captured via hookDataCallback() instead.
 
             ready = true;
-            Log.i(TAG, "NrSaCellColumnsHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCellColumnsHook: initReflection failed: " + e);
         }
@@ -126,6 +125,7 @@ public class NrSaCellColumnsHook {
         hookGetView();
         hookOnCreateView();
         hookH8bQ();
+        Log.i(TAG, "NrSaCellColumnsHook: installed");
     }
 
     // -----------------------------------------------------------------------
@@ -158,7 +158,6 @@ public class NrSaCellColumnsHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaCellColumnsHook: hookDataCallback installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCellColumnsHook: hookDataCallback failed: " + e);
         }
@@ -441,7 +440,6 @@ public class NrSaCellColumnsHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaCellColumnsHook: hookGetView installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCellColumnsHook: hookGetView failed: " + e);
         }
@@ -482,7 +480,6 @@ public class NrSaCellColumnsHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaCellColumnsHook: hookOnCreateView installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCellColumnsHook: hookOnCreateView failed: " + e);
         }
@@ -572,7 +569,6 @@ public class NrSaCellColumnsHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaCellColumnsHook: hookH8bQ installed");
         } catch (Throwable t) {
             Log.e(TAG, "NrSaCellColumnsHook: hookH8bQ failed: " + t);
         }

@@ -24,7 +24,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class SettingsToggleHook {
 
-    private static final String TAG               = "NSGBandHook_Settings";
+    private static final String TAG               = "NSGBandHook";
     static final String  PREF_KEY_CELL_MODS       = "nsgmod.cell_mods_enabled";
     static final String  PREF_KEY_CELL_ID_MATCH   = "nsgmod.cell_id_match_enabled";
     static final String  PREF_KEY_RT_PLAY         = "nsgmod.rt_play_enabled";
@@ -174,7 +174,7 @@ public class SettingsToggleHook {
                 }
             });
 
-            Log.i(TAG, "settings toggle hook installed on " + FRAGMENT_CLS + ".i0");
+            Log.i(TAG, "SettingsToggleHook: installed");
         } catch (Throwable t) {
             Log.w(TAG, "install failed: " + t, t);
         }

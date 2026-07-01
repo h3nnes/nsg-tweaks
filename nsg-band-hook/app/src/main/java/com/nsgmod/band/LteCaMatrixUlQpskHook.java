@@ -137,8 +137,6 @@ public class LteCaMatrixUlQpskHook {
                     int colorId = res.getIdentifier("color_deep_blue", "color", ctx.getPackageName());
                     if (colorId != 0) {
                         deepBlueColor = ctx.getColor(colorId);
-                        Log.i(TAG, "LteCaMatrixUlQpskHook: color_deep_blue=0x"
-                                + Integer.toHexString(deepBlueColor));
                     } else {
                         deepBlueColor = 0xFF1565C0;
                         Log.w(TAG, "LteCaMatrixUlQpskHook: color_deep_blue not found, fallback");
@@ -152,7 +150,6 @@ public class LteCaMatrixUlQpskHook {
             }
 
             ready = true;
-            Log.i(TAG, "LteCaMatrixUlQpskHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "LteCaMatrixUlQpskHook: initReflection failed: " + e);
         }
@@ -179,7 +176,7 @@ public class LteCaMatrixUlQpskHook {
                     return result;
                 }
             });
-            Log.i(TAG, "LteCaMatrixUlQpskHook: e8.a.l0 hook installed");
+            Log.i(TAG, "LteCaMatrixUlQpskHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "LteCaMatrixUlQpskHook: install failed: " + e);
         }
@@ -227,7 +224,6 @@ public class LteCaMatrixUlQpskHook {
                 vfFMethod.invoke(bar, deepBlueColor, 100.0f);
             }
 
-            Log.i(TAG, "LteCaMatrixUlQpskHook: QPSK row injected at row 19.0");
         } catch (Exception e) {
             Log.w(TAG, "LteCaMatrixUlQpskHook: injectQpskRow failed: " + e);
         }

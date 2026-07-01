@@ -113,7 +113,6 @@ public class NrSaPucchTxRowHook {
             v6bYField = v6bClass.getField("Y");
 
             ready = true;
-            Log.i(TAG, "NrSaPucchTxRowHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaPucchTxRowHook: initReflection failed: " + e);
         }
@@ -139,7 +138,7 @@ public class NrSaPucchTxRowHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaPucchTxRowHook: h8.c.l0 hook installed");
+            Log.i(TAG, "NrSaPucchTxRowHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaPucchTxRowHook: install failed: " + e);
         }
@@ -186,7 +185,6 @@ public class NrSaPucchTxRowHook {
                 // No .f(color, max) call — LegendManager auto-coloring via f8120g
             }
 
-            Log.i(TAG, "NrSaPucchTxRowHook: PUCCH TX row injected at row 8.0");
         } catch (Exception e) {
             Log.w(TAG, "NrSaPucchTxRowHook: injectPucchTxRow failed: " + e);
         }

@@ -41,7 +41,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class RtPlayHook {
 
-    private static final String TAG     = "NSGBandHook_RtPlay";
+    private static final String TAG     = "NSGBandHook";
     /** Resource ID of the forward (+0.5s) button — smali-confirmed: 0x7f09022c */
     private static final int    ID_FWD  = 0x7f09022c;
 
@@ -156,7 +156,6 @@ public class RtPlayHook {
             maAMMethod = maAClass.getDeclaredMethod("m", dateClass); maAMMethod.setAccessible(true);
 
             reflectionReady = true;
-            Log.i(TAG, "reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "initReflection failed: " + e, e);
         }
@@ -184,8 +183,6 @@ public class RtPlayHook {
             }
         });
 
-        Log.i(TAG, "installed on k8.f.I (onCreateView)");
-
         // Stop RT-Play when the replay bar is removed (lock icon click, load new test, etc.)
         // AdvancedActivity.J() is the single method that tears down the playback bar fragment.
         // Without this, the old stepRunnable keeps running after J() destroys the view, and
@@ -200,12 +197,11 @@ public class RtPlayHook {
                     if (ctrl != null) {
                         ctrl.stop();
                         activeController = null;
-                        Log.i(TAG, "RT-Play stopped — replay bar removed by J()");
                     }
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "installed before-hook on AdvancedActivity.J()");
+            Log.i(TAG, "RtPlayHook: installed");
         } catch (Throwable t) {
             Log.w(TAG, "AdvancedActivity.J() hook failed: " + t);
         }
@@ -215,7 +211,6 @@ public class RtPlayHook {
 
     private void attachButton(Object fragment, View rootView) {
         if (!SettingsToggleHook.rtPlayEnabled()) {
-            Log.i(TAG, "RT-Play toggle is off — skipping button attachment");
             return;
         }
         View forwardBtn = rootView.findViewById(ID_FWD);
@@ -332,12 +327,8 @@ public class RtPlayHook {
         container.addView(btn);
         container.addView(forwardBtn);
         row.addView(container, fwdIndex);
-
-        // Effectively-final captures for use inside lambdas
         final int capturedFwdIndex = fwdIndex;
         final ViewGroup.LayoutParams capturedFwdRowLp = fwdRowLp;
-
-        Log.i(TAG, "RT-Play button inserted at index " + fwdIndex);
 
         RtPlayController controller = new RtPlayController(
                 fragment, btn,
@@ -373,7 +364,6 @@ public class RtPlayHook {
                     if (!SettingsToggleHook.PREF_KEY_RT_PLAY.equals(key)) return;
                     if (!sharedPreferences.getBoolean(key, true)) {
                         // Toggle turned off — stop playback and remove button immediately
-                        Log.i(TAG, "RT-Play toggle turned off — stopping and removing button");
                         controller.stop();
                         btn.post(() -> {
                             try {
@@ -418,7 +408,6 @@ public class RtPlayHook {
                     }
                 };
                 prefs.registerOnSharedPreferenceChangeListener(rtPlayPrefListener);
-                Log.i(TAG, "RT-Play preference listener registered");
             }
         } catch (Throwable t) {
             Log.w(TAG, "failed to register RT-Play preference listener: " + t);
@@ -431,7 +420,7 @@ public class RtPlayHook {
 
     private static final class RtPlayController {
 
-        private static final String TAG    = "NSGBandHook_RtPlay";
+        private static final String TAG    = "NSGBandHook";
         private static final String LABEL_OFF = "RT-Play";
         private static final String LABEL_ON  = "■ Stop";
 
@@ -502,7 +491,6 @@ public class RtPlayHook {
                     }
 
                     if (nextKey < 0) {
-                        Log.i(TAG, "RT-Play: end of log reached");
                         stop(); return;
                     }
 
@@ -576,7 +564,6 @@ public class RtPlayHook {
             playing = true;
             button.setText(LABEL_ON);
             handler.post(stepRunnable);
-            Log.i(TAG, "RT-Play started");
         }
 
         void stop() {
@@ -584,7 +571,6 @@ public class RtPlayHook {
             handler.removeCallbacks(stepRunnable);
             // button.setText must run on UI thread; handler is main-looper so this is safe
             button.post(() -> button.setText(LABEL_OFF));
-            Log.i(TAG, "RT-Play stopped");
         }
     }
 }

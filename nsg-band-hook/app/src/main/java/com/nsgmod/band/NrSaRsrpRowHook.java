@@ -129,7 +129,6 @@ public class NrSaRsrpRowHook {
             vaRowField.setAccessible(true);
 
             ready = true;
-            Log.i(TAG, "NrSaRsrpRowHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaRsrpRowHook: initReflection failed: " + e);
         }
@@ -141,6 +140,7 @@ public class NrSaRsrpRowHook {
             return;
         }
         installV6bK0Hook();
+        Log.i(TAG, "NrSaRsrpRowHook: installed");
     }
 
     // -----------------------------------------------------------------------
@@ -165,7 +165,6 @@ public class NrSaRsrpRowHook {
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "NrSaRsrpRowHook: v6.b.k0 hook installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaRsrpRowHook: v6.b.k0 hook failed: " + e);
         }
@@ -232,10 +231,6 @@ public class NrSaRsrpRowHook {
                 injectRsrpRowsPathC(k2aObj, ssRsrpRow, csiRsrpRow);
             }
 
-            Log.i(TAG, "NrSaRsrpRowHook: SS-RSRP+CSI-RSRP rows injected"
-                    + " ssRsrpRow=" + ssRsrpRow
-                    + " csiRsrpRow=" + csiRsrpRow
-                    + " carriers=" + carriers);
         } catch (Exception e) {
             Log.w(TAG, "NrSaRsrpRowHook: injectRsrpRows failed: " + e);
         }

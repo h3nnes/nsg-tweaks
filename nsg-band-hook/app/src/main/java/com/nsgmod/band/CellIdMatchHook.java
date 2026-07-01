@@ -38,7 +38,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class CellIdMatchHook {
 
-    private static final String TAG = "NSGBandHook_CellId";
+    private static final String TAG = "NSGBandHook";
 
     // Signal path for the live LTE serving-cell E-UTRAN Cell Identity (28-bit)
     private static final String SIGNAL_LTE_ECI = "LTE::Serving_Cell::LTE_Uu_RRC_ECI";

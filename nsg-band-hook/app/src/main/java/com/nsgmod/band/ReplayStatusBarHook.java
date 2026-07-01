@@ -89,7 +89,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class ReplayStatusBarHook {
 
-    private static final String TAG = "NSGBandHook_Replay";
+    private static final String TAG = "NSGBandHook";
 
     /**
      * True while a log file is loaded and being replayed.
@@ -173,7 +173,6 @@ public class ReplayStatusBarHook {
             teActivity      = teClass.getDeclaredField("b"); teActivity.setAccessible(true);
 
             reflectionReady = true;
-            Log.i(TAG, "reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "initReflection failed: " + e);
         }
@@ -191,6 +190,7 @@ public class ReplayStatusBarHook {
         installProngE();
         installProngF();
         installProngG();
+        Log.i(TAG, "ReplayStatusBarHook: installed (7 prongs)");
     }
 
     // -----------------------------------------------------------------------
@@ -227,15 +227,12 @@ public class ReplayStatusBarHook {
                         replayBarDismissed = false;
                         replayActivity = new WeakReference<>(activity);
                         showReplayBar(activity, filename);
-                        Log.i(TAG, "Prong A: replay bar shown, file=" + filename);
                     } catch (Throwable t) {
                         Log.w(TAG, "Prong A failed: " + t);
                     }
                     return result;
                 }
             });
-
-            Log.i(TAG, "Prong A installed on a4.h.e(Object)");
         } catch (Exception e) {
             Log.e(TAG, "installProngA failed: " + e);
         }
@@ -292,13 +289,10 @@ public class ReplayStatusBarHook {
                         // K() is called because user stopped replay (DataSource still live).
                         // Allow it to run so the bar hides and save-log works normally.
                         replayActive = false;
-                        Log.i(TAG, "Prong B: K() allowed (stop replay, DataSource set), replayActive=false");
                         return chain.proceed();
                     }
                 }
             });
-
-            Log.i(TAG, "Prong B installed on AdvancedActivity.K()");
         } catch (Exception e) {
             Log.e(TAG, "installProngB failed: " + e);
         }
@@ -324,14 +318,11 @@ public class ReplayStatusBarHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     if (replayActive) {
                         replayActive = false;
-                        Log.i(TAG, "Prong C: g0.E() while replay active — hiding bar, replayActive=false");
                         hideReplayBar();
                     }
                     return chain.proceed();
                 }
             });
-
-            Log.i(TAG, "Prong C installed on t7.g0.E()");
         } catch (Exception e) {
             Log.e(TAG, "installProngC failed: " + e);
         }
@@ -366,13 +357,10 @@ public class ReplayStatusBarHook {
                         } catch (Throwable t) {
                             Log.w(TAG, "Prong D: showExitSpinner failed: " + t);
                         }
-                        Log.i(TAG, "Prong D: w0.c() in replay mode — spinner shown, replayActive=false");
                     }
                     return chain.proceed();
                 }
             });
-
-            Log.i(TAG, "Prong D installed on t7.w0.c(Activity)");
         } catch (Exception e) {
             Log.e(TAG, "installProngD failed: " + e);
         }
@@ -419,7 +407,6 @@ public class ReplayStatusBarHook {
                         }
 
                         // It IS menu_load_logfile and replay bar is visible: bypass guard.
-                        Log.i(TAG, "Prong E: menu_load_logfile while replayActive — bypassing visibility guard");
 
                         boolean subscribed = false;
                         try {
@@ -432,7 +419,6 @@ public class ReplayStatusBarHook {
                             Object kPicker = advActivityKField.get(activity);
                             if (kPicker != null) {
                                 pickerCMethod.invoke(kPicker, new Object[]{new String[]{"*/*"}});
-                                Log.i(TAG, "Prong E: file picker launched");
                             } else {
                                 Log.w(TAG, "Prong E: advancedActivity.K is null");
                                 return chain.proceed(); // fall back
@@ -474,8 +460,6 @@ public class ReplayStatusBarHook {
                     }
                 }
             });
-
-            Log.i(TAG, "Prong E installed on t7.p.a(MenuItem)");
         } catch (Exception e) {
             Log.e(TAG, "installProngE failed: " + e);
         }
@@ -533,8 +517,6 @@ public class ReplayStatusBarHook {
                     return chain.proceed();
                 }
             });
-
-            Log.i(TAG, "Prong F installed on t7.e.b(Object)");
         } catch (Exception e) {
             Log.e(TAG, "installProngF failed: " + e);
         }
@@ -577,8 +559,6 @@ public class ReplayStatusBarHook {
                     return result;
                 }
             });
-
-            Log.i(TAG, "Prong G installed on AdvancedActivity.I(int)");
         } catch (Exception e) {
             Log.e(TAG, "installProngG failed: " + e);
         }
@@ -686,12 +666,11 @@ public class ReplayStatusBarHook {
                             ViewGroup.LayoutParams.WRAP_CONTENT);
                     xBtn.setLayoutParams(xLp);
                     xBtn.setOnClickListener(v -> {
-                        replayBarDismissed = true;
-                        layout.setVisibility(View.GONE);
-                        // Restore spinner visibility so NSG's next "Loading…" phase works.
-                        progressBar.setVisibility(View.VISIBLE);
-                        Log.i(TAG, "Replay bar dismissed by user");
-                    });
+                         replayBarDismissed = true;
+                         layout.setVisibility(View.GONE);
+                         // Restore spinner visibility so NSG's next "Loading…" phase works.
+                         progressBar.setVisibility(View.VISIBLE);
+                     });
                     row.addView(xBtn);
 
                     ll.addView(row);

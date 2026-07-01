@@ -142,7 +142,6 @@ public class NrSaCarrierCountHook {
             k2aListField.setAccessible(true);
 
             ready = true;
-            Log.i(TAG, "NrSaCarrierCountHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCarrierCountHook: initReflection failed: " + e);
         }
@@ -155,6 +154,7 @@ public class NrSaCarrierCountHook {
         }
         installV6bK0Hook();
         installV6gAHook();
+        Log.i(TAG, "NrSaCarrierCountHook: installed");
     }
 
     private void installV6bK0Hook() {
@@ -174,7 +174,6 @@ public class NrSaCarrierCountHook {
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "NrSaCarrierCountHook: v6.b.k0 hook installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCarrierCountHook: v6.b.k0 hook failed: " + e);
         }
@@ -197,7 +196,6 @@ public class NrSaCarrierCountHook {
                     String key = (String) sysAKeyField.get(binding);
                     if (CARRIER_COUNT_KEY.equals(key)) {
                         trackedElements.put(elem, Boolean.TRUE);
-                        Log.i(TAG, "NrSaCarrierCountHook: tracked carrier count element");
                         return;
                     }
                 }
@@ -240,7 +238,6 @@ public class NrSaCarrierCountHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaCarrierCountHook: v6.g.a hook installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCarrierCountHook: v6.g.a hook failed: " + e);
         }

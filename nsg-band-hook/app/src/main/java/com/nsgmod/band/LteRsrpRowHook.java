@@ -58,7 +58,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class LteRsrpRowHook {
 
-    private static final String TAG = "NSGBandHook_LteRsrp";
+    private static final String TAG = "NSGBandHook";
 
     /** Set by the e8.b.n0() flag hook while n0() executes; null otherwise. */
     static final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
@@ -151,7 +151,6 @@ public class LteRsrpRowHook {
             vaRowField.setAccessible(true);
 
             ready = true;
-            Log.i(TAG, "reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "initReflection failed: " + e);
         }
@@ -164,6 +163,7 @@ public class LteRsrpRowHook {
         }
         installN0FlagHook();
         installV6bK0Hook();
+        Log.i(TAG, "LteRsrpRowHook: installed");
     }
 
     // -----------------------------------------------------------------------
@@ -192,7 +192,6 @@ public class LteRsrpRowHook {
                     }
                 }
             });
-            Log.i(TAG, "n0 flag hook installed on e8.b.n0()");
         } catch (Exception e) {
             Log.e(TAG, "n0 flag hook failed: " + e);
         }
@@ -220,7 +219,6 @@ public class LteRsrpRowHook {
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "v6.b.k0 hook installed");
         } catch (Exception e) {
             Log.e(TAG, "v6.b.k0 hook failed: " + e);
         }
@@ -278,7 +276,6 @@ public class LteRsrpRowHook {
                 injectRsrpRowPathC(k2aObj, rsrpRow);
             }
 
-            Log.i(TAG, "RSRP row injected rsrpRow=" + rsrpRow + " carriers=" + carriers);
         } catch (Exception e) {
             Log.w(TAG, "injectRsrpRow failed: " + e);
         }

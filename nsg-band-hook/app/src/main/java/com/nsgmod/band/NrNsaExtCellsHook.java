@@ -34,7 +34,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class NrNsaExtCellsHook {
 
-    private static final String TAG = "NSGBandHook_ExtCells";
+    private static final String TAG = "NSGBandHook";
 
     private final XposedInterface xposed;
     private final ClassLoader     loader;
@@ -63,7 +63,6 @@ public class NrNsaExtCellsHook {
             dField = kcClass.getField("d"); // public int f5510d
 
             ready = true;
-            Log.i(TAG, "NrNsaExtCellsHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrNsaExtCellsHook: initReflection failed: " + e);
         }
@@ -100,7 +99,7 @@ public class NrNsaExtCellsHook {
                     return Math.min(total, 16);
                 }
             });
-            Log.i(TAG, "NrNsaExtCellsHook: installed on a8.b$b.getCount() (NR-NSA + LTE)");
+            Log.i(TAG, "NrNsaExtCellsHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "NrNsaExtCellsHook: install failed: " + e);
         }

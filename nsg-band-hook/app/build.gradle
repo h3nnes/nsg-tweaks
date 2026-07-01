@@ -4,14 +4,14 @@ plugins {
 
 android {
     namespace 'com.nsgmod.band'
-    compileSdk 36
+    compileSdk 37
 
     defaultConfig {
         applicationId 'com.nsgmod.band'
         minSdk 23
-        targetSdk 36
-        versionCode 35
-        versionName "7.7"
+        targetSdk 37
+        versionCode 36
+        versionName "8.0"
     }
 
     buildTypes {
@@ -35,7 +35,7 @@ android {
 }
 
 dependencies {
-    compileOnly fileTree(dir: '../libs', include: ['*.jar'])
+    compileOnly files('../libs/libxposed-api-102.jar')
     compileOnly 'androidx.annotation:annotation:1.9.1'
     compileOnly 'androidx.preference:preference:1.2.1'
 }

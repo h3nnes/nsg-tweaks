@@ -135,8 +135,6 @@ public class NrSaModUsageRowHook {
                     int colorId = res.getIdentifier("color_deep_blue", "color", ctx.getPackageName());
                     if (colorId != 0) {
                         deepBlueColor = ctx.getColor(colorId);
-                        Log.i(TAG, "NrSaModUsageRowHook: color_deep_blue=0x"
-                                + Integer.toHexString(deepBlueColor));
                     } else {
                         deepBlueColor = 0xFF1565C0;
                         Log.w(TAG, "NrSaModUsageRowHook: color_deep_blue not found, fallback");
@@ -150,7 +148,6 @@ public class NrSaModUsageRowHook {
             }
 
             ready = true;
-            Log.i(TAG, "NrSaModUsageRowHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaModUsageRowHook: initReflection failed: " + e);
         }
@@ -162,6 +159,7 @@ public class NrSaModUsageRowHook {
             return;
         }
         installV6bK0Hook();
+        Log.i(TAG, "NrSaModUsageRowHook: installed");
     }
 
     // -----------------------------------------------------------------------
@@ -186,7 +184,6 @@ public class NrSaModUsageRowHook {
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "NrSaModUsageRowHook: v6.b.k0 hook installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaModUsageRowHook: v6.b.k0 hook failed: " + e);
         }
@@ -277,8 +274,6 @@ public class NrSaModUsageRowHook {
                 vfFMethod.invoke(barQpsk, deepBlueColor, 100.0f);
             }
 
-            Log.i(TAG, "NrSaModUsageRowHook: 16QAM+QPSK rows injected at rows "
-                    + row1 + "/" + row2 + " (carriers=" + carriers + ")");
         } catch (Exception e) {
             Log.w(TAG, "NrSaModUsageRowHook: injectModUsageRows failed: " + e);
         }

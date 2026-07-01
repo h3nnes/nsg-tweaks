@@ -20,7 +20,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * Works for all technologies and adapter types.
  */
 public class PageDotJumpHook {
-    private static final String TAG = "NSGBandHook_PageJump";
+    private static final String TAG = "NSGBandHook";
     private static final long LONG_PRESS_MS = 300L;
 
     private final XposedInterface xposed;
@@ -109,9 +109,7 @@ public class PageDotJumpHook {
                     && setCurrentItemMethod != null
                     && getAdapterMethod != null;
 
-            if (reflectionReady) {
-                Log.i(TAG, "PageDotJumpHook: reflection ready");
-            } else {
+            if (!reflectionReady) {
                 Log.w(TAG, "PageDotJumpHook: reflection partially failed");
             }
         } catch (Exception e) {
@@ -150,50 +148,39 @@ public class PageDotJumpHook {
                     try {
                         Long downTime = downTimes.remove(indicatorView);
                         if (downTime == null) {
-                            Log.d(TAG, "ACTION_UP but no downTime recorded");
                             return chain.proceed();
                         }
 
                         long elapsed = System.currentTimeMillis() - downTime;
-                        Log.d(TAG, "elapsed=" + elapsed + "ms");
                         if (elapsed >= LONG_PRESS_MS) {
-                            Log.d(TAG, "Long press, skipping jump");
                             return chain.proceed();
                         }
 
                         boolean dragging = (boolean) draggingField.get(indicator);
-                        Log.d(TAG, "dragging=" + dragging);
                         if (dragging) {
                             return chain.proceed();
                         }
 
                         int orientation = (int) orientationField.get(indicator);
-                        Log.d(TAG, "orientation=" + orientation);
                         if (orientation != 0) {
                             return chain.proceed();
                         }
 
                         Object viewPager = viewPagerField.get(indicator);
                         if (viewPager == null) {
-                            Log.d(TAG, "viewPager is null");
                             return chain.proceed();
                         }
 
                         Object adapter = getAdapterMethod.invoke(viewPager);
                         if (adapter == null) {
-                            Log.d(TAG, "adapter is null");
                             return chain.proceed();
                         }
 
-                        Log.d(TAG, "adapter class=" + adapter.getClass().getName());
-
                         // Read tech for logging only, don't block on it
                         try {
-                            int tech = adapterTechField.getInt(adapter);
-                            Log.d(TAG, "PageDotJumpHook: tech=" + tech);
+                            adapterTechField.getInt(adapter);
                         } catch (Exception e) {
                             // NormalActivity (x6.d) doesn't have int h field — that's fine
-                            Log.d(TAG, "PageDotJumpHook: non-x6.b adapter, still jumping");
                         }
 
                         float touchX = event.getX();
@@ -211,8 +198,7 @@ public class PageDotJumpHook {
                             try {
                                 count = (int) getCountMethod.invoke(adapter);
                             } catch (Exception e) {
-                                Log.d(TAG, "w1.a.c() failed on " + adapter.getClass().getName()
-                                        + ", trying dynamic lookup");
+                                // try dynamic lookup below
                             }
                         }
                         if (count <= 0) {
@@ -230,7 +216,6 @@ public class PageDotJumpHook {
                             }
                         }
 
-                        Log.d(TAG, "count=" + count);
                         if (count <= 0) {
                             return chain.proceed();
                         }
@@ -248,13 +233,8 @@ public class PageDotJumpHook {
                         if (dotIndex < 0) dotIndex = 0;
                         if (dotIndex >= count) dotIndex = count - 1;
 
-                        Log.d(TAG, "dotIndex=" + dotIndex + " currentPage=" + currentPage);
-
                         if (dotIndex != currentPage) {
-                            Log.d(TAG, "jumping to page " + dotIndex);
                             setCurrentItemMethod.invoke(viewPager, dotIndex);
-                        } else {
-                            Log.d(TAG, "dotIndex equals currentPage, no jump needed");
                         }
 
                         // Record this short tap so we can suppress the spurious

@@ -120,7 +120,6 @@ public class NrSaBwpIdHook {
             v6bYField = v6bClass.getField("Y");
 
             ready = true;
-            Log.i(TAG, "NrSaBwpIdHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaBwpIdHook: initReflection failed: " + e);
         }
@@ -146,7 +145,7 @@ public class NrSaBwpIdHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrSaBwpIdHook: d8.i.l0 hook installed");
+            Log.i(TAG, "NrSaBwpIdHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaBwpIdHook: install failed: " + e);
         }
@@ -211,7 +210,6 @@ public class NrSaBwpIdHook {
                 vgGMethod.invoke(valueCell, prop, true);
             }
 
-            Log.i(TAG, "NrSaBwpIdHook: BWP-ID column injected");
         } catch (Exception e) {
             Log.w(TAG, "NrSaBwpIdHook: injectBwpIdColumn failed: " + e);
         }
