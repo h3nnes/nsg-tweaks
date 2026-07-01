@@ -101,7 +101,6 @@ public class NrNsaBandwidthColumnHook {
             f5509cField = loader.loadClass("k8.c").getField("c");
 
             reflectionReady = true;
-            Log.i(TAG, "NrNsaBandwidthColumnHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrNsaBandwidthColumnHook: initReflection failed: " + e);
         }
@@ -327,7 +326,7 @@ public class NrNsaBandwidthColumnHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrNsaBandwidthColumnHook: hookGetView installed");
+            Log.i(TAG, "NrNsaBandwidthColumnHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "NrNsaBandwidthColumnHook: hookGetView failed: " + e);
         }
@@ -361,7 +360,6 @@ public class NrNsaBandwidthColumnHook {
                     return result;
                 }
             });
-            Log.i(TAG, "NrNsaBandwidthColumnHook: hookOnCreateView installed");
         } catch (Exception e) {
             Log.e(TAG, "NrNsaBandwidthColumnHook: hookOnCreateView failed: " + e);
         }

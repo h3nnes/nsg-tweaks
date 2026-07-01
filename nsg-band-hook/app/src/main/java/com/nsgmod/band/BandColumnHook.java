@@ -41,7 +41,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class BandColumnHook {
 
-    private static final String TAG = "NSGBandHook_Band";
+    private static final String TAG = "NSGBandHook";
 
     // Integer tag key used on the main-row LinearLayout to mark injection state.
     private static final int    BAND_TAG_KEY      = "nsg_band_injected".hashCode();
@@ -100,7 +100,6 @@ public class BandColumnHook {
             f5509cField = loader.loadClass("k8.c").getField("c"); // data sample key (f5509c)
 
             reflectionReady = true;
-            Log.i(TAG, "BandColumnHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "BandColumnHook: initReflection failed: " + e);
         }
@@ -314,7 +313,7 @@ public class BandColumnHook {
                     return result;
                 }
             });
-            Log.i(TAG, "BandColumnHook: hookGetView installed");
+            Log.i(TAG, "BandColumnHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "BandColumnHook: hookGetView failed: " + e);
         }
@@ -348,7 +347,6 @@ public class BandColumnHook {
                     return result;
                 }
             });
-            Log.i(TAG, "BandColumnHook: hookOnCreateView installed");
         } catch (Exception e) {
             Log.e(TAG, "BandColumnHook: hookOnCreateView failed: " + e);
         }

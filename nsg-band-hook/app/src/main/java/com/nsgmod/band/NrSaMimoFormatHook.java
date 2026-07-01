@@ -70,7 +70,6 @@ public class NrSaMimoFormatHook {
             iterValueMethod = iterClass.getMethod("value");
 
             ready = true;
-            Log.i(TAG, "NrSaMimoFormatHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaMimoFormatHook: initReflection failed: " + e);
         }
@@ -116,7 +115,7 @@ public class NrSaMimoFormatHook {
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "NrSaMimoFormatHook: d7.i$c.c() hook installed");
+            Log.i(TAG, "NrSaMimoFormatHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaMimoFormatHook: install failed: " + e);
         }

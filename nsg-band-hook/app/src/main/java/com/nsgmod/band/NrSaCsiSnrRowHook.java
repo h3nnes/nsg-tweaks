@@ -141,7 +141,6 @@ public class NrSaCsiSnrRowHook {
             vaRowField.setAccessible(true);
 
             ready = true;
-            Log.i(TAG, "NrSaCsiSnrRowHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCsiSnrRowHook: initReflection failed: " + e);
         }
@@ -154,6 +153,7 @@ public class NrSaCsiSnrRowHook {
         }
         installO0FlagHook();
         installV6bK0Hook();
+        Log.i(TAG, "NrSaCsiSnrRowHook: installed");
     }
 
     // -----------------------------------------------------------------------
@@ -182,7 +182,6 @@ public class NrSaCsiSnrRowHook {
                     }
                 }
             });
-            Log.i(TAG, "NrSaCsiSnrRowHook: o0 flag hook installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCsiSnrRowHook: o0 flag hook failed: " + e);
         }
@@ -224,7 +223,6 @@ public class NrSaCsiSnrRowHook {
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "NrSaCsiSnrRowHook: v6.b.k0 hook installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaCsiSnrRowHook: v6.b.k0 hook failed: " + e);
         }
@@ -272,7 +270,6 @@ public class NrSaCsiSnrRowHook {
                 vfF8120g.set(barElem, propBinding);
             }
 
-            Log.i(TAG, "NrSaCsiSnrRowHook: CSI SNR row injected at row=" + insertRow + " into " + k2aObj.getClass().getName());
         } catch (Exception e) {
             Log.w(TAG, "NrSaCsiSnrRowHook: injectCsiSnrRow failed: " + e);
         }

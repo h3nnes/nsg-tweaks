@@ -104,7 +104,6 @@ public class SignalingShareHook {
             u7fPopupField.setAccessible(true);
 
             reflectionReady = true;
-            Log.i(TAG, "SignalingShareHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "SignalingShareHook: initReflection failed: " + e);
         }
@@ -360,7 +359,7 @@ public class SignalingShareHook {
                     return result;
                 }
             });
-            Log.i(TAG, "hookOnItemClick installed");
+            Log.i(TAG, "SignalingShareHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "hookOnItemClick failed: " + e);
         }

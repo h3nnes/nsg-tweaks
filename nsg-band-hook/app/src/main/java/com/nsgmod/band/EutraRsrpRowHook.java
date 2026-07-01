@@ -39,7 +39,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class EutraRsrpRowHook {
 
-    private static final String TAG = "NSGBandHook_EutraRsrp";
+    private static final String TAG = "NSGBandHook";
 
     /** Set by the g8.i.n0() flag hook while n0() executes; null otherwise. */
     static final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
@@ -132,7 +132,6 @@ public class EutraRsrpRowHook {
             vaRowField.setAccessible(true);
 
             ready = true;
-            Log.i(TAG, "reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "initReflection failed: " + e);
         }
@@ -145,6 +144,7 @@ public class EutraRsrpRowHook {
         }
         installN0FlagHook();
         installV6bK0Hook();
+        Log.i(TAG, "EutraRsrpRowHook: installed");
     }
 
     // -----------------------------------------------------------------------
@@ -173,7 +173,6 @@ public class EutraRsrpRowHook {
                     }
                 }
             });
-            Log.i(TAG, "n0 flag hook installed on g8.i.n0()");
         } catch (Exception e) {
             Log.e(TAG, "n0 flag hook failed: " + e);
         }
@@ -201,7 +200,6 @@ public class EutraRsrpRowHook {
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "v6.b.k0 hook installed");
         } catch (Exception e) {
             Log.e(TAG, "v6.b.k0 hook failed: " + e);
         }
@@ -251,7 +249,6 @@ public class EutraRsrpRowHook {
                 injectRsrpRowPathC(k2aObj, rsrpRow);
             }
 
-            Log.i(TAG, "RSRP row injected rsrpRow=" + rsrpRow + " carriers=" + carriers);
         } catch (Exception e) {
             Log.w(TAG, "injectRsrpRow failed: " + e);
         }

@@ -35,7 +35,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class RefreshIntervalHook {
 
-    private static final String TAG = "NSGBandHook_Refresh";
+    private static final String TAG = "NSGBandHook";
     private static final long NORMAL_INTERVAL_MS = 880L;
     private static final long FAST_INTERVAL_MS   = 440L;
 
@@ -84,7 +84,6 @@ public class RefreshIntervalHook {
             e0CaseField.setAccessible(true);
 
             ready = true;
-            Log.i(TAG, "Reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "initReflection failed: " + e);
         }
@@ -97,6 +96,7 @@ public class RefreshIntervalHook {
         }
         installEHook();
         registerPrefListener();
+        Log.i(TAG, "RefreshIntervalHook: installed");
     }
 
     /** After-hook on g0.E() — reschedule tick Runnable after original scheduling. */
@@ -143,7 +143,6 @@ public class RefreshIntervalHook {
                 }
             };
             prefs.registerOnSharedPreferenceChangeListener(prefListener);
-            Log.i(TAG, "Preference listener registered");
         } catch (Throwable t) {
             Log.w(TAG, "Failed to register preference listener: " + t);
         }
@@ -186,7 +185,5 @@ public class RefreshIntervalHook {
 
         // Store new future back into g0
         f7773xField.set(g0Instance, newFuture);
-
-        Log.i(TAG, "Rescheduled to " + desiredInterval + " ms (fast=" + fastEnabled + ")");
     }
 }

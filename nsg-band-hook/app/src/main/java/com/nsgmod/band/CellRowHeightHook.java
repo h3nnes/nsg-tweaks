@@ -13,7 +13,7 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 public class CellRowHeightHook {
-    private static final String TAG = "NSGBandHook_CellHeight";
+    private static final String TAG = "NSGBandHook";
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -49,7 +49,7 @@ public class CellRowHeightHook {
                     return resultView;
                 }
             });
-            Log.i(TAG, "LTE cell row height hook installed");
+            Log.i(TAG, "CellRowHeightHook: installed (LTE)");
         } catch (Exception e) {
             Log.e(TAG, "LTE hook failed: " + e);
         }
@@ -75,7 +75,7 @@ public class CellRowHeightHook {
                     return resultView;
                 }
             });
-            Log.i(TAG, "NR-NSA cell row height hook installed");
+            Log.i(TAG, "CellRowHeightHook: installed (NR-NSA)");
         } catch (Exception e) {
             Log.e(TAG, "NR-NSA hook failed: " + e);
         }
@@ -115,13 +115,11 @@ public class CellRowHeightHook {
             if (!hasCellName && !hasCellId) {
                 // No CSV data for this cell — collapse the entire second row
                 secondRow.setVisibility(View.GONE);
-                Log.d(TAG, rat + " row: collapsed (no CSV data)");
             } else {
                 // Has CSV data — ensure the second row is visible
                 secondRow.setVisibility(View.VISIBLE);
                 cellNameView.setVisibility(View.VISIBLE);
                 cellIdView.setVisibility(View.VISIBLE);
-                Log.d(TAG, rat + " row: expanded (has CSV data)");
             }
         } catch (Exception e) {
             Log.w(TAG, "adjustRowHeight failed: " + e);

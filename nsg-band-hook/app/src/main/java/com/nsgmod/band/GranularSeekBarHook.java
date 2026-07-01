@@ -52,7 +52,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class GranularSeekBarHook {
 
-    private static final String TAG = "NSGBandHook_Granular";
+    private static final String TAG = "NSGBandHook";
 
     /** Vertical dp upward before Zone 2 activates (5× finer). */
     private static final float THRESHOLD_1_DP = 60f;
@@ -141,7 +141,6 @@ public class GranularSeekBarHook {
             maAMMethod.setAccessible(true);
 
             reflectionReady = true;
-            Log.i(TAG, "reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "initReflection failed: " + e);
         }
@@ -173,7 +172,6 @@ public class GranularSeekBarHook {
                             wsJ, wsH, wsG, wsI, wsC, wsGMethod, wsIMethod,
                             fragmentYField, advActAField, fragmentZField,
                             fragmentI0Method, maAMMethod));
-                    Log.i(TAG, "GranularSeekBar listener attached");
                 } catch (Throwable t) {
                     Log.w(TAG, "failed to attach granular listener: " + t);
                 }
@@ -181,7 +179,7 @@ public class GranularSeekBarHook {
             }
         });
 
-        Log.i(TAG, "installed on k8.f.I (onCreateView)");
+        Log.i(TAG, "GranularSeekBarHook: installed");
     }
 
     // =========================================================================
