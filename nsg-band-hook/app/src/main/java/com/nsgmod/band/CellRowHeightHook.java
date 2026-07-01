@@ -39,6 +39,10 @@ public class CellRowHeightHook {
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    // Check toggle first
+                    if (!SettingsToggleHook.cellRowHeightEnabled()) {
+                        return chain.proceed();
+                    }
                     View resultView = (View) chain.proceed();
                     if (resultView == null) return null;
                     adjustRowHeight(resultView, "LTE");
@@ -61,6 +65,10 @@ public class CellRowHeightHook {
             xposed.hook(getViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    // Check toggle first
+                    if (!SettingsToggleHook.cellRowHeightEnabled()) {
+                        return chain.proceed();
+                    }
                     View resultView = (View) chain.proceed();
                     if (resultView == null) return null;
                     adjustRowHeight(resultView, "NR-NSA");
