@@ -6,8 +6,8 @@ An LSPosed module that extends [NSG (QuickTest)](https://play.google.com/store/a
 
 ## Requirements
 
-- **NSG** v4.8.6 (`com.qtrun.QuickTest`)
-- **LSPosed** with API 101 support
+- **NSG** v4.8.7 or v4.8.6 (`com.qtrun.QuickTest`)
+- **LSPosed** with API 102 or 101 support
 
 ---
 
