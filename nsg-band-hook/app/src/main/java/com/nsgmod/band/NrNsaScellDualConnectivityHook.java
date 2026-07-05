@@ -349,21 +349,19 @@ public class NrNsaScellDualConnectivityHook {
             scellView.setTypeface(pcellView.getTypeface());
             scellView.setTextColor(pcellView.getTextColors());
 
-            // Remove the original view from its parent (if any) before re-adding.
-            ViewGroup parent = (ViewGroup) pcellView.getParent();
-            if (parent != null) {
-                parent.removeView(pcellView);
-            }
+            // Remove the original view from the grid and add the container in its place,
+            // then move the original view into the container. This keeps the grid child
+            // order aligned with the cells list.
+            ViewGroup gridGroup = (ViewGroup) gridView;
+            gridGroup.removeViewAt(index);
+            gridGroup.addView(container, index);
 
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
             container.addView(pcellView, lp);
             container.addView(scellView, lp);
 
-            // Update the grid child and the cell's view reference.
-            ViewGroup gridGroup = (ViewGroup) gridView;
-            gridGroup.removeViewAt(index);
-            gridGroup.addView(container, index);
+            // Update the cell's view reference.
             setField(binding.nrCell, v6aViewField, container);
 
             binding.container = container;
