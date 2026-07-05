@@ -274,11 +274,14 @@ public class NrNsaScellDualConnectivityHook {
     // -------------------------------------------------------------------------
     private void hookI() {
         try {
+            // g8.h inherits I(LayoutInflater, ViewGroup, Bundle) from v6.b,
+            // so we must hook v6.b.I and guard on the actual fragment class.
             Class<?> g8hClass = loader.loadClass(TARGET_FRAGMENT);
+            Class<?> v6bClass = loader.loadClass(V6_B_CLASS);
             Class<?> layoutInflaterClass = loader.loadClass("android.view.LayoutInflater");
             Class<?> viewGroupClass = loader.loadClass("android.view.ViewGroup");
             Class<?> bundleClass = loader.loadClass("android.os.Bundle");
-            Method iMethod = g8hClass.getDeclaredMethod("I", layoutInflaterClass, viewGroupClass, bundleClass);
+            Method iMethod = v6bClass.getDeclaredMethod("I", layoutInflaterClass, viewGroupClass, bundleClass);
             iMethod.setAccessible(true);
 
             xposed.hook(iMethod).intercept(new Hooker() {
@@ -286,7 +289,9 @@ public class NrNsaScellDualConnectivityHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     try {
-                        wrapNrViews(result);
+                        if (g8hClass.isInstance(chain.getThisObject())) {
+                            wrapNrViews(result);
+                        }
                     } catch (Exception e) {
                         Log.w(TAG, "NrNsaScellDualConnectivityHook: I hook failed: " + e);
                     }
