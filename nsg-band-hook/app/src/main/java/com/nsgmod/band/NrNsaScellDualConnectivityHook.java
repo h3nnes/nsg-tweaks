@@ -49,7 +49,6 @@ public class NrNsaScellDualConnectivityHook {
     private static final String DATA_SOURCE_CLASS = "com.qtrun.sys.DataSource";
     private static final String PROPERTY_CLASS = "com.qtrun.sys.Property";
     private static final String ITERATOR_CLASS = "com.qtrun.sys.Property$Iterator";
-    private static final String ATTR_B_CLASS = "com.qtrun.sys.b";
     private static final String ATTR_A_CLASS = "com.qtrun.sys.a";
 
     private static final String KEY_SCELL_PCI = "NR5G::Serving_Cell::SCell::NR_SCell_PCI";
@@ -87,8 +86,8 @@ public class NrNsaScellDualConnectivityHook {
     private Method attrAFormatter;      // com.qtrun.sys.a.c(Object)
     private Field attrAKeyFieldSetter;       // com.qtrun.sys.a.f3870c = int
 
-    private Constructor<?> attrBConstructorKeyOnly;
-    private Constructor<?> attrBConstructorIndexed;
+    private Constructor<?> attrAConstructorKeyOnly;
+    private Constructor<?> attrAConstructorIndexed;
 
     // Bindings for every row that has an NR column cell.
     private final List<RowBinding> rowBindings = new ArrayList<>();
@@ -149,9 +148,8 @@ public class NrNsaScellDualConnectivityHook {
             attrAKeyFieldSetter = attrAClass.getDeclaredField("c");
             attrAKeyFieldSetter.setAccessible(true);
 
-            Class<?> attrBClass = loader.loadClass(ATTR_B_CLASS);
-            attrBConstructorKeyOnly = attrBClass.getConstructor(String.class);
-            attrBConstructorIndexed = attrBClass.getConstructor(String.class, int.class, String.class);
+            attrAConstructorKeyOnly = attrAClass.getConstructor(String.class);
+            attrAConstructorIndexed = attrAClass.getConstructor(String.class, int.class, String.class);
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -609,7 +607,7 @@ public class NrNsaScellDualConnectivityHook {
             Object rawValue = readPropertyRaw(dataSource, KEY_SCELL_PCI, moduleIndex, sampleKey);
             if (rawValue == null) return false;
 
-            Object formatter = attrBConstructorIndexed.newInstance(KEY_SCELL_PCI, SCELL_PCI_INDEX, null);
+            Object formatter = attrAConstructorIndexed.newInstance(KEY_SCELL_PCI, SCELL_PCI_INDEX, null);
             Object extracted = attrAExtractor.invoke(formatter, rawValue);
             if (!(extracted instanceof Number)) return false;
             return ((Number) extracted).intValue() >= 0;
@@ -706,9 +704,9 @@ public class NrNsaScellDualConnectivityHook {
         try {
             Object formatter;
             if (format == null) {
-                formatter = attrBConstructorKeyOnly.newInstance(key);
+                formatter = attrAConstructorKeyOnly.newInstance(key);
             } else {
-                formatter = attrBConstructorIndexed.newInstance(key, index, format);
+                formatter = attrAConstructorIndexed.newInstance(key, index, format);
             }
             // Ensure the index is correct even for the key-only constructor.
             attrAKeyFieldSetter.setInt(formatter, index);
