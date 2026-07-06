@@ -61,6 +61,8 @@ public class NrNsaScellDualConnectivityHook {
     private static final int FIRST_DATA_ROW = 3;
     private static final int LAST_DATA_ROW = 21;
     private static final int SCELL_PCI_INDEX = 0;
+    private static final int TECHNOLOGY_ROW = FIRST_DATA_ROW;
+    private static final int TURQUOISE = 0xFF00BCD4;
 
     // How many logical row units a stacked PCell+SCell row occupies.
     // The NR-SA CA Matrix DL (h8.b, f5066a0 == 3) uses two single-height rows
@@ -450,6 +452,7 @@ public class NrNsaScellDualConnectivityHook {
 
         for (RowBinding binding : rowBindings) {
             if (binding.wrapped) continue;
+            if (binding.originalRow == TECHNOLOGY_ROW) continue;
 
             int index = gridCells.indexOf(binding.nrCell);
             View originalView = gridGroup.getChildAt(index);
@@ -466,6 +469,9 @@ public class NrNsaScellDualConnectivityHook {
             scellView.setTypeface(pcellView.getTypeface());
             scellView.setTextColor(pcellView.getTextColors());
             scellView.setText("-");
+            if (V6_G_CLASS.equals(binding.nrCell.getClass().getName())) {
+                scellView.setTextColor(TURQUOISE);
+            }
 
             gridGroup.removeViewAt(index);
             gridGroup.addView(container, index);
@@ -627,6 +633,15 @@ public class NrNsaScellDualConnectivityHook {
     private void stretchGrid(boolean stretch) {
         for (RowBinding binding : rowBindings) {
             int row = binding.originalRow;
+
+            if (row == TECHNOLOGY_ROW) {
+                // Technology row stays a single-height row in every column.
+                setGeometry(binding.nrCell, row, 1.0f);
+                if (binding.lteCell != null) setGeometry(binding.lteCell, row, 1.0f);
+                if (binding.labelCell != null) setGeometry(binding.labelCell, row, 1.0f);
+                continue;
+            }
+
             float newRow = stretch ? (STRETCH_FACTOR * row - STRETCH_OFFSET) : row;
 
             if (stretch) {
@@ -656,9 +671,10 @@ public class NrNsaScellDualConnectivityHook {
         }
 
         // In case there are any cells above LAST_DATA_ROW (there should not be in g8.h),
-        // shift them by the additional height each stretched row consumes.
+        // shift them by the additional height each stretched row consumes. The
+        // Technology row is never stretched, so only the remaining rows add extra height.
         int dataRowCount = LAST_DATA_ROW - FIRST_DATA_ROW + 1;
-        float stretchOffset = (STRETCH_FACTOR - 1.0f) * dataRowCount;
+        float stretchOffset = (STRETCH_FACTOR - 1.0f) * (dataRowCount - 1);
         for (Map.Entry<Object, float[]> entry : originalGeometry.entrySet()) {
             Object cell = entry.getKey();
             float[] orig = entry.getValue();
@@ -772,7 +788,7 @@ public class NrNsaScellDualConnectivityHook {
 
                 v6gFormattersField.set(helper, scellFormatters);
                 v6gSeparatorField.set(helper, v6gSeparatorField.get(nrCell));
-                v6gColorField.set(helper, v6gColorField.get(nrCell));
+                v6gColorField.set(helper, TURQUOISE);
                 v6gAltColorField.set(helper, v6gAltColorField.get(nrCell));
                 v6gGravityField.set(helper, v6gGravityField.get(nrCell));
                 v6aViewField.set(helper, scellView);
