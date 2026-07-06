@@ -162,7 +162,7 @@ public class NrNsaScellDualConnectivityHook {
             return;
         }
         try {
-            hookL0();
+            hookI();
             hookB();
             hookV6eE();
             hookV6fE();
@@ -174,29 +174,57 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     // -------------------------------------------------------------------------
-    // Hook 1: g8.h.l0(Context) — identify NR column cells and build bindings.
+    // Hook 1: v6.b.I(...) — rebuild bindings every time the fragment view is
+    // created. v6.b.I() is the real onCreateView; g8.h inherits it.
+    // On first creation it calls g8.h.l0(); on later recreations (e.g. swipe
+    // back in the view pager) l0() is skipped and only I() runs, so hooking
+    // l0() alone leaves stale view references in rowBindings.
     // -------------------------------------------------------------------------
-    private void hookL0() {
+    private void hookI() {
         try {
-            Class<?> g8hClass = loader.loadClass(TARGET_FRAGMENT);
-            Method l0Method = g8hClass.getDeclaredMethod("l0", Context.class);
-            l0Method.setAccessible(true);
+            Class<?> v6bClass = loader.loadClass(V6_B_CLASS);
+            Method iMethod = v6bClass.getDeclaredMethod("I",
+                    android.view.LayoutInflater.class,
+                    android.view.ViewGroup.class,
+                    android.os.Bundle.class);
+            iMethod.setAccessible(true);
 
-            xposed.hook(l0Method).intercept(new Hooker() {
+            xposed.hook(iMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     try {
-                        buildBindings(chain.getThisObject());
+                        Object fragment = chain.getThisObject();
+                        if (fragment != null && fragment.getClass().getName().equals(TARGET_FRAGMENT)) {
+                            resetAndRebuild(fragment);
+                        }
                     } catch (Exception e) {
-                        Log.w(TAG, "NrNsaScellDualConnectivityHook: l0 hook failed: " + e);
+                        Log.w(TAG, "NrNsaScellDualConnectivityHook: I hook failed: " + e);
                     }
                     return result;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "NrNsaScellDualConnectivityHook: hookL0 failed: " + e);
+            Log.e(TAG, "NrNsaScellDualConnectivityHook: hookI failed: " + e);
         }
+    }
+
+    private void resetAndRebuild(Object fragment) {
+        // If the view was recreated while we were stretched, restore normal
+        // geometry before we forget what "normal" looks like.
+        if (currentlyStretched) {
+            for (RowBinding binding : rowBindings) {
+                setGeometry(binding.nrCell, binding.originalRow, 1.0f);
+                if (binding.lteCell != null) setGeometry(binding.lteCell, binding.originalRow, 1.0f);
+                if (binding.labelCell != null) setGeometry(binding.labelCell, binding.originalRow, 1.0f);
+            }
+        }
+
+        rowBindings.clear();
+        originalGeometry.clear();
+        currentlyStretched = false;
+
+        buildBindings(fragment);
     }
 
     @SuppressWarnings("unchecked")
