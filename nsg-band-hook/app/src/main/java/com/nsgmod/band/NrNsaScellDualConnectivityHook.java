@@ -60,7 +60,6 @@ public class NrNsaScellDualConnectivityHook {
     private static final float COLUMN_TOLERANCE = 4.0f;
     private static final int FIRST_DATA_ROW = 3;
     private static final int LAST_DATA_ROW = 21;
-    private static final int SCELL_PCI_INDEX = 0;
     private static final int TECHNOLOGY_ROW = FIRST_DATA_ROW;
     private static final int TURQUOISE = 0xFF00BCD4;
 
@@ -69,7 +68,11 @@ public class NrNsaScellDualConnectivityHook {
     // (total 2.0) for the same stack, with the PCell/left column spanning the
     // full 2.0 rows and the SCell/right column split into two 1.0-row cells.
     private static final float STRETCH_FACTOR = 2.0f;
-    private static final float STRETCH_OFFSET = (STRETCH_FACTOR - 1.0f) * FIRST_DATA_ROW;
+    // Offset for the first row that actually stretches. Row 3 (Technology) is
+    // intentionally single-height, so the first stretched row is row 4. Using
+    // FIRST_DATA_ROW + 1 maps row 4 -> y=4, row 21 -> y=38, etc., with no gap
+    // below the Technology row.
+    private static final float STRETCH_OFFSET = (STRETCH_FACTOR - 1.0f) * (FIRST_DATA_ROW + 1);
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -259,6 +262,7 @@ public class NrNsaScellDualConnectivityHook {
             progressTextViewCtor.setAccessible(true);
 
             reflectionReady = true;
+            Log.i(TAG, "NrNsaScellDualConnectivityHook: reflection ready");
         } catch (Exception e) {
             Log.e(TAG, "NrNsaScellDualConnectivityHook: reflection init failed: " + e);
         }
@@ -394,10 +398,6 @@ public class NrNsaScellDualConnectivityHook {
             RowBinding binding = new RowBinding(row, rc.label, rc.lte, rc.nr);
             preparePcellFormatters(binding, rc.nr, row);
             rowBindings.add(binding);
-        }
-
-        if (!rowBindings.isEmpty()) {
-            Log.i(TAG, "NrNsaScellDualConnectivityHook: built " + rowBindings.size() + " row bindings");
         }
     }
 
@@ -670,9 +670,10 @@ public class NrNsaScellDualConnectivityHook {
             }
         }
 
-        // In case there are any cells above LAST_DATA_ROW (there should not be in g8.h),
+        // In case there are any cells below LAST_DATA_ROW (there should not be in g8.h),
         // shift them by the additional height each stretched row consumes. The
-        // Technology row is never stretched, so only the remaining rows add extra height.
+        // Technology row is single-height, so the remaining 18 data rows are stretched:
+        // 1*1 + 18*2 = 37 grid units vs the original 19, for a total shift of 18.
         int dataRowCount = LAST_DATA_ROW - FIRST_DATA_ROW + 1;
         float stretchOffset = (STRETCH_FACTOR - 1.0f) * (dataRowCount - 1);
         for (Map.Entry<Object, float[]> entry : originalGeometry.entrySet()) {
