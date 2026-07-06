@@ -1,6 +1,7 @@
 package com.nsgmod.band;
 
 import android.content.Context;
+import android.util.AttributeSet;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -46,9 +47,9 @@ public class NrNsaScellDualConnectivityHook {
     private static final String V6_F_CLASS = "v6.f";
     private static final String V6_G_CLASS = "v6.g";
     private static final String DATA_SOURCE_CLASS = "com.qtrun.sys.DataSource";
-    private static final String PROPERTY_CLASS = "com.qtrun.sys.Property";
-    private static final String ITERATOR_CLASS = "com.qtrun.sys.Property$Iterator";
     private static final String ATTR_A_CLASS = "com.qtrun.sys.a";
+    private static final String FONT_TEXT_VIEW_CLASS = "com.qtrun.widget.textview.FontTextView";
+    private static final String PROGRESS_TEXT_VIEW_CLASS = "com.qtrun.widget.textview.ProgressTextView";
 
     private static final String KEY_SCELL_PCI = "NR5G::Serving_Cell::SCell::NR_SCell_PCI";
 
@@ -65,28 +66,60 @@ public class NrNsaScellDualConnectivityHook {
 
     private boolean reflectionReady = false;
 
-    private Field k2aCellsField;        // k2.a.f5440d -> ArrayList<v6.a>
-    private Field v6aViewField;         // v6.a.f8100a -> View
-    private Field v6aRowField;          // v6.a.f8101b -> float
-    private Field v6aHeightField;       // v6.a.f8102c -> float
-    private Field v6aXField;            // v6.a.f8103d -> float
-    private Field v6dCellsField;        // v6.d.f8109a -> ArrayList<v6.a>
+    private Object unsafe;
+    private Method unsafeObjectFieldOffset;
+    private Method unsafeAllocateInstance;
+    private Method unsafeGetObject;
+    private Method unsafeGetInt;
+    private Method unsafeGetFloat;
+    private Method unsafeGetBoolean;
+    private Method unsafeGetLong;
+    private Method unsafeGetDouble;
+    private Method unsafeGetShort;
+    private Method unsafeGetByte;
+    private Method unsafeGetChar;
+    private Method unsafePutObject;
+    private Method unsafePutInt;
+    private Method unsafePutFloat;
+    private Method unsafePutBoolean;
+    private Method unsafePutLong;
+    private Method unsafePutDouble;
+    private Method unsafePutShort;
+    private Method unsafePutByte;
+    private Method unsafePutChar;
+    private long attrKeyOffset;
+    private long attrFormatOffset;
+    private long attrIndexOffset;
+    private long attrPropertyOffset;
 
-    private Field v6gFormattersField;   // v6.g.f8124f -> ArrayList<com.qtrun.sys.b>
-    private Field v6fFormatterField;    // v6.f.f8120g -> com.qtrun.sys.b
-    private Field v6eTextField;         // v6.e.f8116f -> String
+    private Field k2aCellsField;        // k2.a.d -> ArrayList<v6.a>
+    private Field v6aViewField;         // v6.a.a -> View
+    private Field v6aRowField;          // v6.a.b -> float
+    private Field v6aHeightField;       // v6.a.c -> float
+    private Field v6aXField;            // v6.a.d -> float
+    private Field v6dCellsField;        // v6.d.a -> ArrayList<v6.a>
 
-    private Method dsGetPropertyMethod; // DataSource.getProperty(String, int)
-    private Method propIteratorMethod;  // Property.b(long)
-    private Method iteratorEndMethod;   // Property$Iterator.end()
-    private Method iteratorKeyMethod;   // Property$Iterator.key()
-    private Method iteratorValueMethod; // Property$Iterator.value()
-    private Method attrAExtractor;      // com.qtrun.sys.a.a(Object)
-    private Method attrAFormatter;      // com.qtrun.sys.a.c(Object)
-    private Field attrAKeyFieldSetter;       // com.qtrun.sys.a.f3870c = int
+    private Field v6gFormattersField;   // v6.g.f -> ArrayList<com.qtrun.sys.b>
+    private Field v6gSeparatorField;    // v6.g.h -> String
+    private Field v6gColorField;        // v6.g.i -> int
+    private Field v6gAltColorField;     // v6.g.j -> int
+    private Field v6gGravityField;      // v6.g.k -> int
 
-    private Constructor<?> attrAConstructorKeyOnly;
-    private Constructor<?> attrAConstructorIndexed;
+    private Field v6fValueField;        // v6.f.f -> Object
+    private Field v6fFormatterField;    // v6.f.g -> com.qtrun.sys.b
+    private Field v6fManualField;       // v6.f.i -> boolean
+    private Field v6fColorField;        // v6.f.j -> int
+    private Field v6fMaxField;          // v6.f.k -> float
+
+    private Field v6eTextField;         // v6.e.f -> String
+
+    private Method v6aUpdateMethod;     // v6.a.a(long, DataSource, short)
+    private Method v6eRenderMethod;     // v6.e.e()
+    private Method v6fRenderMethod;     // v6.f.e()
+    private Method v6gRenderMethod;     // v6.g.e()
+
+    private Constructor<?> fontTextViewCtor;
+    private Constructor<?> progressTextViewCtor;
 
     // Bindings for every row that has an NR column cell.
     private final List<RowBinding> rowBindings = new ArrayList<>();
@@ -109,10 +142,53 @@ public class NrNsaScellDualConnectivityHook {
             Class<?> v6eClass = loader.loadClass(V6_E_CLASS);
             Class<?> v6fClass = loader.loadClass(V6_F_CLASS);
             Class<?> v6gClass = loader.loadClass(V6_G_CLASS);
-            Class<?> dsClass = loader.loadClass(DATA_SOURCE_CLASS);
-            Class<?> propClass = loader.loadClass(PROPERTY_CLASS);
-            Class<?> iterClass = loader.loadClass(ITERATOR_CLASS);
             Class<?> attrAClass = loader.loadClass(ATTR_A_CLASS);
+            Class<?> dsClass = loader.loadClass(DATA_SOURCE_CLASS);
+            Class<?> fontTextViewClass = loader.loadClass(FONT_TEXT_VIEW_CLASS);
+            Class<?> progressTextViewClass = loader.loadClass(PROGRESS_TEXT_VIEW_CLASS);
+
+            Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+            Field unsafeField = unsafeClass.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            unsafe = unsafeField.get(null);
+
+            Class<?> fieldClass = Field.class;
+            Class<?> objectClass = Object.class;
+            Class<?> intClass = int.class;
+            Class<?> longClass = long.class;
+            Class<?> floatClass = float.class;
+            Class<?> booleanClass = boolean.class;
+            Class<?> doubleClass = double.class;
+            Class<?> shortClass = short.class;
+            Class<?> byteClass = byte.class;
+            Class<?> charClass = char.class;
+            Class<?> classClass = Class.class;
+
+            unsafeObjectFieldOffset = unsafeClass.getMethod("objectFieldOffset", fieldClass);
+            unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", classClass);
+            unsafeGetObject = unsafeClass.getMethod("getObject", objectClass, longClass);
+            unsafeGetInt = unsafeClass.getMethod("getInt", objectClass, longClass);
+            unsafeGetFloat = unsafeClass.getMethod("getFloat", objectClass, longClass);
+            unsafeGetBoolean = unsafeClass.getMethod("getBoolean", objectClass, longClass);
+            unsafeGetLong = unsafeClass.getMethod("getLong", objectClass, longClass);
+            unsafeGetDouble = unsafeClass.getMethod("getDouble", objectClass, longClass);
+            unsafeGetShort = unsafeClass.getMethod("getShort", objectClass, longClass);
+            unsafeGetByte = unsafeClass.getMethod("getByte", objectClass, longClass);
+            unsafeGetChar = unsafeClass.getMethod("getChar", objectClass, longClass);
+            unsafePutObject = unsafeClass.getMethod("putObject", objectClass, longClass, objectClass);
+            unsafePutInt = unsafeClass.getMethod("putInt", objectClass, longClass, intClass);
+            unsafePutFloat = unsafeClass.getMethod("putFloat", objectClass, longClass, floatClass);
+            unsafePutBoolean = unsafeClass.getMethod("putBoolean", objectClass, longClass, booleanClass);
+            unsafePutLong = unsafeClass.getMethod("putLong", objectClass, longClass, longClass);
+            unsafePutDouble = unsafeClass.getMethod("putDouble", objectClass, longClass, doubleClass);
+            unsafePutShort = unsafeClass.getMethod("putShort", objectClass, longClass, shortClass);
+            unsafePutByte = unsafeClass.getMethod("putByte", objectClass, longClass, byteClass);
+            unsafePutChar = unsafeClass.getMethod("putChar", objectClass, longClass, charClass);
+
+            attrKeyOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField("a"));
+            attrFormatOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField("b"));
+            attrIndexOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField("c"));
+            attrPropertyOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField("d"));
 
             k2aCellsField = k2aClass.getDeclaredField("d");
             k2aCellsField.setAccessible(true);
@@ -131,24 +207,38 @@ public class NrNsaScellDualConnectivityHook {
 
             v6gFormattersField = v6gClass.getDeclaredField("f");
             v6gFormattersField.setAccessible(true);
+            v6gSeparatorField = v6gClass.getDeclaredField("h");
+            v6gSeparatorField.setAccessible(true);
+            v6gColorField = v6gClass.getDeclaredField("i");
+            v6gColorField.setAccessible(true);
+            v6gAltColorField = v6gClass.getDeclaredField("j");
+            v6gAltColorField.setAccessible(true);
+            v6gGravityField = v6gClass.getDeclaredField("k");
+            v6gGravityField.setAccessible(true);
+
+            v6fValueField = v6fClass.getDeclaredField("f");
+            v6fValueField.setAccessible(true);
             v6fFormatterField = v6fClass.getDeclaredField("g");
             v6fFormatterField.setAccessible(true);
+            v6fManualField = v6fClass.getDeclaredField("i");
+            v6fManualField.setAccessible(true);
+            v6fColorField = v6fClass.getDeclaredField("j");
+            v6fColorField.setAccessible(true);
+            v6fMaxField = v6fClass.getDeclaredField("k");
+            v6fMaxField.setAccessible(true);
+
             v6eTextField = v6eClass.getDeclaredField("f");
             v6eTextField.setAccessible(true);
 
-            dsGetPropertyMethod = dsClass.getMethod("getProperty", String.class, int.class);
-            propIteratorMethod = propClass.getMethod("b", long.class);
-            iteratorEndMethod = iterClass.getMethod("end");
-            iteratorKeyMethod = iterClass.getMethod("key");
-            iteratorValueMethod = iterClass.getMethod("value");
+            v6aUpdateMethod = v6aClass.getMethod("a", long.class, dsClass, short.class);
+            v6eRenderMethod = v6eClass.getMethod("e");
+            v6fRenderMethod = v6fClass.getMethod("e");
+            v6gRenderMethod = v6gClass.getMethod("e");
 
-            attrAExtractor = attrAClass.getDeclaredMethod("a", Object.class);
-            attrAFormatter = attrAClass.getDeclaredMethod("c", Object.class);
-            attrAKeyFieldSetter = attrAClass.getDeclaredField("c");
-            attrAKeyFieldSetter.setAccessible(true);
-
-            attrAConstructorKeyOnly = attrAClass.getConstructor(String.class);
-            attrAConstructorIndexed = attrAClass.getConstructor(String.class, int.class, String.class);
+            fontTextViewCtor = fontTextViewClass.getConstructor(Context.class, AttributeSet.class);
+            fontTextViewCtor.setAccessible(true);
+            progressTextViewCtor = progressTextViewClass.getConstructor(Context.class, AttributeSet.class);
+            progressTextViewCtor.setAccessible(true);
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -283,10 +373,8 @@ public class NrNsaScellDualConnectivityHook {
             RowCells rc = entry.getValue();
             if (rc.nr == null) continue;
 
-            SCellConfig config = createScellConfig(row, rc.nr);
-            if (config == null) continue;
-
-            RowBinding binding = new RowBinding(row, rc.label, rc.lte, rc.nr, config);
+            patchPcellKeys(rc.nr, row);
+            RowBinding binding = new RowBinding(row, rc.label, rc.lte, rc.nr);
             rowBindings.add(binding);
         }
 
@@ -355,7 +443,7 @@ public class NrNsaScellDualConnectivityHook {
             LinearLayout container = new LinearLayout(ctx);
             container.setOrientation(LinearLayout.VERTICAL);
 
-            TextView scellView = new TextView(ctx);
+            TextView scellView = createScellView(ctx, pcellView);
             scellView.setGravity(android.view.Gravity.CENTER);
             scellView.setMaxLines(1);
             scellView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, pcellView.getTextSize());
@@ -376,9 +464,25 @@ public class NrNsaScellDualConnectivityHook {
             binding.container = container;
             binding.pcellView = pcellView;
             binding.scellView = scellView;
+            binding.scellCell = createScellCell(binding, scellView);
             binding.wrapped = true;
         }
         return true;
+    }
+
+    private TextView createScellView(Context ctx, TextView pcellView) {
+        try {
+            String name = pcellView.getClass().getName();
+            if (PROGRESS_TEXT_VIEW_CLASS.equals(name)) {
+                return (TextView) progressTextViewCtor.newInstance(ctx, (AttributeSet) null);
+            }
+            if (FONT_TEXT_VIEW_CLASS.equals(name)) {
+                return (TextView) fontTextViewCtor.newInstance(ctx, (AttributeSet) null);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: createScellView failed, using fallback: " + e);
+        }
+        return new TextView(ctx);
     }
 
     private void unwrapAllRows(Object fragment) {
@@ -413,6 +517,7 @@ public class NrNsaScellDualConnectivityHook {
             binding.container = null;
             binding.pcellView = null;
             binding.scellView = null;
+            binding.scellCell = null;
             binding.wrapped = false;
         }
     }
@@ -465,7 +570,7 @@ public class NrNsaScellDualConnectivityHook {
         }
 
         for (RowBinding binding : rowBindings) {
-            updateScellView(binding, dataSource, sampleKey, moduleIndex);
+            updateScellCell(binding, sampleKey, moduleIndex);
         }
 
         if (wasStretched != currentlyStretched || wasWrapped != anyWrapped()) {
@@ -518,21 +623,21 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     // -------------------------------------------------------------------------
-    // Hook 4: v6.g/f/e.e() — PCell view updates after f8100a was replaced.
+    // Hook 3: v6.g/f/e.e() — PCell view updates after f8100a was replaced.
     // -------------------------------------------------------------------------
     private void hookV6eE() {
-        hookV6EMethod(V6_E_CLASS);
+        hookV6EMethod(V6_E_CLASS, v6eRenderMethod);
     }
 
     private void hookV6fE() {
-        hookV6EMethod(V6_F_CLASS);
+        hookV6EMethod(V6_F_CLASS, v6fRenderMethod);
     }
 
     private void hookV6gE() {
-        hookV6EMethod(V6_G_CLASS);
+        hookV6EMethod(V6_G_CLASS, v6gRenderMethod);
     }
 
-    private void hookV6EMethod(String className) {
+    private void hookV6EMethod(String className, final Method cachedRenderMethod) {
         try {
             Class<?> cls = loader.loadClass(className);
             Method eMethod = cls.getDeclaredMethod("e");
@@ -553,8 +658,7 @@ public class NrNsaScellDualConnectivityHook {
                     View pcellView = binding.pcellView;
                     try {
                         v6aViewField.set(cell, pcellView);
-                        Object result = chain.proceed();
-                        return result;
+                        return chain.proceed();
                     } finally {
                         v6aViewField.set(cell, container);
                     }
@@ -575,23 +679,85 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     // -------------------------------------------------------------------------
-    // SCell data reading and view update.
+    // SCell helper cell creation and updates.
     // -------------------------------------------------------------------------
-    private void updateScellView(RowBinding binding, Object dataSource,
-                                 long sampleKey, short moduleIndex) {
-        if (binding.scellView == null) return;
+    private ScellCell createScellCell(RowBinding binding, TextView scellView) {
+        try {
+            Object nrCell = binding.nrCell;
+            String className = nrCell.getClass().getName();
 
-        String text;
-        if (binding.config.isStatic) {
-            text = binding.config.staticText;
-        } else {
-            text = readScellValue(binding.config, dataSource, sampleKey, moduleIndex);
+            if (V6_E_CLASS.equals(className)) {
+                // Label/technology row: keep the SCell sub-view empty.
+                return new ScellCell(true, null, null);
+            }
+
+            if (V6_G_CLASS.equals(className)) {
+                Object helper = nrCell.getClass().newInstance();
+
+                List<Object> pcellFormatters = (List<Object>) v6gFormattersField.get(nrCell);
+                KeyIndex[] scellKeys = getScellKeyIndices(binding.originalRow, pcellFormatters.size());
+
+                List<Object> scellFormatters = new ArrayList<>();
+                for (int i = 0; i < scellKeys.length && i < pcellFormatters.size(); i++) {
+                    scellFormatters.add(cloneFormatter(
+                            pcellFormatters.get(i), scellKeys[i].key, scellKeys[i].index));
+                }
+
+                v6gFormattersField.set(helper, scellFormatters);
+                v6gSeparatorField.set(helper, v6gSeparatorField.get(nrCell));
+                v6gColorField.set(helper, v6gColorField.get(nrCell));
+                v6gAltColorField.set(helper, v6gAltColorField.get(nrCell));
+                v6gGravityField.set(helper, v6gGravityField.get(nrCell));
+                v6aViewField.set(helper, scellView);
+
+                return new ScellCell(false, helper, v6gRenderMethod);
+            }
+
+            if (V6_F_CLASS.equals(className)) {
+                Object pcellFormatter = v6fFormatterField.get(nrCell);
+                KeyIndex[] scellKeys = getScellKeyIndices(binding.originalRow, 1);
+                Object scellFormatter = cloneFormatter(
+                        pcellFormatter, scellKeys[0].key, scellKeys[0].index);
+
+                Object helper = nrCell.getClass().newInstance();
+                v6fValueField.set(helper, null);
+                v6fFormatterField.set(helper, scellFormatter);
+                v6fManualField.set(helper, v6fManualField.get(nrCell));
+                v6fColorField.set(helper, v6fColorField.get(nrCell));
+                v6fMaxField.set(helper, v6fMaxField.get(nrCell));
+                v6aViewField.set(helper, scellView);
+
+                return new ScellCell(false, helper, v6fRenderMethod);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: createScellCell failed for row " + binding.originalRow + ": " + e);
+        }
+        return null;
+    }
+
+    private void updateScellCell(RowBinding binding, long sampleKey, short moduleIndex) {
+        if (!binding.wrapped || binding.scellView == null) return;
+
+        if (binding.scellCell == null) {
+            binding.scellView.setText("-");
+            binding.scellView.setVisibility(currentlyStretched ? View.VISIBLE : View.GONE);
+            return;
         }
 
-        binding.scellView.setText(text != null ? text : "-");
+        if (binding.scellCell.isStatic) {
+            // Label rows show nothing in the SCell sub-row.
+            binding.scellView.setText("");
+        } else {
+            try {
+                v6aUpdateMethod.invoke(binding.scellCell.helper, sampleKey, null, moduleIndex);
+                binding.scellCell.renderMethod.invoke(binding.scellCell.helper);
+            } catch (Exception e) {
+                Log.w(TAG, "NrNsaScellDualConnectivityHook: updateScellCell failed for row " + binding.originalRow + ": " + e);
+            }
+        }
+
         binding.scellView.setVisibility(currentlyStretched ? View.VISIBLE : View.GONE);
 
-        // When not stretched, let the PCell view fill the whole container.
         if (!currentlyStretched && binding.container != null && binding.pcellView != null) {
             LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) binding.pcellView.getLayoutParams();
             lp.weight = 1.0f;
@@ -599,209 +765,236 @@ public class NrNsaScellDualConnectivityHook {
         }
     }
 
-    private String readScellValue(SCellConfig config, Object dataSource,
-                                  long sampleKey, short moduleIndex) {
-        if (config.formatters == null || config.formatters.isEmpty()) {
-            return null;
-        }
-
-        StringBuilder sb = new StringBuilder();
-        for (ScellFormatter sf : config.formatters) {
-            String part = readAndFormat(sf, dataSource, sampleKey, moduleIndex);
-            if (part == null) {
-                part = "-";
-            }
-            if (sb.length() > 0) {
-                sb.append(" / ");
-            }
-            sb.append(part);
-        }
-        return sb.toString();
+    // -------------------------------------------------------------------------
+    // Formatter cloning via Unsafe (preserves subclass fields).
+    // -------------------------------------------------------------------------
+    private Object cloneFormatter(Object original, String newKey, int newIndex) throws Exception {
+        Class<?> clazz = original.getClass();
+        Object clone = unsafeAllocateInstance.invoke(unsafe, clazz);
+        copyFields(original, clone, clazz);
+        unsafePutObject.invoke(unsafe, clone, attrKeyOffset, newKey);
+        unsafePutInt.invoke(unsafe, clone, attrIndexOffset, newIndex);
+        unsafePutObject.invoke(unsafe, clone, attrPropertyOffset, null);
+        return clone;
     }
 
-    private String readAndFormat(ScellFormatter sf, Object dataSource,
-                                 long sampleKey, short moduleIndex) {
-        try {
-            Object rawValue = readPropertyRaw(dataSource, sf.key, moduleIndex, sampleKey);
-            if (rawValue == null) return null;
-
-            Object extracted = attrAExtractor.invoke(sf.formatter, rawValue);
-            if (extracted == null) return null;
-
-            return (String) attrAFormatter.invoke(sf.formatter, extracted);
-        } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: readAndFormat failed for " + sf.key + ": " + e);
-            return null;
-        }
-    }
-
-    private Object readPropertyRaw(Object dataSource, String key, int moduleIndex, long sampleKey) {
-        try {
-            Object property = dsGetPropertyMethod.invoke(dataSource, key, moduleIndex);
-            if (property == null) return null;
-            Object iterator = propIteratorMethod.invoke(property, sampleKey);
-            if (iterator == null || (boolean) iteratorEndMethod.invoke(iterator)) {
-                return null;
+    private void copyFields(Object src, Object dst, Class<?> clazz) {
+        if (clazz == null || clazz == Object.class) return;
+        copyFields(src, dst, clazz.getSuperclass());
+        for (Field f : clazz.getDeclaredFields()) {
+            long offset;
+            try {
+                offset = (Long) unsafeObjectFieldOffset.invoke(unsafe, f);
+            } catch (Exception e) {
+                continue;
             }
-            long actualKey = (long) iteratorKeyMethod.invoke(iterator);
-            Object value = iteratorValueMethod.invoke(iterator);
-            if (value == null && actualKey > 0) {
-                // Prev-tick fallback for partially written head entries.
-                iterator = propIteratorMethod.invoke(property, actualKey - 1);
-                if (iterator != null && !(boolean) iteratorEndMethod.invoke(iterator)) {
-                    value = iteratorValueMethod.invoke(iterator);
+            Class<?> type = f.getType();
+            try {
+                if (type == int.class) {
+                    unsafePutInt.invoke(unsafe, dst, offset, unsafeGetInt.invoke(unsafe, src, offset));
+                } else if (type == float.class) {
+                    unsafePutFloat.invoke(unsafe, dst, offset, unsafeGetFloat.invoke(unsafe, src, offset));
+                } else if (type == boolean.class) {
+                    unsafePutBoolean.invoke(unsafe, dst, offset, unsafeGetBoolean.invoke(unsafe, src, offset));
+                } else if (type == long.class) {
+                    unsafePutLong.invoke(unsafe, dst, offset, unsafeGetLong.invoke(unsafe, src, offset));
+                } else if (type == double.class) {
+                    unsafePutDouble.invoke(unsafe, dst, offset, unsafeGetDouble.invoke(unsafe, src, offset));
+                } else if (type == short.class) {
+                    unsafePutShort.invoke(unsafe, dst, offset, unsafeGetShort.invoke(unsafe, src, offset));
+                } else if (type == byte.class) {
+                    unsafePutByte.invoke(unsafe, dst, offset, unsafeGetByte.invoke(unsafe, src, offset));
+                } else if (type == char.class) {
+                    unsafePutChar.invoke(unsafe, dst, offset, unsafeGetChar.invoke(unsafe, src, offset));
+                } else {
+                    unsafePutObject.invoke(unsafe, dst, offset, unsafeGetObject.invoke(unsafe, src, offset));
                 }
+            } catch (Exception ignored) {
             }
-            return value;
-        } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: readPropertyRaw failed for " + key + ": " + e);
-            return null;
-        }
-    }
-
-    private boolean isScellPresent(Object dataSource, long sampleKey, short moduleIndex) {
-        try {
-            Object rawValue = readPropertyRaw(dataSource, KEY_SCELL_PCI, moduleIndex, sampleKey);
-            if (rawValue == null) return false;
-
-            Object formatter = attrAConstructorIndexed.newInstance(KEY_SCELL_PCI, SCELL_PCI_INDEX, null);
-            Object extracted = attrAExtractor.invoke(formatter, rawValue);
-            if (!(extracted instanceof Number)) return false;
-            return ((Number) extracted).intValue() >= 0;
-        } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: SCell PCI check failed: " + e);
-            return false;
         }
     }
 
     // -------------------------------------------------------------------------
-    // SCell configuration per row.
+    // PCell key override: replace aggregated NR keys with PCell-specific keys.
     // -------------------------------------------------------------------------
-    private SCellConfig createScellConfig(int row, Object nrCell) {
-        switch (row) {
-            case 3:
-                return SCellConfig.staticText("SCell");
-            case 4:
-                return makeConfig(nrCell,
-                        "NR5G::Serving_Cell::SCell::NR_SCell_Band",
-                        "NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL");
-            case 5:
-                return makeConfig(nrCell,
-                        "NR5G::Serving_Cell::SCell::NR_SCell_ARFCN_SSB",
-                        "NR5G::Serving_Cell::SCell::NR_SCell_PCI");
-            case 6:
-                return makeConfig(nrCell, 1,
-                        "NR5G::Cell_Measurements::NR_Cells_SINR");
-            case 7:
-                return makeConfig(nrCell, 1,
-                        "NR5G::Cell_Measurements::NR_Cells_RSRP");
-            case 8:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_MAC_BLER_DL");
-            case 9:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_Num_Antenna_Rx");
-            case 10:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_Rank_DL");
-            case 11:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_RB_Num_Average_DL");
-            case 12:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_MCS_DL");
-            case 13:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_CQI_DL");
-            case 14:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_Modulation_DL");
-            case 15:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_Num_Layers_DL");
-            case 16:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_Physical_Throughput_DL");
-            case 17:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_MAC_Throughput_DL");
-            case 18:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_RLC_Throughput_DL");
-            case 19:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_PDCP_Throughput_DL");
-            case 20:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_256QAM_DL");
-            case 21:
-                return makeConfig(nrCell, 0,
-                        "NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_64QAM_DL");
-            default:
-                return null;
-        }
-    }
-
-    private SCellConfig makeConfig(Object nrCell, int index, String key) {
-        String format = getPcellFormat(nrCell, 0);
-        return makeConfigWithFormat(index, key, format);
-    }
-
-    private SCellConfig makeConfig(Object nrCell, String... keys) {
-        List<ScellFormatter> formatters = new ArrayList<>();
-        for (int i = 0; i < keys.length; i++) {
-            String format = getPcellFormat(nrCell, i);
-            formatters.addAll(makeConfigWithFormat(0, keys[i], format).formatters);
-        }
-        return new SCellConfig(false, null, formatters);
-    }
-
-    private SCellConfig makeConfigWithFormat(int index, String key, String format) {
-        List<ScellFormatter> formatters = new ArrayList<>();
-        try {
-            Object formatter;
-            if (format == null) {
-                formatter = attrAConstructorKeyOnly.newInstance(key);
-            } else {
-                formatter = attrAConstructorIndexed.newInstance(key, index, format);
-            }
-            // Ensure the index is correct even for the key-only constructor.
-            attrAKeyFieldSetter.setInt(formatter, index);
-            formatters.add(new ScellFormatter(key, formatter));
-        } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot build formatter for " + key + ": " + e);
-        }
-        return new SCellConfig(false, null, formatters);
-    }
-
-    private String getPcellFormat(Object nrCell, int index) {
+    private void patchPcellKeys(Object nrCell, int row) {
         try {
             String className = nrCell.getClass().getName();
+            String[] pcellKeys = getPcellKeys(row);
+            if (pcellKeys == null || pcellKeys.length == 0) return;
+
             if (V6_G_CLASS.equals(className)) {
-                List<?> formatters = (List<?>) v6gFormattersField.get(nrCell);
-                if (formatters != null && index < formatters.size()) {
-                    Object fmt = formatters.get(index);
-                    if (fmt != null) {
-                        Field fmtStringField = fmt.getClass().getSuperclass().getDeclaredField("b");
-                        fmtStringField.setAccessible(true);
-                        return (String) fmtStringField.get(fmt);
+                List<Object> formatters = (List<Object>) v6gFormattersField.get(nrCell);
+                if (formatters == null) return;
+                List<Object> patched = new ArrayList<>();
+                for (int i = 0; i < formatters.size(); i++) {
+                    String key = (i < pcellKeys.length) ? pcellKeys[i] : null;
+                    if (key == null) {
+                        patched.add(formatters.get(i));
+                    } else {
+                        patched.add(cloneFormatter(formatters.get(i), key,
+                                (Integer) unsafeGetInt.invoke(unsafe, formatters.get(i), attrIndexOffset)));
                     }
                 }
-            } else if (V6_F_CLASS.equals(className)) {
-                Object fmt = v6fFormatterField.get(nrCell);
-                if (fmt != null) {
-                    Field fmtStringField = fmt.getClass().getSuperclass().getDeclaredField("b");
-                    fmtStringField.setAccessible(true);
-                    return (String) fmtStringField.get(fmt);
-                }
+                v6gFormattersField.set(nrCell, patched);
+            } else if (V6_F_CLASS.equals(className) && pcellKeys.length > 0) {
+                Object formatter = v6fFormatterField.get(nrCell);
+                if (formatter == null) return;
+                Object patched = cloneFormatter(formatter, pcellKeys[0],
+                        (Integer) unsafeGetInt.invoke(unsafe, formatter, attrIndexOffset));
+                v6fFormatterField.set(nrCell, patched);
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: patchPcellKeys failed for row " + row + ": " + e);
         }
-        return null;
     }
 
     // -------------------------------------------------------------------------
-    // Helpers.
+    // Key/index mappings.
+    // -------------------------------------------------------------------------
+    private KeyIndex[] getScellKeyIndices(int row, int formatterCount) {
+        switch (row) {
+            case 3: // Technology
+                return new KeyIndex[0];
+            case 4: // B/W
+                if (formatterCount >= 2) {
+                    return new KeyIndex[]{
+                            new KeyIndex("NR5G::Serving_Cell::SCell::NR_SCell_Band", 0),
+                            new KeyIndex("NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL", 0)
+                    };
+                }
+                return new KeyIndex[]{new KeyIndex("NR5G::Serving_Cell::SCell::NR_SCell_Band", 0)};
+            case 5: // Cell
+                if (formatterCount >= 2) {
+                    return new KeyIndex[]{
+                            new KeyIndex("NR5G::Serving_Cell::SCell::NR_SCell_ARFCN_SSB", 0),
+                            new KeyIndex("NR5G::Serving_Cell::SCell::NR_SCell_PCI", 0)
+                    };
+                }
+                return new KeyIndex[]{new KeyIndex("NR5G::Serving_Cell::SCell::NR_SCell_PCI", 0)};
+            case 6: // SINR
+                return new KeyIndex[]{new KeyIndex("NR5G::Cell_Measurements::NR_Cells_SINR", 1)};
+            case 7: // RSRP
+                return new KeyIndex[]{new KeyIndex("NR5G::Cell_Measurements::NR_Cells_RSRP", 1)};
+            case 8: // BLER
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_MAC_BLER_DL", 0)};
+            case 9: // MIMO
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_Num_Antenna_Rx", 0)};
+            case 10: // Rank
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_Rank_DL", 0)};
+            case 11: // RBs
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_RB_Num_Average_DL", 0)};
+            case 12: // MCS
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_MCS_DL", 0)};
+            case 13: // CQI
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_CQI_DL", 0)};
+            case 14: // Modulation
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_Modulation_DL", 0)};
+            case 15: // Layers
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_Num_Layers_DL", 0)};
+            case 16: // Phy. Thput
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_Physical_Throughput_DL", 0)};
+            case 17: // MAC Thput
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_MAC_Throughput_DL", 0)};
+            case 18: // RLC Thput
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_RLC_Throughput_DL", 0)};
+            case 19: // PDCP Thput
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_PDCP_Throughput_DL", 0)};
+            case 20: // 256Q Util.
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_256QAM_DL", 0)};
+            case 21: // 64Q Util.
+                return new KeyIndex[]{new KeyIndex("NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_64QAM_DL", 0)};
+            default:
+                return new KeyIndex[0];
+        }
+    }
+
+    private String[] getPcellKeys(int row) {
+        switch (row) {
+            case 4: // B/W
+                return new String[]{"NR5G::Serving_Cell::NR_Band", "NR5G::Serving_Cell::NR_Bandwidth_DL"};
+            case 5: // Cell
+                return new String[]{"NR5G::Serving_Cell::NR_ARFCN_SSB", "NR5G::Serving_Cell::NR_PCI"};
+            case 6: // SINR
+                return new String[]{"NR5G::Downlink_Measurements::NR_SSB_Beam_SINR"};
+            case 7: // RSRP
+                return new String[]{"NR5G::Downlink_Measurements::NR_CSI_RSRP"};
+            case 8: // BLER
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_MAC_BLER_DL"};
+            case 9: // MIMO
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_Num_Antenna_Rx"};
+            case 10: // Rank
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_Rank_DL"};
+            case 11: // RBs
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_RB_Num_Average_DL"};
+            case 12: // MCS
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_MCS_DL"};
+            case 13: // CQI
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_CQI_DL"};
+            case 14: // Modulation
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_Modulation_DL"};
+            case 15: // Layers
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_Num_Layers_DL"};
+            case 16: // Phy. Thput
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_Physical_Throughput_DL"};
+            case 17: // MAC Thput
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_MAC_Throughput_DL"};
+            case 18: // RLC Thput
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_RLC_Throughput_DL"};
+            case 19: // PDCP Thput
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_PDCP_Throughput_DL"};
+            case 20: // 256Q Util.
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_ModUsage_256QAM_DL"};
+            case 21: // 64Q Util.
+                return new String[]{"NR5G::Downlink_Measurements::PCell::NR_PCell_ModUsage_64QAM_DL"};
+            default:
+                return new String[0];
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // SCell detection.
+    // -------------------------------------------------------------------------
+    private boolean isScellPresent(Object dataSource, long sampleKey, short moduleIndex) {
+        try {
+            Class<?> dsClass = loader.loadClass(DATA_SOURCE_CLASS);
+            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
+            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
+            Object ds = dataSource;
+            Method getProperty = dsClass.getMethod("getProperty", String.class, int.class);
+            Method iteratorB = propClass.getMethod("b", long.class);
+            Method end = iterClass.getMethod("end");
+            Method value = iterClass.getMethod("value");
+            Method key = iterClass.getMethod("key");
+
+            Object property = getProperty.invoke(ds, KEY_SCELL_PCI, (int) moduleIndex);
+            if (property == null) return false;
+            Object it = iteratorB.invoke(property, sampleKey);
+            if (it == null || (boolean) end.invoke(it)) return false;
+            Object val = value.invoke(it);
+            if (val == null) {
+                long actual = (long) key.invoke(it);
+                if (actual > 0) {
+                    it = iteratorB.invoke(property, actual - 1);
+                    if (it == null || (boolean) end.invoke(it)) return false;
+                    val = value.invoke(it);
+                }
+            }
+            if (!(val instanceof Object[])) return false;
+            Object[] arr = (Object[]) val;
+            if (arr.length == 0) return false;
+            Object first = arr[0];
+            if (first instanceof Number) {
+                return ((Number) first).intValue() >= 0;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: SCell PCI check failed: " + e);
+        }
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
+    // Generic helpers.
     // -------------------------------------------------------------------------
     private static boolean isDataRow(int row) {
         return row >= FIRST_DATA_ROW && row <= LAST_DATA_ROW;
@@ -830,7 +1023,6 @@ public class NrNsaScellDualConnectivityHook {
         if (className == null) return null;
         try {
             Class<?> clazz = loader.loadClass(className);
-            // getField finds public fields including inherited ones.
             Field f = clazz.getField(fieldName);
             return f.get(obj);
         } catch (Exception e) {
@@ -852,45 +1044,40 @@ public class NrNsaScellDualConnectivityHook {
         final Object labelCell;
         final Object lteCell;
         final Object nrCell;
-        final SCellConfig config;
 
         boolean wrapped;
         LinearLayout container;
         TextView pcellView;
         TextView scellView;
+        ScellCell scellCell;
 
-        RowBinding(int originalRow, Object labelCell, Object lteCell, Object nrCell, SCellConfig config) {
+        RowBinding(int originalRow, Object labelCell, Object lteCell, Object nrCell) {
             this.originalRow = originalRow;
             this.labelCell = labelCell;
             this.lteCell = lteCell;
             this.nrCell = nrCell;
-            this.config = config;
         }
     }
 
-    private static class SCellConfig {
+    private static class ScellCell {
         final boolean isStatic;
-        final String staticText;
-        final List<ScellFormatter> formatters;
+        final Object helper;
+        final Method renderMethod;
 
-        SCellConfig(boolean isStatic, String staticText, List<ScellFormatter> formatters) {
+        ScellCell(boolean isStatic, Object helper, Method renderMethod) {
             this.isStatic = isStatic;
-            this.staticText = staticText;
-            this.formatters = formatters;
-        }
-
-        static SCellConfig staticText(String text) {
-            return new SCellConfig(true, text, null);
+            this.helper = helper;
+            this.renderMethod = renderMethod;
         }
     }
 
-    private static class ScellFormatter {
+    private static class KeyIndex {
         final String key;
-        final Object formatter;
+        final int index;
 
-        ScellFormatter(String key, Object formatter) {
+        KeyIndex(String key, int index) {
             this.key = key;
-            this.formatter = formatter;
+            this.index = index;
         }
     }
 }
