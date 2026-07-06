@@ -3,6 +3,7 @@ package com.nsgmod.band;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
@@ -61,6 +62,14 @@ public class NrNsaScellDualConnectivityHook {
     private static final int LAST_DATA_ROW = 21;
     private static final int SCELL_PCI_INDEX = 0;
 
+    // How many logical row units a stacked PCell+SCell row occupies.
+    // The NR-SA CA Matrix DL uses two single-height rows (total 2.0) for the
+    // same stack; the NSA page needs a bit more room because both halves share
+    // one cell and the text/bar geometry is tight. 2.6 gives each sub-row 1.3
+    // units plus a small margin, which matches the comfortable spacing in h8/b.
+    private static final float STRETCH_FACTOR = 2.6f;
+    private static final float STRETCH_OFFSET = (STRETCH_FACTOR - 1.0f) * FIRST_DATA_ROW;
+
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
@@ -114,6 +123,7 @@ public class NrNsaScellDualConnectivityHook {
     private Field v6eTextField;         // v6.e.f -> String
 
     private Method v6aUpdateMethod;     // v6.a.a(long, DataSource, short)
+    private Method v6aResetMethod;      // v6.a.b()
     private Method v6eRenderMethod;     // v6.e.e()
     private Method v6fRenderMethod;     // v6.f.e()
     private Method v6gRenderMethod;     // v6.g.e()
@@ -127,6 +137,12 @@ public class NrNsaScellDualConnectivityHook {
     private final Map<Object, float[]> originalGeometry = new HashMap<>();
     // Tracks whether the grid is currently in stretched mode.
     private boolean currentlyStretched = false;
+
+    // Most recent data-update parameters, kept so wrap/unwrap can re-render the
+    // PCell cell after dynamically swapping its formatters.
+    private long lastSampleKey;
+    private short lastModuleIndex;
+    private Object lastDataSource;
 
     public NrNsaScellDualConnectivityHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -231,6 +247,7 @@ public class NrNsaScellDualConnectivityHook {
             v6eTextField.setAccessible(true);
 
             v6aUpdateMethod = v6aClass.getMethod("a", long.class, dsClass, short.class);
+            v6aResetMethod = v6aClass.getMethod("b");
             v6eRenderMethod = v6eClass.getMethod("e");
             v6fRenderMethod = v6fClass.getMethod("e");
             v6gRenderMethod = v6gClass.getMethod("e");
@@ -373,8 +390,8 @@ public class NrNsaScellDualConnectivityHook {
             RowCells rc = entry.getValue();
             if (rc.nr == null) continue;
 
-            patchPcellKeys(rc.nr, row);
             RowBinding binding = new RowBinding(row, rc.label, rc.lte, rc.nr);
+            preparePcellFormatters(binding, rc.nr, row);
             rowBindings.add(binding);
         }
 
@@ -454,10 +471,21 @@ public class NrNsaScellDualConnectivityHook {
             gridGroup.removeViewAt(index);
             gridGroup.addView(container, index);
 
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            // Give each stacked sub-view a little breathing room so the PCell
+            // and SCell values/bars do not touch. 1 dp top+bottom margin mirrors
+            // the visual separation used in h8/b's adjacent-row layout.
+            int marginPx = (int) TypedValue.applyDimension(
+                    TypedValue.COMPLEX_UNIT_DIP, 1.0f, ctx.getResources().getDisplayMetrics());
+            LinearLayout.LayoutParams pcellLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
-            container.addView(pcellView, lp);
-            container.addView(scellView, lp);
+            pcellLp.topMargin = marginPx;
+            pcellLp.bottomMargin = marginPx;
+            LinearLayout.LayoutParams scellLp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
+            scellLp.topMargin = marginPx;
+            scellLp.bottomMargin = marginPx;
+            container.addView(pcellView, pcellLp);
+            container.addView(scellView, scellLp);
 
             setField(binding.nrCell, v6aViewField, container);
 
@@ -466,6 +494,12 @@ public class NrNsaScellDualConnectivityHook {
             binding.scellView = scellView;
             binding.scellCell = createScellCell(binding, scellView);
             binding.wrapped = true;
+
+            // Now that the SCell is present, make the PCell cell use the
+            // PCell-specific formatter keys so PCell and SCell values are fetched
+            // independently. Refresh the cell with the current sample so the
+            // display updates immediately.
+            applyPcellFormatters(binding, true);
         }
         return true;
     }
@@ -514,6 +548,10 @@ public class NrNsaScellDualConnectivityHook {
 
             setField(binding.nrCell, v6aViewField, binding.pcellView);
 
+            // SCell is gone: revert the PCell cell to its original aggregated
+            // formatter(s) and refresh so PCell-only data is displayed again.
+            applyPcellFormatters(binding, false);
+
             binding.container = null;
             binding.pcellView = null;
             binding.scellView = null;
@@ -550,6 +588,10 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     private void onDataUpdate(Object fragment, Object dataSource, long sampleKey, short moduleIndex) {
+        lastDataSource = dataSource;
+        lastSampleKey = sampleKey;
+        lastModuleIndex = moduleIndex;
+
         boolean scellPresent = isScellPresent(dataSource, sampleKey, moduleIndex);
         boolean wasStretched = currentlyStretched;
         boolean wasWrapped = anyWrapped();
@@ -581,8 +623,8 @@ public class NrNsaScellDualConnectivityHook {
     private void stretchGrid(boolean stretch) {
         for (RowBinding binding : rowBindings) {
             int row = binding.originalRow;
-            float newRow = stretch ? (2.0f * row - 3.0f) : row;
-            float newHeight = stretch ? 2.0f : 1.0f;
+            float newRow = stretch ? (STRETCH_FACTOR * row - STRETCH_OFFSET) : row;
+            float newHeight = stretch ? STRETCH_FACTOR : 1.0f;
 
             setGeometry(binding.nrCell, newRow, newHeight);
             if (binding.lteCell != null) setGeometry(binding.lteCell, newRow, newHeight);
@@ -590,8 +632,9 @@ public class NrNsaScellDualConnectivityHook {
         }
 
         // In case there are any cells above LAST_DATA_ROW (there should not be in g8.h),
-        // shift them by the number of stretched rows when entering stretched mode.
-        int stretchOffset = LAST_DATA_ROW - FIRST_DATA_ROW + 1; // 19
+        // shift them by the additional height each stretched row consumes.
+        int dataRowCount = LAST_DATA_ROW - FIRST_DATA_ROW + 1;
+        float stretchOffset = (STRETCH_FACTOR - 1.0f) * dataRowCount;
         for (Map.Entry<Object, float[]> entry : originalGeometry.entrySet()) {
             Object cell = entry.getKey();
             float[] orig = entry.getValue();
@@ -815,9 +858,14 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     // -------------------------------------------------------------------------
-    // PCell key override: replace aggregated NR keys with PCell-specific keys.
+    // PCell key override: keep both the original aggregated formatter(s) and
+    // the PCell-specific clone(s) in the RowBinding, then swap dynamically when
+    // the SCell appears or disappears. Swapping at build time permanently made
+    // the PCell cell point to PCell::* keys, which are not populated (or have
+    // stale Properties) after SCell de-aggregation, causing '-' for RLC/PDCP
+    // throughput and similar rows.
     // -------------------------------------------------------------------------
-    private void patchPcellKeys(Object nrCell, int row) {
+    private void preparePcellFormatters(RowBinding binding, Object nrCell, int row) {
         try {
             String className = nrCell.getClass().getName();
             String[] pcellKeys = getPcellKeys(row);
@@ -826,26 +874,70 @@ public class NrNsaScellDualConnectivityHook {
             if (V6_G_CLASS.equals(className)) {
                 List<Object> formatters = (List<Object>) v6gFormattersField.get(nrCell);
                 if (formatters == null) return;
-                List<Object> patched = new ArrayList<>();
+                List<Object> originals = new ArrayList<>(formatters);
+                List<Object> pcells = new ArrayList<>();
                 for (int i = 0; i < formatters.size(); i++) {
                     String key = (i < pcellKeys.length) ? pcellKeys[i] : null;
                     if (key == null) {
-                        patched.add(formatters.get(i));
+                        pcells.add(formatters.get(i));
                     } else {
-                        patched.add(cloneFormatter(formatters.get(i), key,
+                        pcells.add(cloneFormatter(formatters.get(i), key,
                                 (Integer) unsafeGetInt.invoke(unsafe, formatters.get(i), attrIndexOffset)));
                     }
                 }
-                v6gFormattersField.set(nrCell, patched);
+                binding.originalV6gFormatters = originals;
+                binding.pcellV6gFormatters = pcells;
             } else if (V6_F_CLASS.equals(className) && pcellKeys.length > 0) {
                 Object formatter = v6fFormatterField.get(nrCell);
                 if (formatter == null) return;
-                Object patched = cloneFormatter(formatter, pcellKeys[0],
+                Object pcell = cloneFormatter(formatter, pcellKeys[0],
                         (Integer) unsafeGetInt.invoke(unsafe, formatter, attrIndexOffset));
-                v6fFormatterField.set(nrCell, patched);
+                binding.originalV6fFormatter = formatter;
+                binding.pcellV6fFormatter = pcell;
             }
         } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: patchPcellKeys failed for row " + row + ": " + e);
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: preparePcellFormatters failed for row " + row + ": " + e);
+        }
+    }
+
+    private void applyPcellFormatters(RowBinding binding, boolean usePcell) {
+        if (binding.usingPcellFormatters == usePcell) return;
+        try {
+            String className = binding.nrCell.getClass().getName();
+            if (V6_G_CLASS.equals(className) && binding.originalV6gFormatters != null) {
+                List<Object> target = usePcell ? binding.pcellV6gFormatters : binding.originalV6gFormatters;
+                v6gFormattersField.set(binding.nrCell, target);
+            } else if (V6_F_CLASS.equals(className) && binding.originalV6fFormatter != null) {
+                Object target = usePcell ? binding.pcellV6fFormatter : binding.originalV6fFormatter;
+                v6fFormatterField.set(binding.nrCell, target);
+            }
+            binding.usingPcellFormatters = usePcell;
+            refreshPcellCell(binding.nrCell, binding.originalRow);
+        } catch (Exception e) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: applyPcellFormatters failed for row " + binding.originalRow + ": " + e);
+        }
+    }
+
+    private void refreshPcellCell(Object nrCell, int row) {
+        try {
+            v6aResetMethod.invoke(nrCell);
+            Object changed = v6aUpdateMethod.invoke(nrCell, lastSampleKey, lastDataSource, lastModuleIndex);
+            if (Boolean.TRUE.equals(changed)) {
+                String className = nrCell.getClass().getName();
+                Method render = null;
+                if (V6_E_CLASS.equals(className)) {
+                    render = v6eRenderMethod;
+                } else if (V6_F_CLASS.equals(className)) {
+                    render = v6fRenderMethod;
+                } else if (V6_G_CLASS.equals(className)) {
+                    render = v6gRenderMethod;
+                }
+                if (render != null) {
+                    render.invoke(nrCell);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: refreshPcellCell failed for row " + row + ": " + e);
         }
     }
 
@@ -1050,6 +1142,15 @@ public class NrNsaScellDualConnectivityHook {
         TextView pcellView;
         TextView scellView;
         ScellCell scellCell;
+
+        // Dynamic PCell formatter swapping: original (aggregated) and
+        // PCell-specific clones. Only non-null for rows where a PCell-specific
+        // key exists (throughputs, BLER, RBs, MCS, CQI, Modulation, ModUsage).
+        Object originalV6fFormatter;
+        Object pcellV6fFormatter;
+        List<Object> originalV6gFormatters;
+        List<Object> pcellV6gFormatters;
+        boolean usingPcellFormatters;
 
         RowBinding(int originalRow, Object labelCell, Object lteCell, Object nrCell) {
             this.originalRow = originalRow;
