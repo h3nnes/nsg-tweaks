@@ -470,26 +470,22 @@ public class NrNsaScellDualConnectivityHook {
             gridGroup.removeViewAt(index);
             gridGroup.addView(container, index);
 
-            // Stack PCell and SCell sub-views so each fills exactly one 1.0-row
-            // half of the 2.0-row NR container, mirroring h8.b's right-hand
-            // column in 3x NR-CA mode. Each child has its own LayoutParams.
+            // Stack PCell and SCell sub-views with a small transparent gap
+            // between them, matching the 2 dp row distance used by the grid
+            // (v6.d.f8115g). This mirrors the NR-SA CA Matrix DL 3x NR-CA layout
+            // where PCell and SCell values are separated by an empty gap, not a
+            // visible divider line.
             LinearLayout.LayoutParams pcellLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
             LinearLayout.LayoutParams scellLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
 
-            int gapPx = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 1.0f, ctx.getResources().getDisplayMetrics());
-            View divider = new View(ctx);
-            LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, gapPx);
-            TypedValue tv = new TypedValue();
-            if (ctx.getTheme().resolveAttribute(android.R.attr.listDivider, tv, true)) {
-                divider.setBackground(ctx.getDrawable(tv.resourceId));
-            } else {
-                divider.setBackgroundColor(0x30ffffff); // fallback translucent gray
-            }
+            int gapPx = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 2.0f, ctx.getResources().getDisplayMetrics());
+            View gap = new View(ctx);
+            LinearLayout.LayoutParams gapLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, gapPx);
 
             container.addView(pcellView, pcellLp);
-            container.addView(divider, divLp);
+            container.addView(gap, gapLp);
             container.addView(scellView, scellLp);
 
             setField(binding.nrCell, v6aViewField, container);
