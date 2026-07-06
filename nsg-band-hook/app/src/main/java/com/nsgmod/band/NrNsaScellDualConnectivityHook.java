@@ -1,7 +1,6 @@
 package com.nsgmod.band;
 
 import android.content.Context;
-import android.util.AttributeSet;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -53,17 +52,6 @@ public class NrNsaScellDualConnectivityHook {
 
     private static final String KEY_SCELL_PCI = "NR5G::Serving_Cell::SCell::NR_SCell_PCI";
 
-    private static final String PROGRESS_TEXT_VIEW_CLASS = "com.qtrun.widget.textview.ProgressTextView";
-
-    private static final String V6F_BAR_SIMPLE_FIELD = "i";
-    private static final String V6F_BAR_COLOR_FIELD = "j";
-    private static final String V6F_BAR_MAX_FIELD = "k";
-    private static final String V6F_VALUE_FIELD = "f";
-
-    private static final String FORMATTER_KEY_FIELD = "a";
-    private static final String FORMATTER_FORMAT_FIELD = "b";
-    private static final String FORMATTER_INDEX_FIELD = "c";
-
     private static final float NR_COLUMN_X = 65.0f;
     private static final float LTE_COLUMN_X = 30.0f;
     private static final float LABEL_COLUMN_X = 0.0f;
@@ -100,18 +88,6 @@ public class NrNsaScellDualConnectivityHook {
     private Constructor<?> attrAConstructorKeyOnly;
     private Constructor<?> attrAConstructorIndexed;
 
-    private Class<?> v6fClass;
-    private Method v6fAMethod;
-    private Method v6fEMethod;
-    private Field v6fSimpleField;
-    private Field v6fColorField;
-    private Field v6fMaxField;
-    private Field v6fValueField;
-
-    private Constructor<?> progressTextViewConstructor;
-
-    private final Map<String, String> pcellKeyOverrides = buildPcellKeyOverrides();
-
     // Bindings for every row that has an NR column cell.
     private final List<RowBinding> rowBindings = new ArrayList<>();
     // Original geometry for every cell we might stretch, so we can restore it.
@@ -131,7 +107,7 @@ public class NrNsaScellDualConnectivityHook {
             Class<?> v6aClass = loader.loadClass(V6_A_CLASS);
             Class<?> v6dClass = loader.loadClass(V6_D_CLASS);
             Class<?> v6eClass = loader.loadClass(V6_E_CLASS);
-            v6fClass = loader.loadClass(V6_F_CLASS);
+            Class<?> v6fClass = loader.loadClass(V6_F_CLASS);
             Class<?> v6gClass = loader.loadClass(V6_G_CLASS);
             Class<?> dsClass = loader.loadClass(DATA_SOURCE_CLASS);
             Class<?> propClass = loader.loadClass(PROPERTY_CLASS);
@@ -174,23 +150,6 @@ public class NrNsaScellDualConnectivityHook {
             attrAConstructorKeyOnly = attrAClass.getConstructor(String.class);
             attrAConstructorIndexed = attrAClass.getConstructor(String.class, int.class, String.class);
 
-            v6fAMethod = v6fClass.getDeclaredMethod("a", long.class, dsClass, short.class);
-            v6fAMethod.setAccessible(true);
-            v6fEMethod = v6fClass.getDeclaredMethod("e");
-            v6fEMethod.setAccessible(true);
-            v6fSimpleField = v6fClass.getDeclaredField(V6F_BAR_SIMPLE_FIELD);
-            v6fSimpleField.setAccessible(true);
-            v6fColorField = v6fClass.getDeclaredField(V6F_BAR_COLOR_FIELD);
-            v6fColorField.setAccessible(true);
-            v6fMaxField = v6fClass.getDeclaredField(V6F_BAR_MAX_FIELD);
-            v6fMaxField.setAccessible(true);
-            v6fValueField = v6fClass.getDeclaredField(V6F_VALUE_FIELD);
-            v6fValueField.setAccessible(true);
-
-            Class<?> ptvClass = loader.loadClass(PROGRESS_TEXT_VIEW_CLASS);
-            progressTextViewConstructor = ptvClass.getConstructor(Context.class, AttributeSet.class);
-            progressTextViewConstructor.setAccessible(true);
-
             reflectionReady = true;
         } catch (Exception e) {
             Log.e(TAG, "NrNsaScellDualConnectivityHook: reflection init failed: " + e);
@@ -212,31 +171,6 @@ public class NrNsaScellDualConnectivityHook {
         } catch (Exception e) {
             Log.e(TAG, "NrNsaScellDualConnectivityHook: install failed: " + e);
         }
-    }
-
-    private static Map<String, String> buildPcellKeyOverrides() {
-        Map<String, String> map = new HashMap<>();
-        map.put("NR5G::Downlink_Measurements::NR_MAC_BLER_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_MAC_BLER_DL");
-        map.put("NR5G::Downlink_Measurements::NR_RB_Num_Average_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_RB_Num_Average_DL");
-        map.put("NR5G::Downlink_Measurements::NR_MCS_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_MCS_DL");
-        map.put("NR5G::Downlink_Measurements::NR_Modulation_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_Modulation_DL");
-        map.put("NR5G::Downlink_Measurements::NR_Physical_Throughput_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_Physical_Throughput_DL");
-        map.put("NR5G::Downlink_Measurements::NR_MAC_Throughput_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_MAC_Throughput_DL");
-        map.put("NR5G::Downlink_Measurements::NR_RLC_Throughput_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_RLC_Throughput_DL");
-        map.put("NR5G::Downlink_Measurements::NR_PDCP_Throughput_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_PDCP_Throughput_DL");
-        map.put("NR5G::Downlink_Measurements::NR_ModUsage_256QAM_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_ModUsage_256QAM_DL");
-        map.put("NR5G::Downlink_Measurements::NR_ModUsage_64QAM_DL",
-                "NR5G::Downlink_Measurements::PCell::NR_PCell_ModUsage_64QAM_DL");
-        return map;
     }
 
     // -------------------------------------------------------------------------
@@ -353,10 +287,6 @@ public class NrNsaScellDualConnectivityHook {
             if (config == null) continue;
 
             RowBinding binding = new RowBinding(row, rc.label, rc.lte, rc.nr, config);
-            if (V6_F_CLASS.equals(rc.nr.getClass().getName())) {
-                binding.barHelper = createBarHelper(rc.nr, config);
-            }
-            patchPcellKeys(rc.nr);
             rowBindings.add(binding);
         }
 
@@ -425,17 +355,13 @@ public class NrNsaScellDualConnectivityHook {
             LinearLayout container = new LinearLayout(ctx);
             container.setOrientation(LinearLayout.VERTICAL);
 
-            TextView scellView = createScellView(pcellView);
-            if (scellView == null) {
-                Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot create SCell view for row " + binding.originalRow);
-                continue;
-            }
-            if (binding.barHelper != null) {
-                try {
-                    v6aViewField.set(binding.barHelper, scellView);
-                } catch (Exception ignored) {
-                }
-            }
+            TextView scellView = new TextView(ctx);
+            scellView.setGravity(android.view.Gravity.CENTER);
+            scellView.setMaxLines(1);
+            scellView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, pcellView.getTextSize());
+            scellView.setTypeface(pcellView.getTypeface());
+            scellView.setTextColor(pcellView.getTextColors());
+            scellView.setText("-");
 
             gridGroup.removeViewAt(index);
             gridGroup.addView(container, index);
@@ -489,28 +415,6 @@ public class NrNsaScellDualConnectivityHook {
             binding.scellView = null;
             binding.wrapped = false;
         }
-    }
-
-    private TextView createScellView(TextView pcellView) {
-        Context ctx = pcellView.getContext();
-        TextView scellView;
-        try {
-            if (pcellView.getClass().getName().equals(PROGRESS_TEXT_VIEW_CLASS)) {
-                scellView = (TextView) progressTextViewConstructor.newInstance(ctx, null);
-            } else {
-                scellView = (TextView) pcellView.getClass().getConstructor(Context.class, AttributeSet.class).newInstance(ctx, null);
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "createScellView: could not mirror PCell view type, falling back to TextView: " + e);
-            scellView = new TextView(ctx);
-        }
-        scellView.setGravity(pcellView.getGravity());
-        scellView.setMaxLines(1);
-        scellView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, pcellView.getTextSize());
-        scellView.setTypeface(pcellView.getTypeface());
-        scellView.setTextColor(pcellView.getTextColors());
-        scellView.setText("-");
-        return scellView;
     }
 
     // -------------------------------------------------------------------------
@@ -677,23 +581,14 @@ public class NrNsaScellDualConnectivityHook {
                                  long sampleKey, short moduleIndex) {
         if (binding.scellView == null) return;
 
+        String text;
         if (binding.config.isStatic) {
-            binding.scellView.setText(binding.config.staticText != null ? binding.config.staticText : "");
-        } else if (binding.barHelper != null) {
-            try {
-                v6aViewField.set(binding.barHelper, binding.scellView);
-                v6fAMethod.invoke(binding.barHelper, sampleKey, dataSource, moduleIndex);
-                v6fEMethod.invoke(binding.barHelper);
-            } catch (Exception e) {
-                Log.w(TAG, "NrNsaScellDualConnectivityHook: bar SCell update failed for row "
-                        + binding.originalRow + ": " + e);
-                binding.scellView.setText("-");
-            }
+            text = binding.config.staticText;
         } else {
-            String text = readScellValue(binding.config, dataSource, sampleKey, moduleIndex);
-            binding.scellView.setText(text != null ? text : "-");
+            text = readScellValue(binding.config, dataSource, sampleKey, moduleIndex);
         }
 
+        binding.scellView.setText(text != null ? text : "-");
         binding.scellView.setVisibility(currentlyStretched ? View.VISIBLE : View.GONE);
 
         // When not stretched, let the PCell view fill the whole container.
@@ -785,7 +680,7 @@ public class NrNsaScellDualConnectivityHook {
     private SCellConfig createScellConfig(int row, Object nrCell) {
         switch (row) {
             case 3:
-                return SCellConfig.staticText("");
+                return SCellConfig.staticText("SCell");
             case 4:
                 return makeConfig(nrCell,
                         "NR5G::Serving_Cell::SCell::NR_SCell_Band",
@@ -848,172 +743,35 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     private SCellConfig makeConfig(Object nrCell, int index, String key) {
-        Object pcellFormatter = getPcellFormatter(nrCell, 0);
-        if (pcellFormatter == null) {
-            return makeFallbackConfig(index, key);
-        }
-        Object scellFormatter = cloneFormatter(pcellFormatter, key, index);
-        List<ScellFormatter> formatters = new ArrayList<>();
-        if (scellFormatter != null) {
-            formatters.add(new ScellFormatter(key, scellFormatter));
-        }
-        return new SCellConfig(false, null, formatters);
+        String format = getPcellFormat(nrCell, 0);
+        return makeConfigWithFormat(index, key, format);
     }
 
     private SCellConfig makeConfig(Object nrCell, String... keys) {
         List<ScellFormatter> formatters = new ArrayList<>();
         for (int i = 0; i < keys.length; i++) {
-            Object pcellFormatter = getPcellFormatter(nrCell, i);
-            if (pcellFormatter == null) continue;
-            Object scellFormatter = cloneFormatter(pcellFormatter, keys[i], 0);
-            if (scellFormatter != null) {
-                formatters.add(new ScellFormatter(keys[i], scellFormatter));
-            }
+            String format = getPcellFormat(nrCell, i);
+            formatters.addAll(makeConfigWithFormat(0, keys[i], format).formatters);
         }
         return new SCellConfig(false, null, formatters);
     }
 
-    private SCellConfig makeFallbackConfig(int index, String key) {
+    private SCellConfig makeConfigWithFormat(int index, String key, String format) {
         List<ScellFormatter> formatters = new ArrayList<>();
         try {
-            Object formatter = attrAConstructorKeyOnly.newInstance(key);
+            Object formatter;
+            if (format == null) {
+                formatter = attrAConstructorKeyOnly.newInstance(key);
+            } else {
+                formatter = attrAConstructorIndexed.newInstance(key, index, format);
+            }
+            // Ensure the index is correct even for the key-only constructor.
             attrAKeyFieldSetter.setInt(formatter, index);
             formatters.add(new ScellFormatter(key, formatter));
         } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot build fallback formatter for " + key + ": " + e);
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot build formatter for " + key + ": " + e);
         }
         return new SCellConfig(false, null, formatters);
-    }
-
-    private Object getPcellFormatter(Object nrCell, int index) {
-        try {
-            String className = nrCell.getClass().getName();
-            if (V6_G_CLASS.equals(className)) {
-                List<?> formatters = (List<?>) v6gFormattersField.get(nrCell);
-                if (formatters != null && index < formatters.size()) {
-                    return formatters.get(index);
-                }
-            } else if (V6_F_CLASS.equals(className)) {
-                return v6fFormatterField.get(nrCell);
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
-    }
-
-    private Object cloneFormatter(Object pcellFormatter, String key, int index) {
-        try {
-            Class<?> clazz = pcellFormatter.getClass();
-            String format = getFormatString(pcellFormatter);
-            Object formatter;
-            if (ATTR_A_CLASS.equals(clazz.getName()) || "com.qtrun.sys.b".equals(clazz.getName())) {
-                formatter = attrAConstructorIndexed.newInstance(key, index, format);
-            } else {
-                Constructor<?> ctor = clazz.getConstructor(String.class);
-                formatter = ctor.newInstance(key);
-            }
-            attrAKeyFieldSetter.setInt(formatter, index);
-            return formatter;
-        } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot clone formatter for " + key + ": " + e);
-            try {
-                return attrAConstructorIndexed.newInstance(key, index, getFormatString(pcellFormatter));
-            } catch (Exception e2) {
-                try {
-                    return attrAConstructorKeyOnly.newInstance(key);
-                } catch (Exception e3) {
-                    return null;
-                }
-            }
-        }
-    }
-
-    private String getFormatString(Object formatter) {
-        try {
-            Field f = findField(formatter.getClass(), FORMATTER_FORMAT_FIELD);
-            if (f != null) {
-                return (String) f.get(formatter);
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
-    }
-
-    private static Field findField(Class<?> clazz, String name) {
-        while (clazz != null) {
-            try {
-                Field f = clazz.getDeclaredField(name);
-                f.setAccessible(true);
-                return f;
-            } catch (NoSuchFieldException e) {
-                clazz = clazz.getSuperclass();
-            }
-        }
-        return null;
-    }
-
-    private Object createBarHelper(Object pcellCell, SCellConfig config) {
-        if (config.formatters == null || config.formatters.isEmpty()) {
-            return null;
-        }
-        try {
-            Object helper = v6fClass.getConstructor().newInstance();
-            v6fSimpleField.setBoolean(helper, v6fSimpleField.getBoolean(pcellCell));
-            v6fColorField.setInt(helper, v6fColorField.getInt(pcellCell));
-            v6fMaxField.setFloat(helper, v6fMaxField.getFloat(pcellCell));
-            v6fFormatterField.set(helper, config.formatters.get(0).formatter);
-            return helper;
-        } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot create bar helper: " + e);
-            return null;
-        }
-    }
-
-    private void patchPcellKeys(Object nrCell) {
-        try {
-            String className = nrCell.getClass().getName();
-            List<Object> formatters = new ArrayList<>();
-            if (V6_G_CLASS.equals(className)) {
-                List<?> list = (List<?>) v6gFormattersField.get(nrCell);
-                if (list != null) formatters.addAll(list);
-            } else if (V6_F_CLASS.equals(className)) {
-                Object fmt = v6fFormatterField.get(nrCell);
-                if (fmt != null) formatters.add(fmt);
-            } else {
-                return;
-            }
-            for (int i = 0; i < formatters.size(); i++) {
-                Object fmt = formatters.get(i);
-                String key = (String) getFieldDeep(fmt, FORMATTER_KEY_FIELD);
-                String override = pcellKeyOverrides.get(key);
-                if (override == null) continue;
-                int index = (int) getFieldDeep(fmt, FORMATTER_INDEX_FIELD);
-                Object newFmt = cloneFormatter(fmt, override, index);
-                if (newFmt == null) continue;
-                if (V6_G_CLASS.equals(className)) {
-                    List<Object> list = (List<Object>) v6gFormattersField.get(nrCell);
-                    if (list != null) list.set(i, newFmt);
-                } else {
-                    v6fFormatterField.set(nrCell, newFmt);
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: patchPcellKeys failed: " + e);
-        }
-    }
-
-    private static Object getFieldDeep(Object obj, String name) throws Exception {
-        Class<?> clazz = obj.getClass();
-        while (clazz != null) {
-            try {
-                Field f = clazz.getDeclaredField(name);
-                f.setAccessible(true);
-                return f.get(obj);
-            } catch (NoSuchFieldException e) {
-                clazz = clazz.getSuperclass();
-            }
-        }
-        return null;
     }
 
     private String getPcellFormat(Object nrCell, int index) {
@@ -1100,7 +858,6 @@ public class NrNsaScellDualConnectivityHook {
         LinearLayout container;
         TextView pcellView;
         TextView scellView;
-        Object barHelper;
 
         RowBinding(int originalRow, Object labelCell, Object lteCell, Object nrCell, SCellConfig config) {
             this.originalRow = originalRow;
