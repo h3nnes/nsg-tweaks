@@ -63,11 +63,10 @@ public class NrNsaScellDualConnectivityHook {
     private static final int SCELL_PCI_INDEX = 0;
 
     // How many logical row units a stacked PCell+SCell row occupies.
-    // The NR-SA CA Matrix DL uses two single-height rows (total 2.0) for the
-    // same stack; the NSA page needs a bit more room because both halves share
-    // one cell and the text/bar geometry is tight. 2.6 gives each sub-row 1.3
-    // units plus a small margin, which matches the comfortable spacing in h8/b.
-    private static final float STRETCH_FACTOR = 2.6f;
+    // The NR-SA CA Matrix DL (h8.b, f5066a0 == 3) uses two single-height rows
+    // (total 2.0) for the same stack, with the PCell/left column spanning the
+    // full 2.0 rows and the SCell/right column split into two 1.0-row cells.
+    private static final float STRETCH_FACTOR = 2.0f;
     private static final float STRETCH_OFFSET = (STRETCH_FACTOR - 1.0f) * FIRST_DATA_ROW;
 
     private final XposedInterface xposed;
@@ -471,19 +470,13 @@ public class NrNsaScellDualConnectivityHook {
             gridGroup.removeViewAt(index);
             gridGroup.addView(container, index);
 
-            // Give each stacked sub-view a little breathing room so the PCell
-            // and SCell values/bars do not touch. 1 dp top+bottom margin mirrors
-            // the visual separation used in h8/b's adjacent-row layout.
-            int marginPx = (int) TypedValue.applyDimension(
-                    TypedValue.COMPLEX_UNIT_DIP, 1.0f, ctx.getResources().getDisplayMetrics());
+            // Stack PCell and SCell sub-views so each fills exactly one 1.0-row
+            // half of the 2.0-row NR container, mirroring h8.b's right-hand
+            // column in 3x NR-CA mode. Each child has its own LayoutParams.
             LinearLayout.LayoutParams pcellLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
-            pcellLp.topMargin = marginPx;
-            pcellLp.bottomMargin = marginPx;
             LinearLayout.LayoutParams scellLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
-            scellLp.topMargin = marginPx;
-            scellLp.bottomMargin = marginPx;
             container.addView(pcellView, pcellLp);
             container.addView(scellView, scellLp);
 
@@ -624,11 +617,31 @@ public class NrNsaScellDualConnectivityHook {
         for (RowBinding binding : rowBindings) {
             int row = binding.originalRow;
             float newRow = stretch ? (STRETCH_FACTOR * row - STRETCH_OFFSET) : row;
-            float newHeight = stretch ? STRETCH_FACTOR : 1.0f;
 
-            setGeometry(binding.nrCell, newRow, newHeight);
-            if (binding.lteCell != null) setGeometry(binding.lteCell, newRow, newHeight);
-            if (binding.labelCell != null) setGeometry(binding.labelCell, newRow, newHeight);
+            if (stretch) {
+                // NR column container spans the full 2.0-row logical row.
+                setGeometry(binding.nrCell, newRow, 2.0f);
+                // Label column mirrors the NR column container height.
+                if (binding.labelCell != null) {
+                    setGeometry(binding.labelCell, newRow, 2.0f);
+                }
+                // LTE/PCell column: text cells span the full 2.0 rows; progress-bar
+                // cells (MCS, CQI, 256Q Util., 64Q Util.) are shorter and anchored
+                // lower, matching h8.b's o0() geometry in 3x NR-CA mode.
+                if (binding.lteCell != null) {
+                    String lteClass = binding.lteCell.getClass().getName();
+                    if (V6_F_CLASS.equals(lteClass)) {
+                        setGeometry(binding.lteCell, newRow + 0.3f, 1.4f);
+                    } else {
+                        setGeometry(binding.lteCell, newRow, 2.0f);
+                    }
+                }
+            } else {
+                // Restore every bound cell to its original single-row geometry.
+                setGeometry(binding.nrCell, row, 1.0f);
+                if (binding.lteCell != null) setGeometry(binding.lteCell, row, 1.0f);
+                if (binding.labelCell != null) setGeometry(binding.labelCell, row, 1.0f);
+            }
         }
 
         // In case there are any cells above LAST_DATA_ROW (there should not be in g8.h),
