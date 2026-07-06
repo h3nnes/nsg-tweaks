@@ -477,7 +477,19 @@ public class NrNsaScellDualConnectivityHook {
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
             LinearLayout.LayoutParams scellLp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
+
+            int gapPx = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 1.0f, ctx.getResources().getDisplayMetrics());
+            View divider = new View(ctx);
+            LinearLayout.LayoutParams divLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, gapPx);
+            TypedValue tv = new TypedValue();
+            if (ctx.getTheme().resolveAttribute(android.R.attr.listDivider, tv, true)) {
+                divider.setBackground(ctx.getDrawable(tv.resourceId));
+            } else {
+                divider.setBackgroundColor(0x30ffffff); // fallback translucent gray
+            }
+
             container.addView(pcellView, pcellLp);
+            container.addView(divider, divLp);
             container.addView(scellView, scellLp);
 
             setField(binding.nrCell, v6aViewField, container);
@@ -544,6 +556,7 @@ public class NrNsaScellDualConnectivityHook {
             // SCell is gone: revert the PCell cell to its original aggregated
             // formatter(s) and refresh so PCell-only data is displayed again.
             applyPcellFormatters(binding, false);
+            setField(binding.nrCell, v6aViewField, binding.pcellView);
 
             binding.container = null;
             binding.pcellView = null;
@@ -586,29 +599,31 @@ public class NrNsaScellDualConnectivityHook {
         lastModuleIndex = moduleIndex;
 
         boolean scellPresent = isScellPresent(dataSource, sampleKey, moduleIndex);
-        boolean wasStretched = currentlyStretched;
-        boolean wasWrapped = anyWrapped();
+        boolean layoutNeeded = false;
 
-        if (scellPresent && !currentlyStretched) {
-            // Defer wrapping until the first data update that actually has an SCell.
-            // Wrapping before this point would alter the PCell-only layout.
-            if (wrapAllRows(fragment)) {
-                stretchGrid(true);
-                currentlyStretched = true;
+        if (scellPresent) {
+            if (!anyWrapped()) {
+                if (!wrapAllRows(fragment)) return;
+                layoutNeeded = true;
             }
-        } else if (!scellPresent && currentlyStretched) {
-            // Restore the original single-row geometry before removing the containers,
-            // otherwise the unwrapped PCell views would keep the stretched height.
-            stretchGrid(false);
-            currentlyStretched = false;
-            unwrapAllRows(fragment);
+            // Always re-apply stretched geometry while an SCell is present.
+            stretchGrid(true);
+            currentlyStretched = true;
+            layoutNeeded = true;
+        } else {
+            if (anyWrapped() || currentlyStretched) {
+                stretchGrid(false);
+                unwrapAllRows(fragment);
+                currentlyStretched = false;
+                layoutNeeded = true;
+            }
         }
 
         for (RowBinding binding : rowBindings) {
             updateScellCell(binding, sampleKey, moduleIndex);
         }
 
-        if (wasStretched != currentlyStretched || wasWrapped != anyWrapped()) {
+        if (layoutNeeded) {
             requestGridLayout(fragment);
         }
     }
