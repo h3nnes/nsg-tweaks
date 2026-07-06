@@ -5,7 +5,6 @@ import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -164,7 +163,6 @@ public class NrNsaScellDualConnectivityHook {
         }
         try {
             hookL0();
-            hookI();
             hookB();
             hookV6eE();
             hookV6fE();
@@ -270,72 +268,59 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     // -------------------------------------------------------------------------
-    // Hook 2: g8.h.I(...) — after the grid is built, wrap NR cell TextViews.
+    // Helpers: wrap/unwrap NR column views on first/last SCell detection.
     // -------------------------------------------------------------------------
-    private void hookI() {
-        try {
-            // g8.h inherits I(LayoutInflater, ViewGroup, Bundle) from v6.b,
-            // so we must hook v6.b.I and guard on the actual fragment class.
-            Class<?> g8hClass = loader.loadClass(TARGET_FRAGMENT);
-            Class<?> v6bClass = loader.loadClass(V6_B_CLASS);
-            Class<?> layoutInflaterClass = loader.loadClass("android.view.LayoutInflater");
-            Class<?> viewGroupClass = loader.loadClass("android.view.ViewGroup");
-            Class<?> bundleClass = loader.loadClass("android.os.Bundle");
-            Method iMethod = v6bClass.getDeclaredMethod("I", layoutInflaterClass, viewGroupClass, bundleClass);
-            iMethod.setAccessible(true);
-
-            xposed.hook(iMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result = chain.proceed();
-                    try {
-                        if (g8hClass.isInstance(chain.getThisObject())) {
-                            wrapNrViews(result);
-                        }
-                    } catch (Exception e) {
-                        Log.w(TAG, "NrNsaScellDualConnectivityHook: I hook failed: " + e);
-                    }
-                    return result;
-                }
-            });
-        } catch (Exception e) {
-            Log.e(TAG, "NrNsaScellDualConnectivityHook: hookI failed: " + e);
+    private boolean anyWrapped() {
+        for (RowBinding binding : rowBindings) {
+            if (binding.wrapped) return true;
         }
+        return false;
     }
 
-    private void wrapNrViews(Object fragmentView) {
-        if (!(fragmentView instanceof ScrollView)) {
-            return;
+    private boolean wrapAllRows(Object fragment) {
+        Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
+        if (k2a == null) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, fragment.Y is null");
+            return false;
         }
-        ScrollView scrollView = (ScrollView) fragmentView;
-        if (scrollView.getChildCount() < 1) {
-            return;
-        }
-        View gridView = scrollView.getChildAt(0);
+        View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
         if (gridView == null) {
-            return;
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, grid is null");
+            return false;
         }
 
         List<Object> gridCells;
         try {
             gridCells = (List<Object>) v6dCellsField.get(gridView);
         } catch (Exception e) {
-            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot read grid cells: " + e);
-            return;
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot read grid cells for wrap: " + e);
+            return false;
         }
         if (gridCells == null) {
-            return;
+            return false;
+        }
+
+        // Validate that every unwrapped NR cell still maps to a TextView child.
+        ViewGroup gridGroup = (ViewGroup) gridView;
+        for (RowBinding binding : rowBindings) {
+            if (binding.wrapped) continue;
+            int index = gridCells.indexOf(binding.nrCell);
+            if (index < 0 || index >= gridGroup.getChildCount()) {
+                Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot find grid child for row " + binding.originalRow);
+                return false;
+            }
+            View originalView = gridGroup.getChildAt(index);
+            if (!(originalView instanceof TextView)) {
+                Log.w(TAG, "NrNsaScellDualConnectivityHook: grid child is not a TextView for row " + binding.originalRow);
+                return false;
+            }
         }
 
         for (RowBinding binding : rowBindings) {
             if (binding.wrapped) continue;
 
             int index = gridCells.indexOf(binding.nrCell);
-            if (index < 0 || index >= ((ViewGroup) gridView).getChildCount()) continue;
-
-            View originalView = ((ViewGroup) gridView).getChildAt(index);
-            if (!(originalView instanceof TextView)) continue;
-
+            View originalView = gridGroup.getChildAt(index);
             TextView pcellView = (TextView) originalView;
             Context ctx = pcellView.getContext();
 
@@ -348,11 +333,8 @@ public class NrNsaScellDualConnectivityHook {
             scellView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, pcellView.getTextSize());
             scellView.setTypeface(pcellView.getTypeface());
             scellView.setTextColor(pcellView.getTextColors());
+            scellView.setText("-");
 
-            // Remove the original view from the grid and add the container in its place,
-            // then move the original view into the container. This keeps the grid child
-            // order aligned with the cells list.
-            ViewGroup gridGroup = (ViewGroup) gridView;
             gridGroup.removeViewAt(index);
             gridGroup.addView(container, index);
 
@@ -361,7 +343,6 @@ public class NrNsaScellDualConnectivityHook {
             container.addView(pcellView, lp);
             container.addView(scellView, lp);
 
-            // Update the cell's view reference.
             setField(binding.nrCell, v6aViewField, container);
 
             binding.container = container;
@@ -369,10 +350,47 @@ public class NrNsaScellDualConnectivityHook {
             binding.scellView = scellView;
             binding.wrapped = true;
         }
+        return true;
+    }
+
+    private void unwrapAllRows(Object fragment) {
+        Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
+        if (k2a == null) return;
+        View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
+        if (gridView == null) return;
+
+        List<Object> gridCells;
+        try {
+            gridCells = (List<Object>) v6dCellsField.get(gridView);
+        } catch (Exception e) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot read grid cells for unwrap: " + e);
+            return;
+        }
+        if (gridCells == null) return;
+
+        ViewGroup gridGroup = (ViewGroup) gridView;
+        for (RowBinding binding : rowBindings) {
+            if (!binding.wrapped || binding.container == null || binding.pcellView == null) continue;
+
+            int index = gridCells.indexOf(binding.nrCell);
+            if (index < 0 || index >= gridGroup.getChildCount()) continue;
+            if (gridGroup.getChildAt(index) != binding.container) continue;
+
+            binding.container.removeView(binding.pcellView);
+            gridGroup.removeViewAt(index);
+            gridGroup.addView(binding.pcellView, index);
+
+            setField(binding.nrCell, v6aViewField, binding.pcellView);
+
+            binding.container = null;
+            binding.pcellView = null;
+            binding.scellView = null;
+            binding.wrapped = false;
+        }
     }
 
     // -------------------------------------------------------------------------
-    // Hook 3: g8.h.b(DataSource, long, short, Object) — data updates & stretch.
+    // Hook 2: g8.h.b(DataSource, long, short, Object) — data updates & stretch.
     // -------------------------------------------------------------------------
     private void hookB() {
         try {
@@ -401,20 +419,28 @@ public class NrNsaScellDualConnectivityHook {
     private void onDataUpdate(Object fragment, Object dataSource, long sampleKey, short moduleIndex) {
         boolean scellPresent = isScellPresent(dataSource, sampleKey, moduleIndex);
         boolean wasStretched = currentlyStretched;
+        boolean wasWrapped = anyWrapped();
 
         if (scellPresent && !currentlyStretched) {
-            stretchGrid(true);
-            currentlyStretched = true;
+            // Defer wrapping until the first data update that actually has an SCell.
+            // Wrapping before this point would alter the PCell-only layout.
+            if (wrapAllRows(fragment)) {
+                stretchGrid(true);
+                currentlyStretched = true;
+            }
         } else if (!scellPresent && currentlyStretched) {
+            // Restore the original single-row geometry before removing the containers,
+            // otherwise the unwrapped PCell views would keep the stretched height.
             stretchGrid(false);
             currentlyStretched = false;
+            unwrapAllRows(fragment);
         }
 
         for (RowBinding binding : rowBindings) {
             updateScellView(binding, dataSource, sampleKey, moduleIndex);
         }
 
-        if (wasStretched != currentlyStretched) {
+        if (wasStretched != currentlyStretched || wasWrapped != anyWrapped()) {
             requestGridLayout(fragment);
         }
     }
