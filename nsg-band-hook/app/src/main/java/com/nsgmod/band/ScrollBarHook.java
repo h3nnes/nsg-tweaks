@@ -1,13 +1,17 @@
 package com.nsgmod.band;
 
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 import android.widget.PopupWindow;
 import android.widget.ScrollView;
-import android.widget.SeekBar;
 
 import androidx.annotation.NonNull;
 
@@ -18,20 +22,20 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks NSG 4.8.4 (com.qtrun.QuickTest) to add a draggable vertical SeekBar
+ * Hooks NSG 4.8.4 (com.qtrun.QuickTest) to add a draggable vertical scrollbar
  * overlay on the popup's FrameLayout, synced bidirectionally with the ScrollView
  * inside the signaling message detail popup.
  *
  * Hook: u7.a.onItemClick (after-hook)
  *   - Finds the ScrollView inside the popup's content FrameLayout.
- *   - Adds a rotated SeekBar on top (as last child of FrameLayout).
- *   - Syncs ScrollView ↔ SeekBar bidirectionally with a drag-flag guard.
- *   - Guarded by a tag on the ScrollView so it only applies once per popup instance.
+ *   - Adds a custom VerticalScrollBar view on top (as last child of FrameLayout).
+ *   - Syncs ScrollView ↔ scrollbar bidirectionally with a drag-flag guard.
+ *   - Guarded by a tag on the FrameLayout so it only applies once per popup instance.
  */
 public class ScrollBarHook {
 
     private static final String TAG = "NSGBandHook";
-    private static final String SEEKBAR_TAG = "nsg_seekbar_added";
+    private static final String SCROLLBAR_TAG = "nsg_scrollbar_added";
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -112,7 +116,7 @@ public class ScrollBarHook {
 
     // -----------------------------------------------------------------------
     // Hook: u7.a.onItemClick — after-hook
-    // Adds a draggable SeekBar overlay synced with the popup's ScrollView.
+    // Adds a draggable vertical scrollbar overlay synced with the popup's ScrollView.
     // -----------------------------------------------------------------------
 
     private void hookOnItemClick() {
@@ -151,76 +155,43 @@ public class ScrollBarHook {
                             return result;
                         }
 
-                        // Add SeekBar on top of everything in the FrameLayout
+                        // Add scrollbar on top of everything in the FrameLayout
                         final FrameLayout frame = (FrameLayout) contentView;
 
                         // Guard: only apply once per FrameLayout instance
-                        if (SEEKBAR_TAG.equals(frame.getTag(SEEKBAR_TAG.hashCode()))) {
+                        if (SCROLLBAR_TAG.equals(frame.getTag(SCROLLBAR_TAG.hashCode()))) {
                             return result;
                         }
 
-                        android.content.Context context = contentView.getContext();
+                        Context context = contentView.getContext();
 
-                        // Build the SeekBar
-                        final SeekBar seekBar = new SeekBar(context);
+                        // Build the custom vertical scrollbar
+                        final VerticalScrollBar scrollBar = new VerticalScrollBar(context, scrollView);
 
-                        // Rotate -90°: max ends up at top, 0 at bottom
-                        seekBar.setRotation(-90f);
+                        final int barWidthPx = Math.round(8 * context.getResources().getDisplayMetrics().density);
 
-                        final int barWidthPx = Math.round(24 * context.getResources().getDisplayMetrics().density);
-
-                        // Placeholder layout params — width corrected in OnGlobalLayoutListener
+                        // Placeholder layout params — width/height corrected in OnGlobalLayoutListener
                         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                                barWidthPx,   // placeholder
-                                barWidthPx
+                                barWidthPx,
+                                FrameLayout.LayoutParams.MATCH_PARENT
                         );
-                        seekBar.setLayoutParams(lp);
+                        scrollBar.setLayoutParams(lp);
 
-                        final int SEEK_MAX = 10000;
-                        seekBar.setMax(SEEK_MAX);
-                        // Start at top (scrollY=0 → progress=SEEK_MAX)
-                        seekBar.setProgress(SEEK_MAX);
-
-                        // Drag flag to prevent feedback loop
-                        final boolean[] userDragging = {false};
-
-                        // Sync ScrollView → SeekBar
+                        // Sync ScrollView → scrollbar
                         scrollView.getViewTreeObserver().addOnScrollChangedListener(() -> {
-                            if (userDragging[0]) return;
-                            int scrollY = scrollView.getScrollY();
-                            int maxScroll = getMaxScroll(scrollView);
-                            if (maxScroll <= 0) {
-                                seekBar.setProgress(SEEK_MAX);
-                                return;
-                            }
-                            // Inverted: scrollY=0 (top) → SEEK_MAX; scrollY=max → 0
-                            int progress = SEEK_MAX - (int) ((float) scrollY / maxScroll * SEEK_MAX);
-                            seekBar.setProgress(progress);
+                            if (scrollBar.isDragging()) return;
+                            scrollBar.updateFromScroll();
                         });
 
-                        // Sync SeekBar → ScrollView
-                        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                            @Override public void onStartTrackingTouch(SeekBar sb) { userDragging[0] = true; }
-                            @Override public void onStopTrackingTouch(SeekBar sb)  { userDragging[0] = false; }
+                        frame.addView(scrollBar);
 
-                            @Override
-                            public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
-                                if (!fromUser) return;
-                                int maxScroll = getMaxScroll(scrollView);
-                                // Inverted: progress=SEEK_MAX (top) → scrollY=0
-                                int scrollY = (int) ((float) (SEEK_MAX - progress) / SEEK_MAX * maxScroll);
-                                scrollView.scrollTo(0, scrollY);
-                            }
-                        });
-                        frame.addView(seekBar);
-
-                        // Layout listener: position SeekBar flush to right edge, spanning
+                        // Layout listener: position scrollbar flush to right edge, spanning
                         // only the ScrollView area (i.e. below the search bar injected by
-                        // SignalingSearchHook). We use scrollView.getTop()/getHeight() so
-                        // that the SeekBar automatically starts where the ScrollView starts,
-                        // regardless of what other hooks have placed above it.
-                        // The listener is kept alive (not one-shot) until scrollView has a
-                        // non-zero top — which happens after SignalingSearchHook's own layout
+                        // SignalingSearchHook). We use frame.getHeight() and the top offset
+                        // so that the scrollbar automatically starts where the ScrollView
+                        // area starts, regardless of what other hooks have placed above it.
+                        // The listener is kept alive (not one-shot) until frame has a
+                        // non-zero width — which happens after SignalingSearchHook's own layout
                         // listener fires and updates the ScrollView padding, triggering a
                         // second layout pass. At that point we position and remove ourselves.
                         frame.getViewTreeObserver().addOnGlobalLayoutListener(
@@ -230,10 +201,10 @@ public class ScrollBarHook {
                                         int parentW = frame.getWidth();
                                         if (parentW == 0) return;
 
-                                        // The SeekBar should span only the area below the
+                                        // The scrollbar should span only the area below the
                                         // Share/Copy container (stored as a keyed tag on the
                                         // FrameLayout by SignalingShareHook). Its bottom edge
-                                        // gives the true top offset for the SeekBar.
+                                        // gives the true top offset for the scrollbar.
                                         int topOffset = 0;
                                         // Share/Copy container bottom
                                         Object shareCopyTag = frame.getTag(
@@ -250,7 +221,7 @@ public class ScrollBarHook {
                                             if (sbH > 0) topOffset = Math.max(topOffset, sbH);
                                         }
 
-                                        // Extra gap so the SeekBar does not visually touch the buttons above
+                                        // Extra gap so the scrollbar does not visually touch the buttons above
                                         int extraGapPx = Math.round(8 * frame.getContext().getResources().getDisplayMetrics().density);
                                         topOffset += extraGapPx;
 
@@ -263,21 +234,20 @@ public class ScrollBarHook {
                                         // Once we have stable dimensions, remove ourselves.
                                         frame.getViewTreeObserver().removeOnGlobalLayoutListener(this);
 
-                                        // Width = trackH so after -90° rotation the track spans
-                                        // exactly the area below the Share/Copy container.
-                                        ViewGroup.LayoutParams slp = seekBar.getLayoutParams();
-                                        slp.width  = trackH;
-                                        slp.height = barWidthPx;
-                                        seekBar.setLayoutParams(slp);
+                                        // The vertical scrollbar is not rotated, so width is
+                                        // the bar width and height is the track height.
+                                        ViewGroup.LayoutParams slp = scrollBar.getLayoutParams();
+                                        slp.width  = barWidthPx;
+                                        slp.height = trackH;
+                                        scrollBar.setLayoutParams(slp);
 
-                                        // Rotation center at (parentW - barWidthPx/2, topOffset + trackH/2)
-                                        seekBar.setX((parentW - barWidthPx / 2f) - trackH / 2f);
-                                        seekBar.setY(topOffset + trackH / 2f - barWidthPx / 2f);
+                                        scrollBar.setX(parentW - barWidthPx);
+                                        scrollBar.setY(topOffset);
                                     }
                                 });
 
                         // Mark as done on the FrameLayout
-                        frame.setTag(SEEKBAR_TAG.hashCode(), SEEKBAR_TAG);
+                        frame.setTag(SCROLLBAR_TAG.hashCode(), SCROLLBAR_TAG);
                     } catch (Exception e) {
                         Log.w(TAG, "ScrollBarHook post-processing failed: " + e);
                     }
@@ -288,6 +258,163 @@ public class ScrollBarHook {
             Log.i(TAG, "ScrollBarHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "ScrollBarHook: hookOnItemClick failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // VerticalScrollBar
+    // -----------------------------------------------------------------------
+
+    /**
+     * A lightweight vertical scrollbar view that draws its own track and thumb,
+     * sized proportionally to the viewport/content ratio of a linked ScrollView,
+     * and supports direct touch dragging to scroll the linked view.
+     */
+    private static class VerticalScrollBar extends View {
+
+        private static final int THUMB_COLOR = 0xA0FFFFFF;
+        private static final int TRACK_COLOR = 0x30FFFFFF;
+
+        private final ScrollView scrollView;
+        private final Paint thumbPaint;
+        private final Paint trackPaint;
+        private final RectF thumbRect = new RectF();
+
+        private final float minThumbHeight;
+        private final float thumbRadius;
+
+        private boolean dragging = false;
+        private float dragStartY;
+        private float dragStartThumbTop;
+
+        private float thumbTop;
+        private float thumbHeight;
+
+        public VerticalScrollBar(Context context, ScrollView scrollView) {
+            super(context);
+            this.scrollView = scrollView;
+
+            float density = context.getResources().getDisplayMetrics().density;
+            minThumbHeight = 32 * density;
+            thumbRadius = 8 * density;
+
+            thumbPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            thumbPaint.setColor(THUMB_COLOR);
+            thumbPaint.setStyle(Paint.Style.FILL);
+
+            trackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            trackPaint.setColor(TRACK_COLOR);
+            trackPaint.setStyle(Paint.Style.STROKE);
+            trackPaint.setStrokeWidth(2 * density);
+        }
+
+        public boolean isDragging() {
+            return dragging;
+        }
+
+        /**
+         * Re-reads the linked ScrollView metrics and updates the thumb geometry.
+         * Called from the ScrollView's scroll-changed listener (except while dragging).
+         */
+        public void updateFromScroll() {
+            updateThumbMetrics();
+            invalidate();
+        }
+
+        private void updateThumbMetrics() {
+            int viewportH = scrollView.getHeight();
+            int contentH = scrollView.getChildCount() > 0 ? scrollView.getChildAt(0).getHeight() : 0;
+            int maxScroll = Math.max(0, contentH - viewportH);
+
+            int trackH = getHeight();
+            if (trackH <= 0) {
+                setVisibility(INVISIBLE);
+                return;
+            }
+
+            if (maxScroll <= 0 || viewportH <= 0) {
+                thumbHeight = 0;
+                thumbTop = 0;
+                setVisibility(INVISIBLE);
+                return;
+            }
+
+            setVisibility(VISIBLE);
+
+            thumbHeight = Math.max(minThumbHeight, (float) viewportH * viewportH / contentH);
+            if (thumbHeight > trackH) {
+                thumbHeight = trackH;
+            }
+
+            int scrollY = scrollView.getScrollY();
+            float available = trackH - thumbHeight;
+            thumbTop = (maxScroll > 0) ? (float) scrollY / maxScroll * available : 0;
+            thumbTop = Math.max(0, Math.min(thumbTop, available));
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            updateThumbMetrics();
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    dragging = true;
+                    dragStartY = event.getY();
+                    dragStartThumbTop = thumbTop;
+                    return true;
+
+                case MotionEvent.ACTION_MOVE:
+                    if (!dragging) return false;
+
+                    int viewportH = scrollView.getHeight();
+                    int contentH = scrollView.getChildCount() > 0 ? scrollView.getChildAt(0).getHeight() : 0;
+                    int maxScroll = Math.max(0, contentH - viewportH);
+                    int trackH = getHeight();
+
+                    float available = trackH - thumbHeight;
+                    if (available <= 0 || maxScroll <= 0) return true;
+
+                    float deltaY = event.getY() - dragStartY;
+                    float newThumbTop = dragStartThumbTop + deltaY;
+                    newThumbTop = Math.max(0, Math.min(newThumbTop, available));
+
+                    int targetScroll = Math.round((newThumbTop / available) * maxScroll);
+                    targetScroll = Math.max(0, Math.min(targetScroll, maxScroll));
+
+                    scrollView.scrollTo(0, targetScroll);
+                    thumbTop = newThumbTop;
+                    invalidate();
+                    return true;
+
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    dragging = false;
+                    // Let the next scroll-changed listener sync the final thumb position
+                    return true;
+            }
+            return super.onTouchEvent(event);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+
+            float width = getWidth();
+            int trackH = getHeight();
+            if (width <= 0 || trackH <= 0 || thumbHeight <= 0) return;
+
+            // Draw subtle vertical track line down the center
+            float centerX = width / 2f;
+            canvas.drawLine(centerX, 0, centerX, trackH, trackPaint);
+
+            // Draw rounded thumb
+            thumbRect.set(0, thumbTop, width, thumbTop + thumbHeight);
+            canvas.drawRoundRect(thumbRect, thumbRadius, thumbRadius, thumbPaint);
         }
     }
 
