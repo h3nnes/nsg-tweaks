@@ -163,6 +163,11 @@ public class ScrollBarHook {
                             return result;
                         }
 
+                        // Hide the stock ScrollView scrollbar so only the custom draggable one is visible.
+                        // SCROLLBARS_INSIDE_OVERLAY prevents the ScrollView from reserving gutter space.
+                        scrollView.setVerticalScrollBarEnabled(false);
+                        scrollView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+
                         Context context = contentView.getContext();
 
                         // Build the custom vertical scrollbar
@@ -170,12 +175,14 @@ public class ScrollBarHook {
 
                         final int barWidthPx = Math.round(8 * context.getResources().getDisplayMetrics().density);
 
-                        // Placeholder layout params — width/height corrected in OnGlobalLayoutListener
+                        // Placeholder layout params — final width/height/position set after layout.
                         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                                 barWidthPx,
                                 FrameLayout.LayoutParams.MATCH_PARENT
                         );
                         scrollBar.setLayoutParams(lp);
+                        // Keep it hidden until positionScrollBar() places and sizes it correctly.
+                        scrollBar.setVisibility(View.INVISIBLE);
 
                         // Sync ScrollView → scrollbar
                         scrollView.getViewTreeObserver().addOnScrollChangedListener(() -> {
@@ -184,65 +191,35 @@ public class ScrollBarHook {
                         });
 
                         frame.addView(scrollBar);
+                        scrollBar.bringToFront();
 
-                        // Layout listener: position scrollbar flush to right edge, spanning
-                        // only the ScrollView area (i.e. below the search bar injected by
-                        // SignalingSearchHook). We use frame.getHeight() and the top offset
-                        // so that the scrollbar automatically starts where the ScrollView
-                        // area starts, regardless of what other hooks have placed above it.
-                        // The listener is kept alive (not one-shot) until frame has a
-                        // non-zero width — which happens after SignalingSearchHook's own layout
-                        // listener fires and updates the ScrollView padding, triggering a
-                        // second layout pass. At that point we position and remove ourselves.
+                        // Recompute thumb metrics when the ScrollView child (the message TextView)
+                        // changes height, e.g. when NSG asynchronously loads the message text.
+                        View scrollChild = scrollView.getChildAt(0);
+                        if (scrollChild != null) {
+                            scrollChild.getViewTreeObserver().addOnGlobalLayoutListener(
+                                    new ViewTreeObserver.OnGlobalLayoutListener() {
+                                        @Override
+                                        public void onGlobalLayout() {
+                                            scrollBar.updateFromScroll();
+                                        }
+                                    });
+                        }
+
+                        final float density = context.getResources().getDisplayMetrics().density;
+
+                        // Position once after the current hook chain has finished adding sibling
+                        // views (Share/Copy container, search bar). The persistent listener below
+                        // then keeps it in sync with any later layout changes.
+                        frame.post(() -> positionScrollBar(frame, scrollBar, barWidthPx, density));
+
+                        // Keep the scrollbar positioned correctly across layout changes (search bar
+                        // height settling, rotation, etc.). The helper is idempotent.
                         frame.getViewTreeObserver().addOnGlobalLayoutListener(
                                 new ViewTreeObserver.OnGlobalLayoutListener() {
                                     @Override
                                     public void onGlobalLayout() {
-                                        int parentW = frame.getWidth();
-                                        if (parentW == 0) return;
-
-                                        // The scrollbar should span only the area below the
-                                        // Share/Copy container (stored as a keyed tag on the
-                                        // FrameLayout by SignalingShareHook). Its bottom edge
-                                        // gives the true top offset for the scrollbar.
-                                        int topOffset = 0;
-                                        // Share/Copy container bottom
-                                        Object shareCopyTag = frame.getTag(
-                                                "nsg_share_copy_container".hashCode());
-                                        if (shareCopyTag instanceof View) {
-                                            int bottom = ((View) shareCopyTag).getBottom();
-                                            if (bottom > 0) topOffset = Math.max(topOffset, bottom);
-                                        }
-                                        // Search bar height (from SignalingSearchHook, may be 0 if not loaded)
-                                        Object searchBarHTag = frame.getTag(
-                                                "nsg_search_bar_height".hashCode());
-                                        if (searchBarHTag instanceof Integer) {
-                                            int sbH = (Integer) searchBarHTag;
-                                            if (sbH > 0) topOffset = Math.max(topOffset, sbH);
-                                        }
-
-                                        // Extra gap so the scrollbar does not visually touch the buttons above
-                                        int extraGapPx = Math.round(8 * frame.getContext().getResources().getDisplayMetrics().density);
-                                        topOffset += extraGapPx;
-
-                                        int frameH = frame.getHeight();
-                                        if (frameH <= 0) return; // not laid out yet
-
-                                        int trackH = frameH - topOffset;
-                                        if (trackH <= 0) return;
-
-                                        // Once we have stable dimensions, remove ourselves.
-                                        frame.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-
-                                        // The vertical scrollbar is not rotated, so width is
-                                        // the bar width and height is the track height.
-                                        ViewGroup.LayoutParams slp = scrollBar.getLayoutParams();
-                                        slp.width  = barWidthPx;
-                                        slp.height = trackH;
-                                        scrollBar.setLayoutParams(slp);
-
-                                        scrollBar.setX(parentW - barWidthPx);
-                                        scrollBar.setY(topOffset);
+                                        positionScrollBar(frame, scrollBar, barWidthPx, density);
                                     }
                                 });
 
@@ -293,6 +270,11 @@ public class ScrollBarHook {
         public VerticalScrollBar(Context context, ScrollView scrollView) {
             super(context);
             this.scrollView = scrollView;
+
+            // Make sure the view actually receives touch events and keeps them
+            // instead of letting the parent ScrollView/FrameLayout intercept them.
+            setClickable(true);
+            setFocusable(false);
 
             float density = context.getResources().getDisplayMetrics().density;
             minThumbHeight = 32 * density;
@@ -366,10 +348,18 @@ public class ScrollBarHook {
                     dragging = true;
                     dragStartY = event.getY();
                     dragStartThumbTop = thumbTop;
+                    // Keep the parent from stealing drag events (e.g. ScrollView scrolling).
+                    if (getParent() != null) {
+                        getParent().requestDisallowInterceptTouchEvent(true);
+                    }
                     return true;
 
                 case MotionEvent.ACTION_MOVE:
                     if (!dragging) return false;
+
+                    if (getParent() != null) {
+                        getParent().requestDisallowInterceptTouchEvent(true);
+                    }
 
                     int viewportH = scrollView.getHeight();
                     int contentH = scrollView.getChildCount() > 0 ? scrollView.getChildAt(0).getHeight() : 0;
@@ -394,6 +384,9 @@ public class ScrollBarHook {
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
                     dragging = false;
+                    if (getParent() != null) {
+                        getParent().requestDisallowInterceptTouchEvent(false);
+                    }
                     // Let the next scroll-changed listener sync the final thumb position
                     return true;
             }
@@ -421,6 +414,89 @@ public class ScrollBarHook {
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
+
+    /**
+     * Computes and applies the custom scrollbar's position/size inside the popup FrameLayout.
+     * Accounts for the FrameLayout's padding and for any top UI injected by sibling hooks
+     * (Share/Copy container, search bar). Returns true when the scrollbar was successfully
+     * positioned with non-zero dimensions.
+     */
+    private static boolean positionScrollBar(FrameLayout frame, VerticalScrollBar scrollBar,
+                                               int barWidthPx, float density) {
+        int parentW = frame.getWidth();
+        int frameH = frame.getHeight();
+        if (parentW == 0 || frameH == 0) return false;
+
+        int padTop = frame.getPaddingTop();
+        int padBottom = frame.getPaddingBottom();
+        int padRight = frame.getPaddingRight();
+
+        int topOffset = 0;
+        boolean hasOffset = false;
+
+        // Share/Copy container bottom (inside the padded content area)
+        Object shareCopyTag = frame.getTag("nsg_share_copy_container".hashCode());
+        if (shareCopyTag instanceof View) {
+            View container = (View) shareCopyTag;
+            int bottom = container.getBottom();
+            if (bottom > 0) {
+                topOffset = Math.max(topOffset, bottom);
+                hasOffset = true;
+            }
+        }
+
+        // Search bar height
+        Object searchBarHTag = frame.getTag("nsg_search_bar_height".hashCode());
+        if (searchBarHTag instanceof Integer) {
+            int sbH = (Integer) searchBarHTag;
+            if (sbH > 0) {
+                topOffset = Math.max(topOffset, sbH);
+                hasOffset = true;
+            }
+        }
+
+        // Extra gap so the scrollbar does not visually touch the buttons above
+        int extraGapPx = Math.round(8 * density);
+        int effectiveTop = padTop + topOffset + extraGapPx;
+
+        int trackH = frameH - padBottom - effectiveTop;
+        if (trackH <= 0) {
+            if (hasOffset) {
+                scrollBar.setVisibility(View.INVISIBLE);
+            }
+            return false;
+        }
+
+        ViewGroup.LayoutParams slp = scrollBar.getLayoutParams();
+        boolean layoutParamsChanged = false;
+        if (slp == null) {
+            slp = new FrameLayout.LayoutParams(barWidthPx, trackH);
+            layoutParamsChanged = true;
+        } else if (slp.width != barWidthPx || slp.height != trackH) {
+            slp.width = barWidthPx;
+            slp.height = trackH;
+            layoutParamsChanged = true;
+        }
+        if (layoutParamsChanged) {
+            scrollBar.setLayoutParams(slp);
+        }
+
+        // Place at the right edge of the ScrollView content area, inside the FrameLayout padding.
+        scrollBar.setX(parentW - padRight - barWidthPx);
+        scrollBar.setY(effectiveTop);
+
+        // Keep the scrollbar as the topmost child so it is visible and receives touches first.
+        // Only call bringToFront() when it is not already last, otherwise every layout pass
+        // would re-trigger a layout and cause an endless loop with the OnGlobalLayoutListener.
+        int childCount = frame.getChildCount();
+        if (childCount == 0 || frame.getChildAt(childCount - 1) != scrollBar) {
+            scrollBar.bringToFront();
+        }
+
+        scrollBar.updateFromScroll();
+
+        return true;
+    }
 
     /**
      * Returns the maximum scrollable distance for the given ScrollView.
