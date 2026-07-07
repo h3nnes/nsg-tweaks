@@ -5,7 +5,6 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.text.Layout;
-import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
@@ -43,11 +42,6 @@ public class ScrollBarHook {
 
     private static final String TAG = "NSGBandHook";
     private static final String SCROLLBAR_TAG = "nsg_scrollbar_added";
-    private static final String SCROLLBAR_VIEW_TAG = "nsg_scrollbar_view";
-
-    private static final String TV_SCROLL_LISTENER_TAG = "nsg_tv_scroll_listener";
-    private static final String TV_LAYOUT_LISTENER_TAG = "nsg_tv_layout_listener";
-    private static final String TV_ATTACH_LISTENER_TAG = "nsg_tv_attach_listener";
 
     /** Resource ID of the message TextView inside the signaling detail popup. */
     private static final int ID_DETAIL_TEXT = 0x7f0900dc;
@@ -178,87 +172,89 @@ public class ScrollBarHook {
                         // Add scrollbar on top of everything in the FrameLayout
                         final FrameLayout frame = (FrameLayout) contentView;
 
+                        // Guard: only apply once per FrameLayout instance
+                        if (SCROLLBAR_TAG.equals(frame.getTag(SCROLLBAR_TAG.hashCode()))) {
+                            return result;
+                        }
+
+                        // Hide the stock ScrollView scrollbar so only the custom draggable one is visible.
+                        // SCROLLBARS_INSIDE_OVERLAY prevents the ScrollView from reserving gutter space.
+                        scrollView.setVerticalScrollBarEnabled(false);
+                        scrollView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+
                         Context context = contentView.getContext();
                         final float density = context.getResources().getDisplayMetrics().density;
+
                         final int barWidthPx = Math.round(BAR_WIDTH_DP * density);
 
                         // Find the message TextView for reliable content metrics and TextView-scrolling fallback.
                         final TextView messageTextView = (TextView) frame.findViewById(ID_DETAIL_TEXT);
 
-                        final VerticalScrollBar scrollBar;
-                        boolean alreadyAdded = SCROLLBAR_TAG.equals(frame.getTag(SCROLLBAR_TAG.hashCode()));
-                        if (alreadyAdded) {
-                            Object viewTag = frame.getTag(SCROLLBAR_VIEW_TAG.hashCode());
-                            scrollBar = (viewTag instanceof VerticalScrollBar) ? (VerticalScrollBar) viewTag : null;
-                        } else {
-                            // Hide the stock ScrollView scrollbar so only the custom draggable one is visible.
-                            // SCROLLBARS_INSIDE_OVERLAY prevents the ScrollView from reserving gutter space.
-                            scrollView.setVerticalScrollBarEnabled(false);
-                            scrollView.setScrollBarStyle(View.SCROLLBARS_INSIDE_OVERLAY);
+                        // Build the custom vertical scrollbar
+                        final VerticalScrollBar scrollBar = new VerticalScrollBar(context, scrollView, messageTextView, density, barWidthPx);
 
-                            // Build the custom vertical scrollbar
-                            scrollBar = new VerticalScrollBar(context, scrollView, messageTextView, density, barWidthPx);
+                        // Default layout params — final width/height/position set after layout.
+                        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                                barWidthPx,
+                                FrameLayout.LayoutParams.MATCH_PARENT
+                        );
+                        scrollBar.setLayoutParams(lp);
 
-                            // Default layout params — final width/height/position set after layout.
-                            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                                    barWidthPx,
-                                    FrameLayout.LayoutParams.MATCH_PARENT
-                            );
-                            scrollBar.setLayoutParams(lp);
+                        // Sync ScrollView → scrollbar (except while the user is dragging the scrollbar)
+                        scrollView.getViewTreeObserver().addOnScrollChangedListener(() -> {
+                            if (scrollBar.isDragging()) return;
+                            syncScrollBarFromScroll(scrollBar, scrollView);
+                        });
 
-                            // Sync ScrollView → scrollbar (except while the user is dragging the scrollbar)
-                            scrollView.getViewTreeObserver().addOnScrollChangedListener(() -> {
+                        // Fallback: some NSG builds scroll the message TextView itself (via a
+                        // MovementMethod) instead of the ScrollView. Listen to the TextView too.
+                        if (messageTextView != null) {
+                            messageTextView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
                                 if (scrollBar.isDragging()) return;
                                 syncScrollBarFromScroll(scrollBar, scrollView);
                             });
-
-                            frame.addView(scrollBar);
-                            scrollBar.bringToFront();
-
-                            // Recompute scrollbar state when the ScrollView child (the message TextView)
-                            // changes height, e.g. when NSG asynchronously loads the message text.
-                            View scrollChild = scrollView.getChildAt(0);
-                            if (scrollChild != null) {
-                                scrollChild.getViewTreeObserver().addOnGlobalLayoutListener(
-                                        new ViewTreeObserver.OnGlobalLayoutListener() {
-                                            @Override
-                                            public void onGlobalLayout() {
-                                                syncScrollBarFromScroll(scrollBar, scrollView);
-                                            }
-                                        });
-                            }
-
-                            // Position once after the current hook chain has finished adding sibling
-                            // views (Share/Copy container, search bar). The persistent listener below
-                            // then keeps it in sync with any later layout changes.
-                            frame.post(() -> positionScrollBar(frame, scrollBar, barWidthPx, density));
-
-                            // Keep the scrollbar positioned correctly across layout changes (search bar
-                            // height settling, rotation, etc.). The helper is idempotent.
-                            frame.getViewTreeObserver().addOnGlobalLayoutListener(
+                            messageTextView.getViewTreeObserver().addOnGlobalLayoutListener(
                                     new ViewTreeObserver.OnGlobalLayoutListener() {
                                         @Override
                                         public void onGlobalLayout() {
-                                            positionScrollBar(frame, scrollBar, barWidthPx, density);
+                                            syncScrollBarFromScroll(scrollBar, scrollView);
                                         }
                                     });
-
-                            // Mark as done on the FrameLayout
-                            frame.setTag(SCROLLBAR_TAG.hashCode(), SCROLLBAR_TAG);
-                            frame.setTag(SCROLLBAR_VIEW_TAG.hashCode(), scrollBar);
                         }
 
-                        // The popup content view is reused across multiple onItemClick calls, and its
-                        // ViewTreeObserver is recreated when the popup is (re)shown. Re-attach the
-                        // message TextView scroll listeners every hook invocation so scrolling keeps
-                        // syncing even after the popup is dismissed and reshown.
-                        if (scrollBar != null && messageTextView != null) {
-                            attachTextViewScrollListeners(messageTextView, scrollBar, scrollView);
+                        frame.addView(scrollBar);
+                        scrollBar.bringToFront();
+
+                        // Recompute scrollbar state when the ScrollView child (the message TextView)
+                        // changes height, e.g. when NSG asynchronously loads the message text.
+                        View scrollChild = scrollView.getChildAt(0);
+                        if (scrollChild != null) {
+                            scrollChild.getViewTreeObserver().addOnGlobalLayoutListener(
+                                    new ViewTreeObserver.OnGlobalLayoutListener() {
+                                        @Override
+                                        public void onGlobalLayout() {
+                                            syncScrollBarFromScroll(scrollBar, scrollView);
+                                        }
+                                    });
                         }
 
-                        if (alreadyAdded) {
-                            return result;
-                        }
+                        // Position once after the current hook chain has finished adding sibling
+                        // views (Share/Copy container, search bar). The persistent listener below
+                        // then keeps it in sync with any later layout changes.
+                        frame.post(() -> positionScrollBar(frame, scrollBar, barWidthPx, density));
+
+                        // Keep the scrollbar positioned correctly across layout changes (search bar
+                        // height settling, rotation, etc.). The helper is idempotent.
+                        frame.getViewTreeObserver().addOnGlobalLayoutListener(
+                                new ViewTreeObserver.OnGlobalLayoutListener() {
+                                    @Override
+                                    public void onGlobalLayout() {
+                                        positionScrollBar(frame, scrollBar, barWidthPx, density);
+                                    }
+                                });
+
+                        // Mark as done on the FrameLayout
+                        frame.setTag(SCROLLBAR_TAG.hashCode(), SCROLLBAR_TAG);
                     } catch (Exception e) {
                         Log.w(TAG, "ScrollBarHook post-processing failed: " + e);
                     }
@@ -269,78 +265,6 @@ public class ScrollBarHook {
             Log.i(TAG, "ScrollBarHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "ScrollBarHook: hookOnItemClick failed: " + e);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // TextView scroll listener management
-    // -----------------------------------------------------------------------
-
-    /**
-     * Attaches (or re-attaches) scroll and layout listeners to the message TextView.
-     * The listeners are stored as tags so they can be managed across popup re-shows:
-     * the ViewTreeObserver is recreated when the popup content view is detached/attached,
-     * so the scroll listener is added once per attach cycle and its tag is cleared on detach.
-     */
-    private static void attachTextViewScrollListeners(final TextView messageTextView,
-                                                      final VerticalScrollBar scrollBar,
-                                                      final ScrollView scrollView) {
-        // ViewTreeObserver.OnScrollChangedListener is more reliable than
-        // setOnScrollChangeListener on some builds, and it works on the TextView's own observer.
-        if (messageTextView.getTag(TV_SCROLL_LISTENER_TAG.hashCode()) == null) {
-            ViewTreeObserver.OnScrollChangedListener scrollListener = () -> {
-                if (scrollBar.isDragging()) return;
-                syncScrollBarFromScroll(scrollBar, scrollView);
-            };
-            messageTextView.getViewTreeObserver().addOnScrollChangedListener(scrollListener);
-            messageTextView.setTag(TV_SCROLL_LISTENER_TAG.hashCode(), scrollListener);
-        }
-
-        // API 23+ listener as a fallback / redundancy.
-        messageTextView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-            if (scrollBar.isDragging()) return;
-            syncScrollBarFromScroll(scrollBar, scrollView);
-        });
-
-        // Recompute metrics after layout/content changes. Post a runnable so the TextView's
-        // Layout is fully populated before we read content height / max scroll.
-        Object oldLayout = messageTextView.getTag(TV_LAYOUT_LISTENER_TAG.hashCode());
-        if (oldLayout instanceof ViewTreeObserver.OnGlobalLayoutListener) {
-            messageTextView.getViewTreeObserver().removeOnGlobalLayoutListener(
-                    (ViewTreeObserver.OnGlobalLayoutListener) oldLayout);
-        }
-        ViewTreeObserver.OnGlobalLayoutListener layoutListener = new ViewTreeObserver.OnGlobalLayoutListener() {
-            @Override
-            public void onGlobalLayout() {
-                syncScrollBarFromScroll(scrollBar, scrollView);
-                messageTextView.post(() -> syncScrollBarFromScroll(scrollBar, scrollView));
-            }
-        };
-        messageTextView.getViewTreeObserver().addOnGlobalLayoutListener(layoutListener);
-        messageTextView.setTag(TV_LAYOUT_LISTENER_TAG.hashCode(), layoutListener);
-
-        // Clean up tags (and the global layout listener) when the TextView is detached so the
-        // scroll listener is re-added the next time the popup is shown.
-        if (messageTextView.getTag(TV_ATTACH_LISTENER_TAG.hashCode()) == null) {
-            View.OnAttachStateChangeListener attachListener = new View.OnAttachStateChangeListener() {
-                @Override
-                public void onViewAttachedToWindow(View v) { }
-
-                @Override
-                public void onViewDetachedFromWindow(View v) {
-                    Object l = v.getTag(TV_LAYOUT_LISTENER_TAG.hashCode());
-                    if (l instanceof ViewTreeObserver.OnGlobalLayoutListener) {
-                        v.getViewTreeObserver().removeOnGlobalLayoutListener(
-                                (ViewTreeObserver.OnGlobalLayoutListener) l);
-                    }
-                    v.setTag(TV_SCROLL_LISTENER_TAG.hashCode(), null);
-                    v.setTag(TV_LAYOUT_LISTENER_TAG.hashCode(), null);
-                    v.removeOnAttachStateChangeListener(this);
-                    v.setTag(TV_ATTACH_LISTENER_TAG.hashCode(), null);
-                }
-            };
-            messageTextView.addOnAttachStateChangeListener(attachListener);
-            messageTextView.setTag(TV_ATTACH_LISTENER_TAG.hashCode(), attachListener);
         }
     }
 
@@ -498,9 +422,8 @@ public class ScrollBarHook {
 
         /**
          * Computes the current scroll metrics, choosing between the ScrollView and the message
-         * TextView as the source of truth. NSG sets ScrollingMovementMethod on the detail TextView
-         * and scrolls that view directly, leaving ScrollView.getScrollY() at zero, so the TextView
-         * is preferred whenever it is scrollable.
+         * TextView as the source of truth. Some NSG builds scroll the TextView internally (e.g.
+         * via ScrollingMovementMethod), leaving ScrollView.getScrollY() at zero.
          */
         private ScrollMetrics computeMetrics() {
             ScrollMetrics m = new ScrollMetrics();
@@ -519,52 +442,31 @@ public class ScrollBarHook {
             int tvMaxScroll = 0;
             int tvScrollY = 0;
             if (messageTextView != null) {
+                Layout layout = messageTextView.getLayout();
+                tvContentH = layout != null ? layout.getHeight() : 0;
                 tvViewportH = messageTextView.getHeight();
-                tvContentH = computeTextViewContentHeight();
                 tvMaxScroll = Math.max(0, tvContentH - tvViewportH);
                 tvScrollY = messageTextView.getScrollY();
             }
 
-            // Prefer the message TextView as the scroll source when it can scroll via its
-            // MovementMethod. NSG uses ScrollingMovementMethod, so the TextView handles scrolling
-            // internally and the parent ScrollView stays at scrollY == 0.
-            boolean textViewActive = messageTextView != null
-                    && messageTextView.getMovementMethod() instanceof ScrollingMovementMethod
-                    && tvMaxScroll > 0;
-            if (textViewActive) {
+            // Prefer the TextView as the scroll source when it is actually scrolling internally
+            // (MovementMethod), or when the ScrollView has no scrollable distance of its own.
+            if (tvMaxScroll > 0 && (tvScrollY > 0 || svMaxScroll <= 0)) {
                 m.useTextView = true;
                 m.scrollY = tvScrollY;
                 m.maxScroll = tvMaxScroll;
                 m.contentH = tvContentH;
                 m.viewportH = tvViewportH;
-            } else if (svMaxScroll > 0) {
+            } else {
                 m.useTextView = false;
                 m.scrollY = svScrollY;
                 m.maxScroll = svMaxScroll;
                 m.contentH = svContentH;
                 m.viewportH = svViewportH;
-            } else {
-                m.useTextView = false;
             }
 
             m.scrollable = m.maxScroll > 0 && m.viewportH > 0 && m.contentH > 0;
             return m;
-        }
-
-        private int computeTextViewContentHeight() {
-            if (messageTextView == null) return 0;
-            Layout layout = messageTextView.getLayout();
-            if (layout != null) {
-                return layout.getHeight();
-            }
-            // Fallback estimate before the first layout pass builds the Layout.
-            int lineCount = messageTextView.getLineCount();
-            if (lineCount > 0) {
-                return messageTextView.getLineHeight() * lineCount
-                        + messageTextView.getCompoundPaddingTop()
-                        + messageTextView.getCompoundPaddingBottom();
-            }
-            return 0;
         }
 
         private void requestParentDisallowIntercept(boolean disallow) {
