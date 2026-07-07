@@ -4,7 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
-import android.text.Layout;
+import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
@@ -187,11 +187,11 @@ public class ScrollBarHook {
 
                         final int barWidthPx = Math.round(BAR_WIDTH_DP * density);
 
-                        // Find the message TextView for reliable content metrics and TextView-scrolling fallback.
+                        // Find the message TextView so we can remove NSG's internal ScrollingMovementMethod.
                         final TextView messageTextView = (TextView) frame.findViewById(ID_DETAIL_TEXT);
 
                         // Build the custom vertical scrollbar
-                        final VerticalScrollBar scrollBar = new VerticalScrollBar(context, scrollView, messageTextView, density, barWidthPx);
+                        final VerticalScrollBar scrollBar = new VerticalScrollBar(context, scrollView, density, barWidthPx);
 
                         // Default layout params — final width/height/position set after layout.
                         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
@@ -206,18 +206,26 @@ public class ScrollBarHook {
                             syncScrollBarFromScroll(scrollBar, scrollView);
                         });
 
-                        // Fallback: some NSG builds scroll the message TextView itself (via a
-                        // MovementMethod) instead of the ScrollView. Listen to the TextView too.
+                        // NSG installs ScrollingMovementMethod on the message TextView, which makes
+                        // the TextView scroll internally and leaves the ScrollView at scrollY == 0.
+                        // Remove that internal MovementMethod so the ScrollView is the single source
+                        // of truth, then reset the ScrollView to the top and sync the scrollbar.
                         if (messageTextView != null) {
-                            messageTextView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
-                                if (scrollBar.isDragging()) return;
-                                syncScrollBarFromScroll(scrollBar, scrollView);
-                            });
+                            final String clearedTag = "nsg_movement_cleared";
                             messageTextView.getViewTreeObserver().addOnGlobalLayoutListener(
                                     new ViewTreeObserver.OnGlobalLayoutListener() {
                                         @Override
                                         public void onGlobalLayout() {
-                                            syncScrollBarFromScroll(scrollBar, scrollView);
+                                            if (clearedTag.equals(messageTextView.getTag(clearedTag.hashCode()))) {
+                                                messageTextView.post(() -> syncScrollBarFromScroll(scrollBar, scrollView));
+                                                return;
+                                            }
+                                            if (messageTextView.getMovementMethod() instanceof ScrollingMovementMethod) {
+                                                messageTextView.setMovementMethod(null);
+                                                scrollView.scrollTo(0, 0);
+                                                syncScrollBarFromScroll(scrollBar, scrollView);
+                                                messageTextView.setTag(clearedTag.hashCode(), clearedTag);
+                                            }
                                         }
                                     });
                         }
@@ -233,7 +241,7 @@ public class ScrollBarHook {
                                     new ViewTreeObserver.OnGlobalLayoutListener() {
                                         @Override
                                         public void onGlobalLayout() {
-                                            syncScrollBarFromScroll(scrollBar, scrollView);
+                                            scrollChild.post(() -> syncScrollBarFromScroll(scrollBar, scrollView));
                                         }
                                     });
                         }
@@ -283,7 +291,6 @@ public class ScrollBarHook {
     private static class VerticalScrollBar extends View {
 
         private final ScrollView scrollView;
-        private final TextView messageTextView;
         private final int barWidthPx;       // total touch width of the view
         private final int visualWidthPx;    // width of the actually drawn track/thumb
         private final int minThumbLengthPx;
@@ -295,11 +302,10 @@ public class ScrollBarHook {
         private final RectF trackRect = new RectF();
         private final RectF thumbRect = new RectF();
 
-        public VerticalScrollBar(Context context, ScrollView scrollView, TextView messageTextView,
+        public VerticalScrollBar(Context context, ScrollView scrollView,
                                  float density, int barWidthPx) {
             super(context);
             this.scrollView = scrollView;
-            this.messageTextView = messageTextView;
             this.barWidthPx = barWidthPx;
             this.visualWidthPx = Math.round(VISUAL_WIDTH_DP * density);
             this.minThumbLengthPx = Math.round(MIN_THUMB_DP * density);
@@ -372,16 +378,8 @@ public class ScrollBarHook {
             relativeY = Math.max(0, Math.min(relativeY, trackH - thumbLengthPx));
             int scrollY = Math.round((relativeY / (trackH - thumbLengthPx)) * m.maxScroll);
             scrollY = Math.max(0, Math.min(scrollY, m.maxScroll));
-            scrollActiveView(m, scrollY);
+            scrollView.scrollTo(0, scrollY);
             updateThumbRect(m, scrollY);
-        }
-
-        private void scrollActiveView(ScrollMetrics m, int scrollY) {
-            if (m.useTextView && messageTextView != null) {
-                messageTextView.scrollTo(0, scrollY);
-            } else {
-                scrollView.scrollTo(0, scrollY);
-            }
         }
 
         private void recomputeThumbLength() {
@@ -421,50 +419,23 @@ public class ScrollBarHook {
         }
 
         /**
-         * Computes the current scroll metrics, choosing between the ScrollView and the message
-         * TextView as the source of truth. Some NSG builds scroll the TextView internally (e.g.
-         * via ScrollingMovementMethod), leaving ScrollView.getScrollY() at zero.
+         * Computes the current scroll metrics from the ScrollView only. The message TextView must
+         * not scroll internally (NSG's ScrollingMovementMethod is removed by the hook), so the
+         * ScrollView is the single authoritative scroll source.
          */
         private ScrollMetrics computeMetrics() {
             ScrollMetrics m = new ScrollMetrics();
 
-            int svContentH = 0;
-            int svViewportH = 0;
+            int contentH = 0;
+            int viewportH = 0;
             if (scrollView.getChildCount() > 0) {
-                svContentH = scrollView.getChildAt(0).getHeight();
-                svViewportH = scrollView.getHeight() - scrollView.getPaddingTop() - scrollView.getPaddingBottom();
+                contentH = scrollView.getChildAt(0).getHeight();
+                viewportH = scrollView.getHeight() - scrollView.getPaddingTop() - scrollView.getPaddingBottom();
             }
-            int svMaxScroll = Math.max(0, svContentH - svViewportH);
-            int svScrollY = scrollView.getScrollY();
-
-            int tvContentH = 0;
-            int tvViewportH = 0;
-            int tvMaxScroll = 0;
-            int tvScrollY = 0;
-            if (messageTextView != null) {
-                Layout layout = messageTextView.getLayout();
-                tvContentH = layout != null ? layout.getHeight() : 0;
-                tvViewportH = messageTextView.getHeight();
-                tvMaxScroll = Math.max(0, tvContentH - tvViewportH);
-                tvScrollY = messageTextView.getScrollY();
-            }
-
-            // Prefer the TextView as the scroll source when it is actually scrolling internally
-            // (MovementMethod), or when the ScrollView has no scrollable distance of its own.
-            if (tvMaxScroll > 0 && (tvScrollY > 0 || svMaxScroll <= 0)) {
-                m.useTextView = true;
-                m.scrollY = tvScrollY;
-                m.maxScroll = tvMaxScroll;
-                m.contentH = tvContentH;
-                m.viewportH = tvViewportH;
-            } else {
-                m.useTextView = false;
-                m.scrollY = svScrollY;
-                m.maxScroll = svMaxScroll;
-                m.contentH = svContentH;
-                m.viewportH = svViewportH;
-            }
-
+            m.maxScroll = Math.max(0, contentH - viewportH);
+            m.scrollY = scrollView.getScrollY();
+            m.contentH = contentH;
+            m.viewportH = viewportH;
             m.scrollable = m.maxScroll > 0 && m.viewportH > 0 && m.contentH > 0;
             return m;
         }
@@ -482,7 +453,6 @@ public class ScrollBarHook {
             int maxScroll;
             int contentH;
             int viewportH;
-            boolean useTextView;
             boolean scrollable;
         }
     }
@@ -492,7 +462,7 @@ public class ScrollBarHook {
     // -----------------------------------------------------------------------
 
     /**
-     * Reads the current scroll position from the active scroll source and updates the custom
+     * Reads the current scroll position from the ScrollView and updates the custom
      * scrollbar thumb. Hides the scrollbar when the content is not scrollable.
      */
     private static void syncScrollBarFromScroll(VerticalScrollBar scrollBar, ScrollView scrollView) {
