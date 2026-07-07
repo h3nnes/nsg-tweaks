@@ -208,43 +208,27 @@ public class ScrollBarHook {
 
                         // NSG installs ScrollingMovementMethod on the message TextView, which makes
                         // the TextView scroll internally and leaves the ScrollView at scrollY == 0.
-                        // Remove that internal MovementMethod so the ScrollView is the single source
-                        // of truth, then reset the ScrollView to the top and sync the scrollbar.
+                        // Remove that internal MovementMethod whenever it appears so the ScrollView
+                        // is the single source of truth, then reset the ScrollView to the top and sync
+                        // the scrollbar. This also handles popup reuse across multiple messages.
                         if (messageTextView != null) {
-                            final String clearedTag = "nsg_movement_cleared";
                             messageTextView.getViewTreeObserver().addOnGlobalLayoutListener(
                                     new ViewTreeObserver.OnGlobalLayoutListener() {
                                         @Override
                                         public void onGlobalLayout() {
-                                            if (clearedTag.equals(messageTextView.getTag(clearedTag.hashCode()))) {
-                                                messageTextView.post(() -> syncScrollBarFromScroll(scrollBar, scrollView));
-                                                return;
-                                            }
                                             if (messageTextView.getMovementMethod() instanceof ScrollingMovementMethod) {
                                                 messageTextView.setMovementMethod(null);
                                                 scrollView.scrollTo(0, 0);
-                                                syncScrollBarFromScroll(scrollBar, scrollView);
-                                                messageTextView.setTag(clearedTag.hashCode(), clearedTag);
                                             }
+                                            // Sync after the current layout pass so metrics reflect
+                                            // the final TextView height / ScrollView viewport.
+                                            messageTextView.post(() -> syncScrollBarFromScroll(scrollBar, scrollView));
                                         }
                                     });
                         }
 
                         frame.addView(scrollBar);
                         scrollBar.bringToFront();
-
-                        // Recompute scrollbar state when the ScrollView child (the message TextView)
-                        // changes height, e.g. when NSG asynchronously loads the message text.
-                        View scrollChild = scrollView.getChildAt(0);
-                        if (scrollChild != null) {
-                            scrollChild.getViewTreeObserver().addOnGlobalLayoutListener(
-                                    new ViewTreeObserver.OnGlobalLayoutListener() {
-                                        @Override
-                                        public void onGlobalLayout() {
-                                            scrollChild.post(() -> syncScrollBarFromScroll(scrollBar, scrollView));
-                                        }
-                                    });
-                        }
 
                         // Position once after the current hook chain has finished adding sibling
                         // views (Share/Copy container, search bar). The persistent listener below
