@@ -265,7 +265,7 @@ public class ScrollBarHook {
             super(context);
             this.scrollView = scrollView;
             this.barWidthPx = barWidthPx;
-            this.minThumbLengthPx = Math.round(32 * density);
+            this.minThumbLengthPx = Math.round(24 * density);
             trackPaint.setColor(0x30FFFFFF);
             thumbPaint.setColor(0xA0FFFFFF);
             setClickable(true);
@@ -326,7 +326,7 @@ public class ScrollBarHook {
 
             int trackH = getHeight();
             if (trackH <= 0) return;
-            ensureThumbLength();
+            recomputeThumbLength();
             if (thumbLengthPx >= trackH) return;
 
             float relativeY = y - thumbLengthPx / 2f;
@@ -337,16 +337,21 @@ public class ScrollBarHook {
             updateThumbRect(scrollY);
         }
 
-        private void ensureThumbLength() {
-            if (thumbLengthPx > 0) return;
+        private void recomputeThumbLength() {
             int trackH = getHeight();
-            if (trackH <= 0) return;
-            int contentH = scrollView.getChildAt(0).getHeight();
-            int viewportH = scrollView.getHeight();
-            if (contentH <= 0) {
+            if (trackH <= 0) {
                 thumbLengthPx = minThumbLengthPx;
                 return;
             }
+            View child = scrollView.getChildAt(0);
+            int contentH = child != null ? child.getHeight() : 0;
+            // Use the ScrollView's actual visible viewport, excluding the top/bottom padding.
+            int viewportH = scrollView.getHeight() - scrollView.getPaddingTop() - scrollView.getPaddingBottom();
+            if (contentH <= 0 || viewportH <= 0) {
+                thumbLengthPx = minThumbLengthPx;
+                return;
+            }
+            // Proportional thumb length: viewport / content of the track.
             int length = Math.round((float) viewportH / contentH * trackH);
             thumbLengthPx = Math.max(minThumbLengthPx, Math.min(length, trackH));
         }
@@ -355,7 +360,7 @@ public class ScrollBarHook {
             if (scrollView == null) return;
             int maxScroll = getMaxScroll(scrollView);
             if (maxScroll <= 0) return;
-            ensureThumbLength();
+            recomputeThumbLength();
             int trackH = getHeight();
             if (trackH <= thumbLengthPx) return;
             updateThumbRect(scrollView.getScrollY());
@@ -494,11 +499,14 @@ public class ScrollBarHook {
     // -----------------------------------------------------------------------
 
     /**
-     * Returns the maximum scrollable distance for the given ScrollView.
+     * Returns the maximum scrollable distance for the given ScrollView, using the
+     * actual visible viewport height (excluding padding).
      */
     private static int getMaxScroll(ScrollView sv) {
         if (sv.getChildCount() == 0) return 0;
-        return Math.max(0, sv.getChildAt(0).getHeight() - sv.getHeight());
+        int contentH = sv.getChildAt(0).getHeight();
+        int viewportH = sv.getHeight() - sv.getPaddingTop() - sv.getPaddingBottom();
+        return Math.max(0, contentH - viewportH);
     }
 
     /**
