@@ -411,6 +411,7 @@ public class NrNsaScellDualConnectivityHook {
         return false;
     }
 
+    @SuppressWarnings("unchecked")
     private boolean wrapAllRows(Object fragment) {
         Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
         if (k2a == null) {
@@ -526,6 +527,7 @@ public class NrNsaScellDualConnectivityHook {
         return new TextView(ctx);
     }
 
+    @SuppressWarnings("unchecked")
     private void unwrapAllRows(Object fragment) {
         Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
         if (k2a == null) return;
@@ -765,6 +767,7 @@ public class NrNsaScellDualConnectivityHook {
     // -------------------------------------------------------------------------
     // SCell helper cell creation and updates.
     // -------------------------------------------------------------------------
+    @SuppressWarnings("unchecked")
     private ScellCell createScellCell(RowBinding binding, TextView scellView) {
         try {
             Object nrCell = binding.nrCell;
@@ -776,7 +779,7 @@ public class NrNsaScellDualConnectivityHook {
             }
 
             if (V6_G_CLASS.equals(className)) {
-                Object helper = nrCell.getClass().newInstance();
+                Object helper = nrCell.getClass().getDeclaredConstructor().newInstance();
 
                 List<Object> pcellFormatters = (List<Object>) v6gFormattersField.get(nrCell);
                 KeyIndex[] scellKeys = getScellKeyIndices(binding.originalRow, pcellFormatters.size());
@@ -803,7 +806,7 @@ public class NrNsaScellDualConnectivityHook {
                 Object scellFormatter = cloneFormatter(
                         pcellFormatter, scellKeys[0].key, scellKeys[0].index);
 
-                Object helper = nrCell.getClass().newInstance();
+                Object helper = nrCell.getClass().getDeclaredConstructor().newInstance();
                 v6fValueField.set(helper, null);
                 v6fFormatterField.set(helper, scellFormatter);
                 v6fManualField.set(helper, v6fManualField.get(nrCell));
@@ -907,6 +910,7 @@ public class NrNsaScellDualConnectivityHook {
     // RLC/PDCP throughput (rows 18/19) keep the stock NR-NSA aggregated
     // formatter because the PCell::* throughput keys are unpopulated in NR-NSA.
     // -------------------------------------------------------------------------
+    @SuppressWarnings("unchecked")
     private void preparePcellFormatters(RowBinding binding, Object nrCell, int row) {
         // RLC and PDCP throughput rows keep the stock aggregated NR-NSA
         // formatter; the PCell-specific keys are not populated in NR-NSA mode.

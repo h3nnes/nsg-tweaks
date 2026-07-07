@@ -34,6 +34,10 @@ android {
     }
 }
 
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ["-Xlint:deprecation", "-Xlint:unchecked"]
+}
+
 dependencies {
     compileOnly files('../libs/libxposed-api-102.jar')
     compileOnly 'androidx.annotation:annotation:1.9.1'
