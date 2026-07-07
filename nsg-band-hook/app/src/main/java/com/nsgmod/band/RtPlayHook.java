@@ -1,7 +1,6 @@
 package com.nsgmod.band;
 
 import android.content.Context;
-import android.graphics.PorterDuff;
 import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
@@ -285,7 +284,7 @@ public class RtPlayHook {
         if (forwardBtn.getBackground() != null
                 && forwardBtn.getBackground().getConstantState() != null) {
             Drawable clonedBg = forwardBtn.getBackground().getConstantState().newDrawable().mutate();
-            clonedBg.setColorFilter(0xFF00BCD4, PorterDuff.Mode.SRC_IN);
+            clonedBg.setTint(0xFF00BCD4);
             btn.setBackground(clonedBg);
         } else {
             btn.setBackgroundColor(0xFF00BCD4);

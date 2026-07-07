@@ -13,12 +13,12 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 /**
  * Hooks d7.i$c.c(Object) to reformat NR MIMO display:
  *   - PCell: "{CSI_PORTS} x {RX_ANTENNAS}" (e.g. "2 x 4")
- *   - SCell: "{N}Rx" (e.g. "4Rx", "2Rx", "1Rx")
+ *   - SCell: "- x {RX_ANTENNAS}" (e.g. "- x 4", "- x 2")
  *
  * The property NR_PCell_Num_Antenna_Rx is UE RX-side only. NSG's formatter
  * hardcodes symmetric "NxN" strings which misleadingly implies gNB TX
  * knowledge. This hook replaces that with honest formatting:
- *   - SCell: just show RX count (no fabricated TX side)
+ *   - SCell: show RX count with a dash for the unknown TX side ("- x N")
  *   - PCell: combine with actual gNB CSI ports (NR_PCell_Num_CSI_Ports)
  */
 public class NrSaMimoFormatHook {
@@ -97,9 +97,9 @@ public class NrSaMimoFormatHook {
 
                     int rx = ((Number) value).intValue();
 
-                    // SCell: show RX-only (no fabricated TX side)
+                    // SCell: show RX count with a dash for the unknown TX side.
                     if (key.contains("SCell_Num_Antenna_Rx")) {
-                        return rx + "Rx";
+                        return "- x " + rx;
                     }
 
                     // PCell: combine with actual gNB CSI ports
@@ -109,7 +109,7 @@ public class NrSaMimoFormatHook {
                             return csiPorts + " x " + rx;
                         }
                         // Fallback if CSI ports unavailable
-                        return rx + "Rx";
+                        return "- x " + rx;
                     }
 
                     return chain.proceed();

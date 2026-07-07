@@ -10,8 +10,8 @@ android {
         applicationId 'com.nsgmod.band'
         minSdk 23
         targetSdk 37
-        versionCode 36
-        versionName "8.0"
+        versionCode 38
+        versionName "8.2"
     }
 
     buildTypes {
@@ -32,6 +32,14 @@ android {
     buildFeatures {
         buildConfig = false
     }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ["-Xlint:deprecation", "-Xlint:unchecked"]
+}
+
+configurations.configureEach {
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib'
 }
 
 dependencies {
