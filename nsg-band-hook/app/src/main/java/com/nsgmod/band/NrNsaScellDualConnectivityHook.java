@@ -903,10 +903,15 @@ public class NrNsaScellDualConnectivityHook {
     // the PCell-specific clone(s) in the RowBinding, then swap dynamically when
     // the SCell appears or disappears. Swapping at build time permanently made
     // the PCell cell point to PCell::* keys, which are not populated (or have
-    // stale Properties) after SCell de-aggregation, causing '-' for RLC/PDCP
-    // throughput and similar rows.
+    // stale Properties) after SCell de-aggregation, causing '-' for some rows.
+    // RLC/PDCP throughput (rows 18/19) keep the stock NR-NSA aggregated
+    // formatter because the PCell::* throughput keys are unpopulated in NR-NSA.
     // -------------------------------------------------------------------------
     private void preparePcellFormatters(RowBinding binding, Object nrCell, int row) {
+        // RLC and PDCP throughput rows keep the stock aggregated NR-NSA
+        // formatter; the PCell-specific keys are not populated in NR-NSA mode.
+        if (row == 18 || row == 19) return;
+
         try {
             String className = nrCell.getClass().getName();
             String[] pcellKeys = getPcellKeys(row);
@@ -1186,7 +1191,8 @@ public class NrNsaScellDualConnectivityHook {
 
         // Dynamic PCell formatter swapping: original (aggregated) and
         // PCell-specific clones. Only non-null for rows where a PCell-specific
-        // key exists (throughputs, BLER, RBs, MCS, CQI, Modulation, ModUsage).
+        // key is used (BLER, RBs, MCS, CQI, Modulation, ModUsage, Phy/MAC
+        // throughput). RLC/PDCP throughput (rows 18/19) keep the stock formatter.
         Object originalV6fFormatter;
         Object pcellV6fFormatter;
         List<Object> originalV6gFormatters;
