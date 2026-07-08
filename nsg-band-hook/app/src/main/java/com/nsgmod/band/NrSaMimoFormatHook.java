@@ -33,11 +33,29 @@ public class NrSaMimoFormatHook {
     // Parent class com.qtrun.sys.a fields (inherited by d7.i$c via com.qtrun.sys.b)
     private Field sysAKeyField;   // field "a" (String key)
 
+    // Context captured from v6.g.a(sampleKey, DataSource, moduleIndex) while it formats
+    // a label. This is the exact sample key / module index the formatter is rendering,
+    // which may differ from Workspace.g in replay/freeze mode.
+    private static final ThreadLocal<FormatContext> formatContext = new ThreadLocal<>();
+
+    private static final class FormatContext {
+        final long   sampleKey;
+        final int    moduleIndex;
+        final Object dataSource;
+
+        FormatContext(long sampleKey, int moduleIndex, Object dataSource) {
+            this.sampleKey = sampleKey;
+            this.moduleIndex = moduleIndex;
+            this.dataSource = dataSource;
+        }
+    }
+
     // Workspace / DataSource reflection (shared pattern)
     private Field  wsJ;           // Workspace.j singleton
     private Field  wsG;           // Workspace.g — current sample key (cursor)
     private Field  wsModuleIndex; // Workspace.a (module index)
     private Field  wsDataSource;  // Workspace.c (DataSource)
+    private Class<?> dsClass;     // com.qtrun.sys.DataSource class
     private Method dsGetProperty; // DataSource.getProperty(String, int)
     private Method propBMethod;   // Property.b(long) → Iterator
     private Method iterEndMethod; // Iterator.end()Z
@@ -55,7 +73,7 @@ public class NrSaMimoFormatHook {
             sysAKeyField = sysAClass.getField("a");
 
             Class<?> wsClass = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> dsClass = loader.loadClass("com.qtrun.sys.DataSource");
+            dsClass = loader.loadClass("com.qtrun.sys.DataSource");
             Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
             Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
 
@@ -80,6 +98,11 @@ public class NrSaMimoFormatHook {
             Log.w(TAG, "NrSaMimoFormatHook: skipping install");
             return;
         }
+        installFormatterHook();
+        installGridValueLabelHook();
+    }
+
+    private void installFormatterHook() {
         try {
             Class<?> formatterClass = loader.loadClass("d7.i$c");
             Method cMethod = formatterClass.getMethod("c", Object.class);
@@ -115,28 +138,83 @@ public class NrSaMimoFormatHook {
                     return chain.proceed();
                 }
             });
-            Log.i(TAG, "NrSaMimoFormatHook: installed");
+            Log.i(TAG, "NrSaMimoFormatHook: formatter hook installed");
         } catch (Exception e) {
-            Log.e(TAG, "NrSaMimoFormatHook: install failed: " + e);
+            Log.e(TAG, "NrSaMimoFormatHook: install d7.i$c failed: " + e);
         }
     }
 
-    /** Read NR_PCell_Num_CSI_Ports from DataSource at the current cursor sample key.
-     *  Uses Workspace.g (sample key) so replay/freeze mode shows the historical value
-     *  that matches the MIMO value being formatted, not the latest head sample. */
-    private Integer readCsiPorts() {
+    private void installGridValueLabelHook() {
         try {
-            Object ws = wsJ.get(null);
-            if (ws == null) return null;
-            long sampleKey = wsG.getLong(ws);
-            int moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
-            Object ds = wsDataSource.get(ws);
-            if (ds == null) return null;
+            Class<?> gridValueLabelClass = loader.loadClass("v6.g");
+            Method aMethod = gridValueLabelClass.getMethod("a", long.class, dsClass, short.class);
 
+            xposed.hook(aMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object sampleKeyObj = chain.getArg(0);
+                    Object ds = chain.getArg(1);
+                    Object moduleIndexObj = chain.getArg(2);
+
+                    if (sampleKeyObj instanceof Number && moduleIndexObj instanceof Number) {
+                        formatContext.set(new FormatContext(
+                                ((Number) sampleKeyObj).longValue(),
+                                ((Number) moduleIndexObj).intValue(),
+                                ds));
+                    }
+
+                    try {
+                        return chain.proceed();
+                    } finally {
+                        formatContext.remove();
+                    }
+                }
+            });
+            Log.i(TAG, "NrSaMimoFormatHook: grid value label hook installed");
+        } catch (Exception e) {
+            Log.e(TAG, "NrSaMimoFormatHook: install v6.g failed: " + e);
+        }
+    }
+
+    /** Read NR_PCell_Num_CSI_Ports using the exact sample key being formatted by v6.g.a.
+     *  Falls back to the current Workspace cursor if not called from v6.g.a. */
+    private Integer readCsiPorts() {
+        FormatContext ctx = formatContext.get();
+
+        long sampleKey;
+        int moduleIndex;
+        Object ds;
+
+        if (ctx != null) {
+            sampleKey = ctx.sampleKey;
+            moduleIndex = ctx.moduleIndex;
+            ds = ctx.dataSource;
+        } else {
+            try {
+                Object ws = wsJ.get(null);
+                if (ws == null) {
+                    return null;
+                }
+                sampleKey = wsG.getLong(ws);
+                moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
+                ds = wsDataSource.get(ws);
+            } catch (Exception e) {
+                Log.w(TAG, "NrSaMimoFormatHook: readCsiPorts fallback failed: " + e);
+                return null;
+            }
+        }
+
+        if (ds == null) {
+            return null;
+        }
+
+        try {
             Object property = dsGetProperty.invoke(ds,
                     "NR5G::Downlink_Measurements::PCell::NR_PCell_Num_CSI_Ports",
                     moduleIndex);
-            if (property == null) return null;
+            if (property == null) {
+                return null;
+            }
 
             Object iterator = propBMethod.invoke(property, sampleKey);
             if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) {
