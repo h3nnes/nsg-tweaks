@@ -46,10 +46,9 @@ public class NrSaHeaderPathlossHook {
     private Field veG; // appearance (g)
     private Field veH; // gravity (h)
 
-    // v6.g value cell fields and method
+    // v6.g value cell methods
     private Method vgGMethod; // g(com.qtrun.sys.b, boolean)
-    private Field vgJ;        // appearance (j)
-    private Field vgK;        // gravity (k)
+    private Method vgJMethod; // j(int appearance, int color)
 
     // v6.a element fields
     private Field vaViewField; // a -> View
@@ -135,10 +134,7 @@ public class NrSaHeaderPathlossHook {
             sysAFieldC.setAccessible(true);
 
             vgGMethod = vgClass.getMethod("g", sysBClass, boolean.class);
-            vgJ = vgClass.getDeclaredField("j");
-            vgK = vgClass.getDeclaredField("k");
-            vgJ.setAccessible(true);
-            vgK.setAccessible(true);
+            vgJMethod = vgClass.getMethod("j", int.class, int.class);
 
             v6dListField = v6dClass.getDeclaredField("a");
             v6dListField.setAccessible(true);
@@ -250,33 +246,33 @@ public class NrSaHeaderPathlossHook {
                     vaColField.set(elem, 22.0f);
                     vaWidthField.set(elem, 13.0f);
                 }
-                // SS-RSRP: col 41, width 30 -> col 45, width 27
+                // SS-RSRP: col 41, width 30 -> col 49, width 24
                 else if (col >= 40.0f && col < 42.0f && Math.abs(width - 30.0f) < 1.0f) {
-                    vaColField.set(elem, 45.0f);
-                    vaWidthField.set(elem, 27.0f);
+                    vaColField.set(elem, 49.0f);
+                    vaWidthField.set(elem, 24.0f);
                 }
-                // SS-SINR: col 72, width 28 -> col 72, width 26
+                // SS-SINR: col 72, width 28 -> col 73, width 24
                 else if (col >= 71.0f && col < 73.0f && Math.abs(width - 28.0f) < 1.0f) {
-                    vaColField.set(elem, 72.0f);
-                    vaWidthField.set(elem, 26.0f);
+                    vaColField.set(elem, 73.0f);
+                    vaWidthField.set(elem, 24.0f);
                 }
             }
 
             final float h = 1.0f;
 
-            // Step 2: create Pathloss label at row=0, col=35, width=10.
-            Object label = k2aRMethod.invoke(k2aObj, 0.0f, h, 35.0f, 10.0f);
+            // Step 2: create Pathloss label at row=0, col=35, width=14.
+            Object label = k2aRMethod.invoke(k2aObj, 0.0f, h, 35.0f, 14.0f);
             if (label != null) {
                 veF.set(label, "Pathloss");
                 veG.set(label, 0); // appearance
                 veH.set(label, 2); // gravity
             }
 
-            // Step 3: create Pathloss value cell at row=1, col=35, width=10.
-            Object valueCell = k2aTMethod.invoke(k2aObj, 1.0f, h, 35.0f, 10.0f);
+            // Step 3: create Pathloss value cell at row=1, col=35, width=14.
+            Object valueCell = k2aTMethod.invoke(k2aObj, 1.0f, h, 35.0f, 14.0f);
             if (valueCell != null) {
-                vgJ.set(valueCell, 0); // appearance
-                vgK.set(valueCell, 2); // gravity
+                // Match the surrounding value cells: appearance 0, color -1 (white), centered.
+                vgJMethod.invoke(valueCell, 0, -1);
 
                 Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
                 sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_Pathloss_DL");
