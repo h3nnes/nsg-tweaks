@@ -12,8 +12,8 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Adds "16QAM" and "QPSK" percentage rows (PCell only) directly below "64Q Util."
- * on the NR-SA CA Matrix DL page (h8.b), above "Phy. Thput".
+ * Adds "16Q Util." and "QPSK Util." percentage rows (PCell + NR SCells) directly below
+ * "64Q Util." on the NR-SA CA Matrix DL page (h8.b), above "Phy. Thput".
  *
  * Uses the same hook architecture as NrSaCsiSnrRowHook:
  *   - h8.b.o0() intercept sets a ThreadLocal with the carrier count
@@ -25,15 +25,28 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   Path C inline carriers==3 : 64Q label at 38 h=2.0, bar at 38.3 h=1.4
  *                               → insert at 46 (=38+2+4+2), shift by 4.0f (2 rows × 2.0f)
  *
- * Property keys (flat namespace — PCell variants for 16QAM/QPSK don't exist in NSG):
- *   16QAM DL : NR5G::Downlink_Measurements::NR_ModUsage_16QAM_DL
- *   QPSK DL  : NR5G::Downlink_Measurements::NR_ModUsage_QPSK_DL
+ * Property keys:
+ *   PCell:
+ *     16QAM DL : NR5G::Downlink_Measurements::NR_ModUsage_16QAM_DL    index=-1
+ *     QPSK DL  : NR5G::Downlink_Measurements::NR_ModUsage_QPSK_DL     index=-1
+ *   SCells (0-based SCell index in sysAFieldC):
+ *     16QAM DL : NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_16QAM_DL
+ *     QPSK DL  : NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_QPSK_DL
  *
  * Bar style: v6.f (same as 64Q Util. bars), deep blue via v6.f.f(colorInt, 100.0f).
  */
 public class NrSaModUsageRowHook {
 
     private static final String TAG = "NSGBandHook";
+
+    private static final String KEY_16QAM_PCELL =
+            "NR5G::Downlink_Measurements::NR_ModUsage_16QAM_DL";
+    private static final String KEY_QPSK_PCELL =
+            "NR5G::Downlink_Measurements::NR_ModUsage_QPSK_DL";
+    private static final String KEY_16QAM_SCELL =
+            "NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_16QAM_DL";
+    private static final String KEY_QPSK_SCELL =
+            "NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_QPSK_DL";
 
     // Shared ThreadLocal with NrSaCsiSnrRowHook — we read it, not own it.
     // Passed in via constructor from MainHook.
@@ -244,15 +257,29 @@ public class NrSaModUsageRowHook {
                 veH.set(label16, 1);
             }
 
-            // --- 16QAM PCell bar ---
-            Object bar16 = k2aSMethod.invoke(k2aObj, row1 + barOffset, barHeight, 30.0f, 34.0f);
-            if (bar16 != null) {
-                Object prop16 = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop16, "NR5G::Downlink_Measurements::NR_ModUsage_16QAM_DL");
-                sysAFieldB.set(prop16, "%.1f %%");
-                sysAFieldC.set(prop16, -1);
-                vfG.set(bar16, prop16);
-                vfFMethod.invoke(bar16, deepBlueColor, 100.0f);
+            // --- 16QAM PCell bar (unchanged) ---
+            injectModUsageBar(k2aObj, row1 + barOffset, barHeight, 30.0f,
+                    KEY_16QAM_PCELL, -1);
+
+            // --- 16QAM SCell bars (mirror NrSaRsrpRowHook SCell geometry) ---
+            if (isPathA) {
+                // 1 SCell: col 65, same row
+                injectModUsageBar(k2aObj, row1, barHeight, 65.0f,
+                        KEY_16QAM_SCELL, 0);
+            } else if (isInline3) {
+                // 2 SCells: stacked in col 65, each h=1.0
+                injectModUsageBar(k2aObj, row1, 1.0f, 65.0f,
+                        KEY_16QAM_SCELL, 0);
+                injectModUsageBar(k2aObj, row1 + 1.0f, 1.0f, 65.0f,
+                        KEY_16QAM_SCELL, 1);
+            } else {
+                // 3 SCells: SCell0 under PCell in col 30; SCell1/2 in col 65
+                injectModUsageBar(k2aObj, row1 + 1.0f, 1.0f, 30.0f,
+                        KEY_16QAM_SCELL, 0);
+                injectModUsageBar(k2aObj, row1, 1.0f, 65.0f,
+                        KEY_16QAM_SCELL, 1);
+                injectModUsageBar(k2aObj, row1 + 1.0f, 1.0f, 65.0f,
+                        KEY_16QAM_SCELL, 2);
             }
 
             // --- QPSK label ---
@@ -263,19 +290,47 @@ public class NrSaModUsageRowHook {
                 veH.set(labelQpsk, 1);
             }
 
-            // --- QPSK PCell bar ---
-            Object barQpsk = k2aSMethod.invoke(k2aObj, row2 + barOffset, barHeight, 30.0f, 34.0f);
-            if (barQpsk != null) {
-                Object propQpsk = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(propQpsk, "NR5G::Downlink_Measurements::NR_ModUsage_QPSK_DL");
-                sysAFieldB.set(propQpsk, "%.1f %%");
-                sysAFieldC.set(propQpsk, -1);
-                vfG.set(barQpsk, propQpsk);
-                vfFMethod.invoke(barQpsk, deepBlueColor, 100.0f);
+            // --- QPSK PCell bar (unchanged) ---
+            injectModUsageBar(k2aObj, row2 + barOffset, barHeight, 30.0f,
+                    KEY_QPSK_PCELL, -1);
+
+            // --- QPSK SCell bars (mirror NrSaRsrpRowHook SCell geometry) ---
+            if (isPathA) {
+                injectModUsageBar(k2aObj, row2, barHeight, 65.0f,
+                        KEY_QPSK_SCELL, 0);
+            } else if (isInline3) {
+                injectModUsageBar(k2aObj, row2, 1.0f, 65.0f,
+                        KEY_QPSK_SCELL, 0);
+                injectModUsageBar(k2aObj, row2 + 1.0f, 1.0f, 65.0f,
+                        KEY_QPSK_SCELL, 1);
+            } else {
+                injectModUsageBar(k2aObj, row2 + 1.0f, 1.0f, 30.0f,
+                        KEY_QPSK_SCELL, 0);
+                injectModUsageBar(k2aObj, row2, 1.0f, 65.0f,
+                        KEY_QPSK_SCELL, 1);
+                injectModUsageBar(k2aObj, row2 + 1.0f, 1.0f, 65.0f,
+                        KEY_QPSK_SCELL, 2);
             }
 
         } catch (Exception e) {
             Log.w(TAG, "NrSaModUsageRowHook: injectModUsageRows failed: " + e);
+        }
+    }
+
+    /**
+     * Creates a single v6.f bar bound to the given property key/index.
+     * All ModUsage bars share the same deep-blue color and 100.0f max scale.
+     */
+    private void injectModUsageBar(Object k2aObj, float row, float height, float col,
+                                   String key, int index) throws Exception {
+        Object bar = k2aSMethod.invoke(k2aObj, row, height, col, 34.0f);
+        if (bar != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, key);
+            sysAFieldB.set(prop, "%.1f %%");
+            sysAFieldC.set(prop, index);
+            vfG.set(bar, prop);
+            vfFMethod.invoke(bar, deepBlueColor, 100.0f);
         }
     }
 }

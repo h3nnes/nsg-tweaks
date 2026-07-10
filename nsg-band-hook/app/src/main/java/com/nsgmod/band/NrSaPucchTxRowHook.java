@@ -12,20 +12,32 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Inserts a "PUCCH TX" row at position 8.0 on the NR-SA CA Matrix UL page (h8.c),
- * shifting the original row 8 (TxPower) and all subsequent rows up by +1.0.
+ * Inserts a "Pwr Headr." row at position 8.0 and a "PUCCH TX" row at position 9.0
+ * on the NR-SA CA Matrix UL page (h8.c), shifting the original row 8 (TxPower)
+ * and all subsequent rows up by +2.0.
  *
  * Row geometry:
- *   label: row=8.0, h=1.0, col=0.0, w=27.0, text="PUCCH TX", align=0, span=1
- *   bar:   row=8.0, h=1.0, col=30.0, w=34.0
- *          key="NR5G::Uplink_Measurements::NR_Power_Tx_PUCCH", index=-1, format="%.1f dBm"
- *   SCell column (col=65) intentionally omitted — no SCell PUCCH TX data in NSG.
+ *   headroom label: row=8.0, h=1.0, col=0.0, w=27.0, text="Pwr Headr.", align=0, span=1
+ *   headroom bar:   row=8.0, h=1.0, col=30.0, w=34.0
+ *                   key="NR5G::Uplink_Measurements::NR_Power_Headroom",
+ *                   index=-1, format="%.0f dB", color based on live value
+ *   PUCCH TX label: row=9.0, h=1.0, col=0.0, w=27.0, text="PUCCH TX", align=0, span=1
+ *   PUCCH TX bar:   row=9.0, h=1.0, col=30.0, w=34.0
+ *                   key="NR5G::Uplink_Measurements::NR_Power_Tx_PUCCH",
+ *                   index=-1, format="%.1f dBm"
+ *   SCell column (col=65) intentionally omitted — no SCell data for these in NSG.
  *
  * Hook: AFTER h8.c.l0(Context) — called once per fragment lifecycle (guarded by Y==null in v6.b.I()).
+ * Hook: AFTER v6.f.a(long, DataSource, short) — dynamic color for the headroom bar.
  */
 public class NrSaPucchTxRowHook {
 
     private static final String TAG = "NSGBandHook";
+
+    private static final String HEADROOM_KEY = "NR5G::Uplink_Measurements::NR_Power_Headroom";
+    private static final String PUCCH_TX_KEY = "NR5G::Uplink_Measurements::NR_Power_Tx_PUCCH";
+
+    private static boolean headroomBarHookInstalled = false;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -39,14 +51,22 @@ public class NrSaPucchTxRowHook {
     private Field veG; // align  (JADX: f8117g)
     private Field veH; // span
 
-    // v6.f bar data-binding field
+    // v6.f bar fields / methods
     private Field vfF8120g; // g (JADX: f8120g) — data binding
+    private Field vfF8119f; // f (JADX: f8119f) — latest value object
+    private Field vfF8122j; // j (JADX: f8122j) — bar color int
+    private Field vfF8123k; // k (JADX: f8123k) — max value (float)
+    private Method vfFMethod; // f(int color, float max) → manual bar style
+    private Method vfAMethod; // a(long sampleKey, DataSource, short moduleIndex)
 
     // com.qtrun.sys.b / a — property binding
     private Class<?> sysBClass;
     private Field sysAFieldA; // final String key
     private Field sysAFieldB; // final String format
     private Field sysAFieldC; // int index
+
+    // com.qtrun.sys.DataSource (used for v6.f.a signature)
+    private Class<?> dataSourceClass;
 
     // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
     private Object unsafe;
@@ -83,6 +103,16 @@ public class NrSaPucchTxRowHook {
 
             vfF8120g = vfClass.getDeclaredField("g");
             vfF8120g.setAccessible(true);
+            vfF8119f = vfClass.getDeclaredField("f");
+            vfF8119f.setAccessible(true);
+            vfF8122j = vfClass.getDeclaredField("j");
+            vfF8122j.setAccessible(true);
+            vfF8123k = vfClass.getDeclaredField("k");
+            vfF8123k.setAccessible(true);
+
+            vfFMethod = vfClass.getMethod("f", int.class, float.class);
+            dataSourceClass = loader.loadClass("com.qtrun.sys.DataSource");
+            vfAMethod = vfClass.getMethod("a", long.class, dataSourceClass, short.class);
 
             sysBClass = loader.loadClass("com.qtrun.sys.b");
             Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
@@ -138,9 +168,73 @@ public class NrSaPucchTxRowHook {
                     return result;
                 }
             });
+
+            installHeadroomBarHook();
+
             Log.i(TAG, "NrSaPucchTxRowHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "NrSaPucchTxRowHook: install failed: " + e);
+        }
+    }
+
+    private void installHeadroomBarHook() {
+        synchronized (NrSaPucchTxRowHook.class) {
+            if (headroomBarHookInstalled) {
+                return;
+            }
+            headroomBarHookInstalled = true;
+            try {
+                xposed.hook(vfAMethod).intercept(new Hooker() {
+                    @Override
+                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                        Object result = chain.proceed();
+                        updateHeadroomBarColor(chain.getThisObject());
+                        return result;
+                    }
+                });
+                Log.i(TAG, "NrSaPucchTxRowHook: headroom bar color hook installed");
+            } catch (Exception e) {
+                Log.e(TAG, "NrSaPucchTxRowHook: headroom bar color hook failed: " + e);
+            }
+        }
+    }
+
+    private void updateHeadroomBarColor(Object bar) {
+        if (bar == null || vfF8120g == null || vfF8119f == null || vfF8122j == null) {
+            return;
+        }
+        try {
+            Object binding = vfF8120g.get(bar);
+            if (binding == null) {
+                return;
+            }
+            Object keyObj = sysAFieldA.get(binding);
+            if (keyObj == null || !HEADROOM_KEY.equals(keyObj.toString())) {
+                return;
+            }
+
+            Object valueObj = vfF8119f.get(bar);
+            if (!(valueObj instanceof Number)) {
+                return;
+            }
+            double value = ((Number) valueObj).doubleValue();
+
+            int color;
+            if (value > 30.0) {
+                color = 0xFF2E7D32; // dark green
+            } else if (value > 20.0) {
+                color = 0xFF43A047; // green
+            } else if (value > 10.0) {
+                color = 0xFFFBC02D; // yellow
+            } else if (value > 5.0) {
+                color = 0xFFFF9800; // orange
+            } else {
+                color = 0xFFF44336; // red
+            }
+
+            vfF8122j.set(bar, color);
+        } catch (Exception e) {
+            Log.w(TAG, "NrSaPucchTxRowHook: updateHeadroomBarColor failed: " + e);
         }
     }
 
@@ -152,36 +246,57 @@ public class NrSaPucchTxRowHook {
                 return;
             }
 
-            // Step 1: shift all elements at row >= 8.0 by +1.0
+            // Step 1: shift all elements at row >= 8.0 by +2.0
             java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
             if (list != null) {
                 for (Object elem : list) {
                     float elemRow = (float) vaRowField.get(elem);
                     if (elemRow >= 8.0f) {
-                        vaRowField.set(elem, elemRow + 1.0f);
+                        vaRowField.set(elem, elemRow + 2.0f);
                     }
                 }
             }
 
-            final float row = 8.0f;
-            final float h   = 1.0f;
+            final float headroomRow = 8.0f;
+            final float pucchRow    = 9.0f;
+            final float h = 1.0f;
 
-            // Step 2: inject label at row=8.0, h=1.0, col=0.0, w=27.0
-            Object label = k2aRMethod.invoke(k2aObj, row, h, 0.0f, 27.0f);
-            if (label != null) {
-                veF.set(label, "PUCCH TX");
-                veG.set(label, 0);
-                veH.set(label, 1);
+            // Step 2: inject "Pwr Headr." label at row=8.0, h=1.0, col=0.0, w=27.0
+            Object headroomLabel = k2aRMethod.invoke(k2aObj, headroomRow, h, 0.0f, 27.0f);
+            if (headroomLabel != null) {
+                veF.set(headroomLabel, "Pwr Headr.");
+                veG.set(headroomLabel, 0);
+                veH.set(headroomLabel, 1);
             }
 
-            // Step 3: inject bar at row=8.0, h=1.0, col=30.0, w=34.0 (PCell only)
-            Object bar = k2aSMethod.invoke(k2aObj, row, h, 30.0f, 34.0f);
-            if (bar != null) {
+            // Step 3: inject headroom bar at row=8.0, h=1.0, col=30.0, w=34.0 (PCell only)
+            Object headroomBar = k2aSMethod.invoke(k2aObj, headroomRow, h, 30.0f, 34.0f);
+            if (headroomBar != null) {
                 Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, "NR5G::Uplink_Measurements::NR_Power_Tx_PUCCH");
+                sysAFieldA.set(prop, HEADROOM_KEY);
+                sysAFieldB.set(prop, "%.0f dB");
+                sysAFieldC.set(prop, -1);
+                vfF8120g.set(headroomBar, prop);
+                // manual bar style: green default, max 30 dB
+                vfFMethod.invoke(headroomBar, 0xFF43A047, 30.0f);
+            }
+
+            // Step 4: inject "PUCCH TX" label at row=9.0, h=1.0, col=0.0, w=27.0
+            Object pucchLabel = k2aRMethod.invoke(k2aObj, pucchRow, h, 0.0f, 27.0f);
+            if (pucchLabel != null) {
+                veF.set(pucchLabel, "PUCCH TX");
+                veG.set(pucchLabel, 0);
+                veH.set(pucchLabel, 1);
+            }
+
+            // Step 5: inject PUCCH TX bar at row=9.0, h=1.0, col=30.0, w=34.0 (PCell only)
+            Object pucchBar = k2aSMethod.invoke(k2aObj, pucchRow, h, 30.0f, 34.0f);
+            if (pucchBar != null) {
+                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+                sysAFieldA.set(prop, PUCCH_TX_KEY);
                 sysAFieldB.set(prop, "%.1f dBm");
                 sysAFieldC.set(prop, -1);
-                vfF8120g.set(bar, prop);
+                vfF8120g.set(pucchBar, prop);
                 // No .f(color, max) call — LegendManager auto-coloring via f8120g
             }
 
