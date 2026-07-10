@@ -243,7 +243,9 @@ public class NrSaCellColumnsHook {
                 Object prevIter = propIterMethod.invoke(property, sampleKey - 1);
                 if (prevIter != null && !(boolean) iterEndMethod.invoke(prevIter)) {
                     Object prevVal = iterValueMethod.invoke(prevIter);
-                    extracted = extractArrayValue(prevVal, scellIndex);
+                    if (prevVal != null) {
+                        extracted = extractArrayValue(prevVal, scellIndex);
+                    }
                 }
             }
             return extracted;
@@ -280,7 +282,7 @@ public class NrSaCellColumnsHook {
             if (value instanceof Long)    return String.valueOf((Long) value);
             if (value instanceof Float)   return String.valueOf(((Float) value).intValue());
             if (value instanceof Double)  return String.valueOf(((Double) value).intValue());
-            return value.toString();
+            return value != null ? value.toString() : null;
     }
 
     // -----------------------------------------------------------------------

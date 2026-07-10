@@ -55,7 +55,8 @@ public class HiddenFieldProbeHook {
 
     private static final String[] TARGET_KEYS = {
             "Power_Tx_SRS",
-            "NR5G::Uplink_Measurements::NR_Power_Tx_SRS"
+            "NR5G::Uplink_Measurements::NR_Power_Tx_SRS",
+            "NR5G::Downlink_Measurements::PCell::NR_PCell_CCE_Usage_Level1_DL"
     };
 
     // One dedup set per target key to avoid logcat spam.
