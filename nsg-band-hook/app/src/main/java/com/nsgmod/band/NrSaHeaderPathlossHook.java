@@ -31,6 +31,11 @@ public class NrSaHeaderPathlossHook {
     // Cache fragment -> root view so updateVisibility doesn't need Fragment.getView()
     private final java.util.WeakHashMap<Object, View> fragmentRootViews = new java.util.WeakHashMap<>();
 
+    // Existing four header column elements and the injected pathloss elements, stored
+    // per fragment so we can toggle between standard (4-column) and NR-SA (5-column)
+    // geometry in updateVisibility().
+    private final java.util.WeakHashMap<Object, HeaderGeometry> fragmentGeometry = new java.util.WeakHashMap<>();
+
     // HeaderRFFragment
     private Class<?> headerRFFragmentClass;
     private Field headerRFFragmentK2aField; // found by type k2.a
@@ -76,6 +81,36 @@ public class NrSaHeaderPathlossHook {
     private Method unsafeAllocateInstance;
 
     private boolean ready = false;
+
+    /** Holds the four existing header column elements and the injected pathloss pair,
+     *  plus their standard and NR-SA geometries, for one fragment instance. */
+    private static final class HeaderGeometry {
+        final Object ssbArfcnLabel;
+        final Object pciLabel;
+        final Object ssRsrpLabel;
+        final Object ssSinrLabel;
+        final Object ssbArfcnValue;
+        final Object pciValue;
+        final Object ssRsrpValue;
+        final Object ssSinrValue;
+        final Object pathlossLabel;
+        final Object pathlossValue;
+
+        HeaderGeometry(Object ssbArfcnLabel, Object pciLabel, Object ssRsrpLabel, Object ssSinrLabel,
+                       Object ssbArfcnValue, Object pciValue, Object ssRsrpValue, Object ssSinrValue,
+                       Object pathlossLabel, Object pathlossValue) {
+            this.ssbArfcnLabel = ssbArfcnLabel;
+            this.pciLabel = pciLabel;
+            this.ssRsrpLabel = ssRsrpLabel;
+            this.ssSinrLabel = ssSinrLabel;
+            this.ssbArfcnValue = ssbArfcnValue;
+            this.pciValue = pciValue;
+            this.ssRsrpValue = ssRsrpValue;
+            this.ssSinrValue = ssSinrValue;
+            this.pathlossLabel = pathlossLabel;
+            this.pathlossValue = pathlossValue;
+        }
+    }
 
     public NrSaHeaderPathlossHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -227,7 +262,12 @@ public class NrSaHeaderPathlossHook {
                 return;
             }
 
-            // Step 1: reshape existing row 0 / row 1 elements.
+            // Step 1: identify the four existing header columns (label + value for each).
+            Object ssbArfcnLabel = null, ssbArfcnValue = null;
+            Object pciLabel = null, pciValue = null;
+            Object ssRsrpLabel = null, ssRsrpValue = null;
+            Object ssSinrLabel = null, ssSinrValue = null;
+
             for (Object elem : list) {
                 float row = (float) vaRowField.get(elem);
                 if (row != 0.0f && row != 1.0f) {
@@ -236,92 +276,87 @@ public class NrSaHeaderPathlossHook {
                 float col = (float) vaColField.get(elem);
                 float width = (float) vaWidthField.get(elem);
 
-                // SSB-ARFCN: col 0, width 25 -> col 0, width 22
+                // SSB-ARFCN: col 0, width 25
                 if (col < 1.0f && Math.abs(width - 25.0f) < 1.0f) {
-                    vaColField.set(elem, 0.0f);
-                    vaWidthField.set(elem, 22.0f);
+                    if (row == 0.0f) ssbArfcnLabel = elem; else ssbArfcnValue = elem;
                 }
-                // PCI: col 25, width 15 -> col 22, width 13
+                // PCI: col 25, width 15
                 else if (col >= 24.0f && col < 26.0f && Math.abs(width - 15.0f) < 1.0f) {
-                    vaColField.set(elem, 22.0f);
-                    vaWidthField.set(elem, 13.0f);
+                    if (row == 0.0f) pciLabel = elem; else pciValue = elem;
                 }
-                // SS-RSRP: col 41, width 30 -> col 49, width 24
+                // SS-RSRP: col 41, width 30
                 else if (col >= 40.0f && col < 42.0f && Math.abs(width - 30.0f) < 1.0f) {
-                    vaColField.set(elem, 49.0f);
-                    vaWidthField.set(elem, 24.0f);
+                    if (row == 0.0f) ssRsrpLabel = elem; else ssRsrpValue = elem;
                 }
-                // SS-SINR: col 72, width 28 -> col 73, width 24
+                // SS-SINR: col 72, width 28
                 else if (col >= 71.0f && col < 73.0f && Math.abs(width - 28.0f) < 1.0f) {
-                    vaColField.set(elem, 73.0f);
-                    vaWidthField.set(elem, 24.0f);
+                    if (row == 0.0f) ssSinrLabel = elem; else ssSinrValue = elem;
                 }
+            }
+
+            if (ssbArfcnLabel == null || pciLabel == null || ssRsrpLabel == null || ssSinrLabel == null) {
+                Log.w(TAG, "NrSaHeaderPathlossHook: could not identify all existing header columns");
+                return;
             }
 
             final float h = 1.0f;
 
-            // Step 2: create Pathloss label at row=0, col=35, width=14.
-            Object label = k2aRMethod.invoke(k2aObj, 0.0f, h, 35.0f, 14.0f);
-            if (label != null) {
-                veF.set(label, "Pathloss");
-                veG.set(label, 0); // appearance
-                veH.set(label, 2); // gravity
+            // Step 2: create Pathloss label at row=0, col=34, width=16.
+            Object pathlossLabel = k2aRMethod.invoke(k2aObj, 0.0f, h, 34.0f, 16.0f);
+            if (pathlossLabel != null) {
+                veF.set(pathlossLabel, "Pathloss");
+                veG.set(pathlossLabel, 0); // appearance
+                veH.set(pathlossLabel, 2); // gravity
             }
 
-            // Step 3: create Pathloss value cell at row=1, col=35, width=14.
-            Object valueCell = k2aTMethod.invoke(k2aObj, 1.0f, h, 35.0f, 14.0f);
-            if (valueCell != null) {
+            // Step 3: create Pathloss value cell at row=1, col=34, width=16.
+            Object pathlossValue = k2aTMethod.invoke(k2aObj, 1.0f, h, 34.0f, 16.0f);
+            if (pathlossValue != null) {
                 // Match the surrounding value cells: appearance 0, color -1 (white), centered.
-                vgJMethod.invoke(valueCell, 0, -1);
+                vgJMethod.invoke(pathlossValue, 0, -1);
 
                 Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
                 sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_Pathloss_DL");
                 sysAFieldB.set(prop, "%.1f dB");
                 sysAFieldC.set(prop, -1);
-                vgGMethod.invoke(valueCell, prop, true);
+                vgGMethod.invoke(pathlossValue, prop, true);
             }
 
             // Step 4: add new elements to the layout.
-            // HeaderRFFragment.I() has already built the v6.d layout, so we must
-            // both append to k2a.d and create/attach the corresponding Views in
-            // v6.d's internal child list.
             ViewGroup v6d = null;
-            if (label != null && valueCell != null) {
-                // The v6.d layout is the first (and only) child of the ScrollView.
+            if (pathlossLabel != null && pathlossValue != null) {
                 if (rootView instanceof android.widget.ScrollView
                         && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
                     v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
                     if (v6d != null) {
-                        addElementToLayout(k2aObj, v6d, list, label);
-                        addElementToLayout(k2aObj, v6d, list, valueCell);
-                        v6d.requestLayout();
+                        addElementToLayout(k2aObj, v6d, list, pathlossLabel);
+                        addElementToLayout(k2aObj, v6d, list, pathlossValue);
                     }
                 }
             }
 
-            // Step 5: store references to the underlying Views and mark injected.
-            if (label != null && valueCell != null) {
-                View labelView = (View) vaViewField.get(label);
-                View valueView = (View) vaViewField.get(valueCell);
+            // Step 5: store geometry and mark injected.
+            if (pathlossLabel != null && pathlossValue != null) {
+                View labelView = (View) vaViewField.get(pathlossLabel);
+                View valueView = (View) vaViewField.get(pathlossValue);
                 if (labelView != null && valueView != null) {
-                    // Start invisible (not GONE) so v6.d lays them out and they have
-                    // bounds when toggled to VISIBLE. b() hook will toggle based on RAT.
-                    labelView.setVisibility(View.INVISIBLE);
-                    valueView.setVisibility(View.INVISIBLE);
                     rootView.setTag(R.id.nsg_header_pathloss_label, labelView);
                     rootView.setTag(R.id.nsg_header_pathloss_value, valueView);
                     rootView.setTag(R.id.nsg_header_pathloss_injected, Boolean.TRUE);
-                    Log.i(TAG, "NrSaHeaderPathlossHook: injected label=" + labelView
-                            + " value=" + valueView
-                            + " v6d=" + v6d
-                            + " v6d child count=" + (v6d != null ? v6d.getChildCount() : -1));
-                    // Set initial visibility immediately in case the next b() hook is delayed.
+
+                    fragmentGeometry.put(thiz, new HeaderGeometry(
+                            ssbArfcnLabel, pciLabel, ssRsrpLabel, ssSinrLabel,
+                            ssbArfcnValue, pciValue, ssRsrpValue, ssSinrValue,
+                            pathlossLabel, pathlossValue));
+
+                    Log.i(TAG, "NrSaHeaderPathlossHook: injected pathloss column");
+                    // Apply the geometry for the current RAT right away.
                     updateVisibility(thiz);
                 } else {
                     Log.w(TAG, "NrSaHeaderPathlossHook: label or value underlying view is null");
                 }
             } else {
-                Log.w(TAG, "NrSaHeaderPathlossHook: label or value cell is null");
+                Log.w(TAG, "NrSaHeaderPathlossHook: pathloss label or value cell is null");
             }
 
         } catch (Exception e) {
@@ -381,7 +416,39 @@ public class NrSaHeaderPathlossHook {
             }
 
             boolean isNrSa = isNrSaMode();
-            // Use INVISIBLE instead of GONE so the cells keep their layout bounds.
+
+            HeaderGeometry geo = fragmentGeometry.get(thiz);
+            if (geo == null) {
+                return;
+            }
+
+            if (isNrSa) {
+                // NR-SA 5-column layout.
+                setGeometry(geo.ssbArfcnLabel, 0.0f, 21.0f);
+                setGeometry(geo.ssbArfcnValue, 0.0f, 21.0f);
+                setGeometry(geo.pciLabel,      21.0f, 13.0f);
+                setGeometry(geo.pciValue,      21.0f, 13.0f);
+                setGeometry(geo.ssRsrpLabel,   50.0f, 24.0f);
+                setGeometry(geo.ssRsrpValue,   50.0f, 24.0f);
+                setGeometry(geo.ssSinrLabel,   74.0f, 24.0f);
+                setGeometry(geo.ssSinrValue,   74.0f, 24.0f);
+                setGeometry(geo.pathlossLabel, 34.0f, 16.0f);
+                setGeometry(geo.pathlossValue, 34.0f, 16.0f);
+            } else {
+                // Standard 4-column layout; collapse pathloss to zero width.
+                setGeometry(geo.ssbArfcnLabel, 0.0f, 25.0f);
+                setGeometry(geo.ssbArfcnValue, 0.0f, 25.0f);
+                setGeometry(geo.pciLabel,      25.0f, 15.0f);
+                setGeometry(geo.pciValue,      25.0f, 15.0f);
+                setGeometry(geo.ssRsrpLabel,   41.0f, 30.0f);
+                setGeometry(geo.ssRsrpValue,   41.0f, 30.0f);
+                setGeometry(geo.ssSinrLabel,   72.0f, 28.0f);
+                setGeometry(geo.ssSinrValue,   72.0f, 28.0f);
+                setGeometry(geo.pathlossLabel, 0.0f, 0.0f);
+                setGeometry(geo.pathlossValue, 0.0f, 0.0f);
+            }
+
+            // Visibility: hide pathloss entirely when not NR-SA.
             int visibility = isNrSa ? View.VISIBLE : View.INVISIBLE;
             if (labelView.getVisibility() != visibility) {
                 labelView.setVisibility(visibility);
@@ -389,16 +456,40 @@ public class NrSaHeaderPathlossHook {
             if (valueView.getVisibility() != visibility) {
                 valueView.setVisibility(visibility);
             }
-            // Force the v6.d QtGridLayout to remeasure/reposition the cells.
+
+            // Force the v6.d QtGridLayout to redo layout with the new geometry.
             if (rootView instanceof android.widget.ScrollView
                     && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
                 ViewGroup v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
-                v6d.requestLayout();
-                v6d.invalidate();
+                forceV6dLayout(v6d);
             }
         } catch (Exception e) {
             Log.w(TAG, "NrSaHeaderPathlossHook: updateVisibility failed: " + e);
         }
+    }
+
+    private void setGeometry(Object elem, float col, float width) throws Exception {
+        if (elem == null) return;
+        vaColField.set(elem, col);
+        vaWidthField.set(elem, width);
+    }
+
+    private void forceV6dLayout(final ViewGroup v6d) {
+        if (v6d == null) return;
+        v6d.requestLayout();
+        v6d.post(() -> {
+            try {
+                if (v6d.getWidth() > 0 && v6d.getHeight() > 0) {
+                    Method onLayoutMethod = ViewGroup.class.getDeclaredMethod(
+                            "onLayout", boolean.class, int.class, int.class, int.class, int.class);
+                    onLayoutMethod.setAccessible(true);
+                    onLayoutMethod.invoke(v6d, true,
+                            v6d.getLeft(), v6d.getTop(), v6d.getRight(), v6d.getBottom());
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "NrSaHeaderPathlossHook: forceV6dLayout failed: " + e);
+            }
+        });
     }
 
     private boolean isNrSaMode() {
