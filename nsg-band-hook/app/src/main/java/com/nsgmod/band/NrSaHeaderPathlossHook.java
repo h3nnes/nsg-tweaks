@@ -308,9 +308,10 @@ public class NrSaHeaderPathlossHook {
                 View labelView = (View) vaViewField.get(label);
                 View valueView = (View) vaViewField.get(valueCell);
                 if (labelView != null && valueView != null) {
-                    // Start hidden; b() hook will toggle based on RAT.
-                    labelView.setVisibility(View.GONE);
-                    valueView.setVisibility(View.GONE);
+                    // Start invisible (not GONE) so v6.d lays them out and they have
+                    // bounds when toggled to VISIBLE. b() hook will toggle based on RAT.
+                    labelView.setVisibility(View.INVISIBLE);
+                    valueView.setVisibility(View.INVISIBLE);
                     rootView.setTag(R.id.nsg_header_pathloss_label, labelView);
                     rootView.setTag(R.id.nsg_header_pathloss_value, valueView);
                     rootView.setTag(R.id.nsg_header_pathloss_injected, Boolean.TRUE);
@@ -384,10 +385,8 @@ public class NrSaHeaderPathlossHook {
             }
 
             boolean isNrSa = isNrSaMode();
-            int visibility = isNrSa ? View.VISIBLE : View.GONE;
-            Log.i(TAG, "NrSaHeaderPathlossHook: updateVisibility isNrSa=" + isNrSa
-                    + " current=" + labelView.getVisibility()
-                    + " target=" + visibility);
+            // Use INVISIBLE instead of GONE so the cells keep their layout bounds.
+            int visibility = isNrSa ? View.VISIBLE : View.INVISIBLE;
             if (labelView.getVisibility() != visibility) {
                 labelView.setVisibility(visibility);
             }
