@@ -28,6 +28,9 @@ public class NrSaHeaderPathlossHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
+    // Cache fragment -> root view so updateVisibility doesn't need Fragment.getView()
+    private final java.util.WeakHashMap<Object, View> fragmentRootViews = new java.util.WeakHashMap<>();
+
     // HeaderRFFragment
     private Class<?> headerRFFragmentClass;
     private Field headerRFFragmentK2aField; // found by type k2.a
@@ -209,6 +212,7 @@ public class NrSaHeaderPathlossHook {
     }
 
     private void injectPathlossColumn(Object thiz, View rootView) {
+        fragmentRootViews.put(thiz, rootView);
         if (rootView.getTag(R.id.nsg_header_pathloss_injected) != null) {
             return; // already injected for this fragment instance
         }
@@ -345,15 +349,22 @@ public class NrSaHeaderPathlossHook {
 
     private void updateVisibility(Object thiz) {
         try {
-            // HeaderRFFragment does not have setTag(int,Object); the tags were
-            // stored on the fragment's root view in injectPathlossColumn().
-            Class<?> fragmentClass = loader.loadClass("androidx.fragment.app.Fragment");
-            Method getViewMethod = fragmentClass.getMethod("getView");
-            Object rootViewObj = getViewMethod.invoke(thiz);
-            if (!(rootViewObj instanceof View)) {
-                return;
+            View rootView = fragmentRootViews.get(thiz);
+            if (rootView == null) {
+                // Fallback: try Fragment.getView() if the I() hook hasn't cached it yet.
+                try {
+                    Method getViewMethod = headerRFFragmentClass.getMethod("getView");
+                    Object rootViewObj = getViewMethod.invoke(thiz);
+                    if (rootViewObj instanceof View) {
+                        rootView = (View) rootViewObj;
+                    }
+                } catch (Exception fallbackEx) {
+                    // ignore — the map is the primary source
+                }
+                if (rootView == null) {
+                    return;
+                }
             }
-            View rootView = (View) rootViewObj;
             View labelView = (View) rootView.getTag(R.id.nsg_header_pathloss_label);
             View valueView = (View) rootView.getTag(R.id.nsg_header_pathloss_value);
             if (labelView == null || valueView == null) {
