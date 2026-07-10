@@ -289,14 +289,16 @@ public class NrSaHeaderPathlossHook {
             // HeaderRFFragment.I() has already built the v6.d layout, so we must
             // both append to k2a.d and create/attach the corresponding Views in
             // v6.d's internal child list.
+            ViewGroup v6d = null;
             if (label != null && valueCell != null) {
                 // The v6.d layout is the first (and only) child of the ScrollView.
                 if (rootView instanceof android.widget.ScrollView
                         && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
-                    ViewGroup v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
+                    v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
                     if (v6d != null) {
                         addElementToLayout(k2aObj, v6d, list, label);
                         addElementToLayout(k2aObj, v6d, list, valueCell);
+                        v6d.requestLayout();
                     }
                 }
             }
@@ -312,7 +314,17 @@ public class NrSaHeaderPathlossHook {
                     rootView.setTag(R.id.nsg_header_pathloss_label, labelView);
                     rootView.setTag(R.id.nsg_header_pathloss_value, valueView);
                     rootView.setTag(R.id.nsg_header_pathloss_injected, Boolean.TRUE);
+                    Log.i(TAG, "NrSaHeaderPathlossHook: injected label=" + labelView
+                            + " value=" + valueView
+                            + " v6d=" + v6d
+                            + " v6d child count=" + (v6d != null ? v6d.getChildCount() : -1));
+                    // Set initial visibility immediately in case the next b() hook is delayed.
+                    updateVisibility(thiz);
+                } else {
+                    Log.w(TAG, "NrSaHeaderPathlossHook: label or value underlying view is null");
                 }
+            } else {
+                Log.w(TAG, "NrSaHeaderPathlossHook: label or value cell is null");
             }
 
         } catch (Exception e) {
@@ -373,11 +385,21 @@ public class NrSaHeaderPathlossHook {
 
             boolean isNrSa = isNrSaMode();
             int visibility = isNrSa ? View.VISIBLE : View.GONE;
+            Log.i(TAG, "NrSaHeaderPathlossHook: updateVisibility isNrSa=" + isNrSa
+                    + " current=" + labelView.getVisibility()
+                    + " target=" + visibility);
             if (labelView.getVisibility() != visibility) {
                 labelView.setVisibility(visibility);
             }
             if (valueView.getVisibility() != visibility) {
                 valueView.setVisibility(visibility);
+            }
+            // Force the v6.d QtGridLayout to remeasure/reposition the cells.
+            if (rootView instanceof android.widget.ScrollView
+                    && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
+                ViewGroup v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
+                v6d.requestLayout();
+                v6d.invalidate();
             }
         } catch (Exception e) {
             Log.w(TAG, "NrSaHeaderPathlossHook: updateVisibility failed: " + e);
