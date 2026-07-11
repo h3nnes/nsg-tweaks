@@ -14,7 +14,8 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Adds a "QPSK Util." row on the LTE CA Matrix UL page (e8.a),
- * between CQI (row 18) and 16Q Usage (row 19), for UL PCell only.
+ * between CQI (row 18) and 16Q Usage (row 19), showing both PCell
+ * and SCell QPSK utilization.
  *
  * The existing 16Q/64Q/256Q usage rows show the full set of modulation
  * percentages. QPSK is missing from the CA Matrix but is available on
@@ -27,15 +28,17 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *
  * Row layout (single-height, h=1.0):
  *   label: row=19.0 h=1.0 col=0.0 w=27.0  text="QPSK Util."
- *   bar:   row=19.0 h=1.0 col=30.0 w=34.0  key=QPSK_UL index=-1 format="%.1f %%"
+ *   PCell bar: row=19.0 h=1.0 col=30.0 w=34.0  key=QPSK_UL index=-1 format="%.1f %%"
+ *   SCell bar: row=19.0 h=1.0 col=65.0 w=34.0  key=QPSK_SCell1_UL index=-1 format="%.1f %%"
  *   bar color: color_deep_blue via v6.f.f(color, 100.0f)
- *   No SCell bar — the property key has no SCell-specific variant.
  */
 public class LteCaMatrixUlQpskHook {
 
     private static final String TAG = "NSGBandHook";
     private static final String QPSK_KEY =
             "LTE::Uplink_Measurements::LTE_ModUsage_QPSK_UL";
+    private static final String QPSK_SCELL_KEY =
+            "LTE::Uplink_Measurements::SCC::LTE_ModUsage_QPSK_SCell1_UL";
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -222,6 +225,17 @@ public class LteCaMatrixUlQpskHook {
                 sysAFieldC.set(prop, -1);
                 vfF8120g.set(bar, prop);
                 vfFMethod.invoke(bar, deepBlueColor, 100.0f);
+            }
+
+            // Step 4: inject SCell bar at row=19.0, col=65, w=34
+            Object sCellBar = k2aSMethod.invoke(k2aObj, insertRow, h, 65.0f, 34.0f);
+            if (sCellBar != null) {
+                Object propSc = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+                sysAFieldA.set(propSc, QPSK_SCELL_KEY);
+                sysAFieldB.set(propSc, "%.1f %%");
+                sysAFieldC.set(propSc, -1);
+                vfF8120g.set(sCellBar, propSc);
+                vfFMethod.invoke(sCellBar, deepBlueColor, 100.0f);
             }
 
         } catch (Exception e) {

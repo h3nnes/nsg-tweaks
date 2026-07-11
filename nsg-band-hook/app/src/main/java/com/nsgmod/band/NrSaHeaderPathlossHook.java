@@ -1,5 +1,10 @@
 package com.nsgmod.band;
 
+import com.nsgmod.band.SettingsToggleHook;
+
+import android.app.Application;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -81,6 +86,9 @@ public class NrSaHeaderPathlossHook {
     private Method unsafeAllocateInstance;
 
     private boolean ready = false;
+
+    private SharedPreferences prefs;
+    private SharedPreferences.OnSharedPreferenceChangeListener prefListener;
 
     /** Holds the four existing header column elements and the injected pathloss pair,
      *  plus their standard and NR-SA geometries, for one fragment instance. */
@@ -240,10 +248,38 @@ public class NrSaHeaderPathlossHook {
         } catch (Exception e) {
             Log.e(TAG, "NrSaHeaderPathlossHook: install failed: " + e);
         }
+        registerPrefListener();
+    }
+
+    /** Register a SharedPreferences listener so ON/OFF toggle changes take effect immediately. */
+    private void registerPrefListener() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            Application app =
+                    (Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app == null) return;
+
+            prefs = app.getSharedPreferences(
+                    "com.qtrun.QuickTest_preferences", Context.MODE_PRIVATE);
+
+            prefListener = (sharedPreferences, key) -> {
+                if (!SettingsToggleHook.PREF_KEY_PATHLOSS_COLUMN.equals(key)) return;
+                for (Object fragment : new java.util.ArrayList<>(fragmentRootViews.keySet())) {
+                    updateVisibility(fragment);
+                }
+            };
+            prefs.registerOnSharedPreferenceChangeListener(prefListener);
+        } catch (Throwable t) {
+            Log.w(TAG, "NrSaHeaderPathlossHook: failed to register preference listener: " + t);
+        }
     }
 
     private void injectPathlossColumn(Object thiz, View rootView) {
         fragmentRootViews.put(thiz, rootView);
+        if (!SettingsToggleHook.pathlossColumnEnabled()) {
+            Log.i(TAG, "NrSaHeaderPathlossHook: disabled by settings, skipping injection");
+            return;
+        }
         if (rootView.getTag(R.id.nsg_header_pathloss_injected) != null) {
             return; // already injected for this fragment instance
         }
@@ -395,35 +431,75 @@ public class NrSaHeaderPathlossHook {
         try {
             View rootView = fragmentRootViews.get(thiz);
             if (rootView == null) {
-                // Fallback: try Fragment.getView() if the I() hook hasn't cached it yet.
+                // Fallback to Fragment.getView() if I() ran while disabled and didn't cache it.
                 try {
                     Method getViewMethod = headerRFFragmentClass.getMethod("getView");
                     Object rootViewObj = getViewMethod.invoke(thiz);
                     if (rootViewObj instanceof View) {
                         rootView = (View) rootViewObj;
+                        fragmentRootViews.put(thiz, rootView);
                     }
                 } catch (Exception fallbackEx) {
-                    // ignore — the map is the primary source
+                    // ignore
                 }
-                if (rootView == null) {
-                    return;
-                }
+                if (rootView == null) return;
             }
+
+            boolean enabled = SettingsToggleHook.pathlossColumnEnabled();
+            boolean injected = rootView.getTag(R.id.nsg_header_pathloss_injected) != null;
+
+            if (!enabled) {
+                // Toggle OFF: if the column was previously injected, restore the stock
+                // 4-column layout and hide the pathloss views.
+                if (injected) {
+                    HeaderGeometry geo = fragmentGeometry.get(thiz);
+                    if (geo != null) {
+                        setGeometry(geo.ssbArfcnLabel, 0.0f, 25.0f);
+                        setGeometry(geo.ssbArfcnValue, 0.0f, 25.0f);
+                        setGeometry(geo.pciLabel,      25.0f, 15.0f);
+                        setGeometry(geo.pciValue,      25.0f, 15.0f);
+                        setGeometry(geo.ssRsrpLabel,   41.0f, 30.0f);
+                        setGeometry(geo.ssRsrpValue,   41.0f, 30.0f);
+                        setGeometry(geo.ssSinrLabel,   72.0f, 28.0f);
+                        setGeometry(geo.ssSinrValue,   72.0f, 28.0f);
+                        setGeometry(geo.pathlossLabel, 0.0f, 0.0f);
+                        setGeometry(geo.pathlossValue, 0.0f, 0.0f);
+
+                        View labelView = (View) rootView.getTag(R.id.nsg_header_pathloss_label);
+                        View valueView = (View) rootView.getTag(R.id.nsg_header_pathloss_value);
+                        if (labelView != null && labelView.getVisibility() != View.INVISIBLE) {
+                            labelView.setVisibility(View.INVISIBLE);
+                        }
+                        if (valueView != null && valueView.getVisibility() != View.INVISIBLE) {
+                            valueView.setVisibility(View.INVISIBLE);
+                        }
+
+                        if (rootView instanceof android.widget.ScrollView
+                                && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
+                            ViewGroup v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
+                            forceV6dLayout(v6d);
+                        }
+                    }
+                }
+                return;
+            }
+
+            // Toggle ON: inject now if not already injected for this fragment.
+            if (!injected) {
+                injectPathlossColumn(thiz, rootView);
+                return;
+            }
+
+            // Already injected: apply NR-SA vs. standard geometry as before.
             View labelView = (View) rootView.getTag(R.id.nsg_header_pathloss_label);
             View valueView = (View) rootView.getTag(R.id.nsg_header_pathloss_value);
-            if (labelView == null || valueView == null) {
-                return;
-            }
+            if (labelView == null || valueView == null) return;
 
             boolean isNrSa = isNrSaMode();
-
             HeaderGeometry geo = fragmentGeometry.get(thiz);
-            if (geo == null) {
-                return;
-            }
+            if (geo == null) return;
 
             if (isNrSa) {
-                // NR-SA 5-column layout.
                 setGeometry(geo.ssbArfcnLabel, 0.0f, 21.0f);
                 setGeometry(geo.ssbArfcnValue, 0.0f, 21.0f);
                 setGeometry(geo.pciLabel,      21.0f, 13.0f);
@@ -435,7 +511,6 @@ public class NrSaHeaderPathlossHook {
                 setGeometry(geo.pathlossLabel, 34.0f, 16.0f);
                 setGeometry(geo.pathlossValue, 34.0f, 16.0f);
             } else {
-                // Standard 4-column layout; collapse pathloss to zero width.
                 setGeometry(geo.ssbArfcnLabel, 0.0f, 25.0f);
                 setGeometry(geo.ssbArfcnValue, 0.0f, 25.0f);
                 setGeometry(geo.pciLabel,      25.0f, 15.0f);
@@ -448,16 +523,10 @@ public class NrSaHeaderPathlossHook {
                 setGeometry(geo.pathlossValue, 0.0f, 0.0f);
             }
 
-            // Visibility: hide pathloss entirely when not NR-SA.
             int visibility = isNrSa ? View.VISIBLE : View.INVISIBLE;
-            if (labelView.getVisibility() != visibility) {
-                labelView.setVisibility(visibility);
-            }
-            if (valueView.getVisibility() != visibility) {
-                valueView.setVisibility(visibility);
-            }
+            if (labelView.getVisibility() != visibility) labelView.setVisibility(visibility);
+            if (valueView.getVisibility() != visibility) valueView.setVisibility(visibility);
 
-            // Force the v6.d QtGridLayout to redo layout with the new geometry.
             if (rootView instanceof android.widget.ScrollView
                     && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
                 ViewGroup v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
