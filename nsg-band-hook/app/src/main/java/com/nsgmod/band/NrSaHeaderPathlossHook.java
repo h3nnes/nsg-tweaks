@@ -1,5 +1,7 @@
 package com.nsgmod.band;
 
+import com.nsgmod.band.SettingsToggleHook;
+
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -243,6 +245,10 @@ public class NrSaHeaderPathlossHook {
     }
 
     private void injectPathlossColumn(Object thiz, View rootView) {
+        if (!SettingsToggleHook.pathlossColumnEnabled()) {
+            Log.i(TAG, "NrSaHeaderPathlossHook: disabled by settings, skipping injection");
+            return;
+        }
         fragmentRootViews.put(thiz, rootView);
         if (rootView.getTag(R.id.nsg_header_pathloss_injected) != null) {
             return; // already injected for this fragment instance
@@ -394,6 +400,13 @@ public class NrSaHeaderPathlossHook {
     private void updateVisibility(Object thiz) {
         try {
             View rootView = fragmentRootViews.get(thiz);
+            if (!SettingsToggleHook.pathlossColumnEnabled()) {
+                return;
+            }
+            if (rootView != null && rootView.getTag(R.id.nsg_header_pathloss_injected) == null) {
+                injectPathlossColumn(thiz, rootView);
+                return;
+            }
             if (rootView == null) {
                 // Fallback: try Fragment.getView() if the I() hook hasn't cached it yet.
                 try {
