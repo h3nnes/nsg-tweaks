@@ -3,30 +3,30 @@ plugins {
 }
 
 android {
-    namespace 'com.nsgmod.band'
-    compileSdk 37
+    namespace = 'com.nsgmod.band'
+    compileSdk = 37
 
     defaultConfig {
-        applicationId 'com.nsgmod.band'
-        minSdk 23
-        targetSdk 37
-        versionCode 41
-        versionName "8.5"
+        applicationId = 'com.nsgmod.band'
+        minSdk = 23
+        targetSdk = 37
+        versionCode = 42
+        versionName = "8.6"
     }
 
     buildTypes {
         debug {
-            minifyEnabled false
+            minifyEnabled = false
         }
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     lint {
-        abortOnError false
+        abortOnError = false
     }
 
     buildFeatures {
@@ -35,11 +35,16 @@ android {
 }
 
 tasks.withType(JavaCompile).configureEach {
-    options.compilerArgs += ["-Xlint:deprecation", "-Xlint:unchecked"]
+    options.compilerArgs += ["-Xlint:none", "-Xlint:deprecation", "-Xlint:unchecked"]
 }
 
-configurations.configureEach {
-    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib'
+configurations {
+    implementation {
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib'
+    }
+    runtimeOnly {
+        exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib'
+    }
 }
 
 dependencies {
