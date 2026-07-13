@@ -14,6 +14,8 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
@@ -37,7 +39,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * the call stack, while the fragment-recreation path is handled by the same
  * v6.b.k0() / v6.b.I() hooks.
  *
- * Color mapping (0-based SCell index from binding field "c"):
+ * Color mapping (0-based SCell index parsed from binding property key):
  *   index 0 → 0xFFAA66CC  holo_purple (SCell 1 — unchanged from NSG default)
  *   index 1 → 0xFF00BCD4  turquoise   (SCell 2)
  *   index 2 → 0xFFFFEB3B  yellow      (SCell 3)
@@ -74,7 +76,6 @@ public class LteCellColorHook {
     private Field vgBindingsField;   // v6.g "f": ArrayList<com.qtrun.sys.b>
     private Field vgColorField;      // v6.g "i": int text color
     private Field vgViewField;       // v6.a "a": View (TextView)
-    private Field sysACIndexField;   // com.qtrun.sys.a "c": int SCell index
     private Field k2aElementsField;  // k2.a "d": ArrayList<v6.a>
     private Field v6bYField;         // v6.b "Y": k2.a builder stored on the fragment
     private Field v6aColField;       // v6.a "d" (f8103d): float column position
@@ -95,7 +96,6 @@ public class LteCellColorHook {
             Class<?> v6aClass  = loader.loadClass("v6.a");
             Class<?> v6bClass  = loader.loadClass("v6.b");
             Class<?> k2aClass  = loader.loadClass("k2.a");
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
 
             vgBindingsField = vgClass.getDeclaredField("f");
             vgBindingsField.setAccessible(true);
@@ -105,9 +105,6 @@ public class LteCellColorHook {
 
             vgViewField = v6aClass.getDeclaredField("a");
             vgViewField.setAccessible(true);
-
-            sysACIndexField = sysAClass.getDeclaredField("c");
-            sysACIndexField.setAccessible(true);
 
             k2aElementsField = k2aClass.getDeclaredField("d");
             k2aElementsField.setAccessible(true);
@@ -288,7 +285,8 @@ public class LteCellColorHook {
             for (Object elem : elements) {
                 if (!vgClass.isInstance(elem)) continue;
 
-                int idx = resolveScellIndex(elem, rankMap);
+                String[] keyHolder = new String[1];
+                int idx = resolveScellIndex(elem, rankMap, keyHolder);
                 if (idx <= 0 || idx >= SCELL_COLORS.length) continue;
                 scellCount++;
 
@@ -296,6 +294,16 @@ public class LteCellColorHook {
 
                 // Also patch f8126i in case fragment is recreated
                 vgColorField.set(elem, targetColor);
+
+                float col = 0f, row = 0f;
+                try {
+                    col = (float) v6aColField.get(elem);
+                    row = (float) v6aRowField.get(elem);
+                } catch (Exception ignored) {}
+
+                String keySnippet = keyHolder[0] != null ? keyHolder[0] : "n/a";
+                Log.i(TAG, "LteCellColorHook: element col=" + col + " row=" + row
+                        + " index=" + idx + " key=" + keySnippet);
 
                 try {
                     View v = (View) vgViewField.get(elem);
@@ -368,31 +376,103 @@ public class LteCellColorHook {
      * rankMap overrides when provided (for d7.i$k elements with ambiguous c=0).
      */
     private int resolveScellIndex(Object vgObj, Map<Object, Integer> rankMap) {
+        return resolveScellIndex(vgObj, rankMap, null);
+    }
+
+    private int resolveScellIndex(Object vgObj, Map<Object, Integer> rankMap, String[] keyOut) {
         // Check Rank override map first
         if (rankMap != null && rankMap.containsKey(vgObj)) {
+            if (keyOut != null) keyOut[0] = "rank";
             return rankMap.get(vgObj);
         }
-        return readScellIndex(vgObj);
+        return readScellIndex(vgObj, keyOut);
     }
 
     private int readScellIndex(Object vgObj) {
+        return readScellIndex(vgObj, null);
+    }
+
+    private int readScellIndex(Object vgObj, String[] keyOut) {
         try {
             ArrayList<?> bindings = (ArrayList<?>) vgBindingsField.get(vgObj);
             if (bindings == null || bindings.isEmpty()) return -1;
-            Object b = bindings.get(0);
-            if (b == null) return -1;
-            try {
-                return (int) sysACIndexField.get(b);
-            } catch (IllegalArgumentException ex) {
-                Field f = findField(b.getClass(), "c");
-                if (f == null) return -1;
-                f.setAccessible(true);
-                return (int) f.get(b);
+
+            int pcellCandidate = -1;
+            String pcellKey = null;
+            for (Object b : bindings) {
+                String key = extractKey(b);
+                int idx = indexFromKey(key);
+                if (idx > 0) {
+                    if (keyOut != null) keyOut[0] = key;
+                    return idx;
+                }
+                if (idx == 0 && pcellCandidate < 0) {
+                    pcellCandidate = 0;
+                    pcellKey = key;
+                }
             }
+            if (keyOut != null) keyOut[0] = pcellKey;
+            return pcellCandidate;
         } catch (Exception e) {
             Log.w(TAG, "LteCellColorHook: readScellIndex failed: " + e);
             return -1;
         }
+    }
+
+    /**
+     * Extract a property key string from a binding object.
+     * First tries the declared String field "a" (f3868a on com.qtrun.sys.a/b),
+     * then falls back to scanning all declared String fields for an NSG key.
+     */
+    private String extractKey(Object binding) {
+        if (binding == null) return null;
+        Class<?> cls = binding.getClass();
+
+        try {
+            Field f = cls.getDeclaredField("a");
+            if (f.getType() == String.class) {
+                f.setAccessible(true);
+                Object val = f.get(binding);
+                if (val instanceof String) return (String) val;
+            }
+        } catch (Exception ignored) {}
+
+        Class<?> c = cls;
+        while (c != null && c != Object.class) {
+            for (Field f : c.getDeclaredFields()) {
+                if (f.getType() != String.class) continue;
+                try {
+                    f.setAccessible(true);
+                    Object val = f.get(binding);
+                    if (val instanceof String) {
+                        String s = (String) val;
+                        if (s.contains("::") || s.contains("SCell") || s.contains("PCell")) {
+                            return s;
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+            c = c.getSuperclass();
+        }
+        return null;
+    }
+
+    private static final Pattern SCELL_PATTERN = Pattern.compile("SCell(\\d+)");
+
+    /**
+     * Parse the 0-based SCell index from a property key string.
+     */
+    private int indexFromKey(String key) {
+        if (key == null || key.isEmpty()) return -1;
+        if (key.contains("PCell")) return 0;
+        Matcher m = SCELL_PATTERN.matcher(key);
+        if (m.find()) {
+            try {
+                return Integer.parseInt(m.group(1)) - 1;
+            } catch (NumberFormatException ignored) {}
+        }
+        if (key.contains("SCC")) return 0;
+        return -1;
     }
 
     private static Field findField(Class<?> cls, String name) {
