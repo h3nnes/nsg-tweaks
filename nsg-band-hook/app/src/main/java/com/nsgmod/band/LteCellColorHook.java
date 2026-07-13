@@ -22,9 +22,20 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * Colors SCell data-value labels (v6.g) on the LTE CA Matrix DL (e8.b) and
  * NR-NSA EUTRA CA Matrix (g8.i) pages by SCell index.
  *
- * Mirrors NrSaCellColorHook but is self-contained and identifies the builder by
- * marking e8.b.n0() / g8.i.n0() with a ThreadLocal flag instead of relying on a
- * shared map from another hook.
+ * Robust identification:
+ *   - v6.b.k0(k2.a) is called synchronously from e8.b.n0() / g8.i.n0() while the
+ *     LTE/EUTRA CA Matrix page is building its builder. We inspect the current
+ *     thread's stack trace for the caller class "e8.b" or "g8.i" and mark the
+ *     k2.a builder in a WeakHashMap.
+ *   - v6.b.I() (onCreateView) fires later on the UI thread when the wrapped
+ *     v6.b fragment creates its view. At that point this.Y is the k2.a builder,
+ *     its element list is populated and f8100a holds live TextViews, so we walk
+ *     the SCell elements and apply setTextColor.
+ *
+ * The old ThreadLocal + e8.b.n0()/g8.i.n0() flag approach is removed because
+ * the builder-creation path is synchronous and can be identified directly from
+ * the call stack, while the fragment-recreation path is handled by the same
+ * v6.b.k0() / v6.b.I() hooks.
  *
  * Color mapping (0-based SCell index from binding field "c"):
  *   index 0 → 0xFFAA66CC  holo_purple (SCell 1 — unchanged from NSG default)
@@ -38,6 +49,9 @@ public class LteCellColorHook {
 
     private static final int HOLO_PURPLE = 0xFFAA66CC;
 
+    private static final String CLASS_LTE_CA_MATRIX = "e8.b";
+    private static final String CLASS_NRNSA_EUTRA_MATRIX = "g8.i";
+
     private static final int[] SCELL_COLORS = {
         0xFFAA66CC, // SCell 1 — holo_purple (unchanged)
         0xFF00BCD4, // SCell 2 — turquoise
@@ -48,16 +62,13 @@ public class LteCellColorHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    /** Set by the e8.b.n0() / g8.i.n0() flag hooks while n0() executes; null otherwise. */
-    private final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
-
     /**
-     * Maps k2.a builder instances created inside e8.b.n0() or g8.i.n0() to their carrier count.
-     * Populated by the v6.b.k0 hook (which fires inside n0()).
-     * Used to identify LTE/EUTRA CA Matrix builders when v6.b.I() fires later.
+     * Marks k2.a builders that originated inside e8.b.n0() or g8.i.n0().
+     * Populated by the v6.b.k0 hook using stack-trace inspection.
+     * Used by the v6.b.I hook to decide whether to apply SCell colors.
      */
-    private final Map<Object, Integer> lteK2aCarriers =
-            Collections.synchronizedMap(new WeakHashMap<Object, Integer>());
+    private final Map<Object, Boolean> lteK2aBuilders =
+            Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
 
     private Class<?> vgClass;
     private Field vgBindingsField;   // v6.g "f": ArrayList<com.qtrun.sys.b>
@@ -69,10 +80,6 @@ public class LteCellColorHook {
     private Field v6aColField;       // v6.a "d" (f8103d): float column position
     private Field v6aRowField;       // v6.a "b" (f8101b): float row position
     private Class<?> rankBindingClass; // d7.i$k — Rank formatter; its c may be 0 for SCells
-
-    // e8.b / g8.i carrier count field — actual bytecode name "Z"
-    private Field e8bCarrierCountField;
-    private Field g8iCarrierCountField;
 
     private boolean ready = false;
 
@@ -115,22 +122,6 @@ public class LteCellColorHook {
             v6aRowField.setAccessible(true);
 
             try {
-                Class<?> e8bClass = loader.loadClass("e8.b");
-                e8bCarrierCountField = e8bClass.getDeclaredField("Z");
-                e8bCarrierCountField.setAccessible(true);
-            } catch (Exception e) {
-                Log.w(TAG, "LteCellColorHook: e8.b.Z not found: " + e);
-            }
-
-            try {
-                Class<?> g8iClass = loader.loadClass("g8.i");
-                g8iCarrierCountField = g8iClass.getDeclaredField("Z");
-                g8iCarrierCountField.setAccessible(true);
-            } catch (Exception e) {
-                Log.w(TAG, "LteCellColorHook: g8.i.Z not found: " + e);
-            }
-
-            try {
                 rankBindingClass = loader.loadClass("d7.i$k");
             } catch (ClassNotFoundException e2) {
                 Log.w(TAG, "LteCellColorHook: d7.i$k not found, Rank fallback disabled");
@@ -148,8 +139,6 @@ public class LteCellColorHook {
             return;
         }
         try {
-            installN0FlagHook("e8.b", e8bCarrierCountField);
-            installN0FlagHook("g8.i", g8iCarrierCountField);
             installV6bK0Hook();
             installV6bIHook();
             Log.i(TAG, "LteCellColorHook: installed");
@@ -159,39 +148,7 @@ public class LteCellColorHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook 1: e8.b.n0() / g8.i.n0() — set/clear ThreadLocal flag around execution
-    // -----------------------------------------------------------------------
-
-    private void installN0FlagHook(String className, Field carrierCountField) {
-        if (carrierCountField == null) return;
-        try {
-            Class<?> cls = loader.loadClass(className);
-            Method n0Method = cls.getMethod("n0");
-
-            xposed.hook(n0Method).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    int carriers = -1;
-                    try {
-                        carriers = (int) carrierCountField.get(chain.getThisObject());
-                    } catch (Exception e) {
-                        Log.w(TAG, "LteCellColorHook: could not read " + className + " carrier count: " + e);
-                    }
-                    carrierCountInN0.set(carriers);
-                    try {
-                        return chain.proceed();
-                    } finally {
-                        carrierCountInN0.remove();
-                    }
-                }
-            });
-        } catch (Exception e) {
-            Log.e(TAG, "LteCellColorHook: " + className + ".n0 flag hook failed: " + e);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Hook 2: static v6.b.k0(k2.a) — record builder + update f8126i for SCell colors
+    // Hook 1: static v6.b.k0(k2.a) — identify LTE/EUTRA builders by call stack
     // -----------------------------------------------------------------------
 
     private void installV6bK0Hook() {
@@ -205,9 +162,13 @@ public class LteCellColorHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     Object k2aArg = chain.getArg(0);
-                    Integer carriers = carrierCountInN0.get();
-                    if (carriers != null && k2aArg != null) {
-                        lteK2aCarriers.put(k2aArg, carriers);
+                    if (k2aArg == null) return result;
+
+                    String sourceClass = findLteMatrixCaller();
+                    if (sourceClass != null) {
+                        lteK2aBuilders.put(k2aArg, Boolean.TRUE);
+                        Log.i(TAG, "LteCellColorHook: v6.b.k0() detected " + sourceClass
+                                + " builder, updating field colors for fragment recreation");
                         updateFieldColors(k2aArg);
                     }
                     return result;
@@ -218,8 +179,27 @@ public class LteCellColorHook {
         }
     }
 
+    /**
+     * Walk the current thread's stack trace looking for the LTE CA Matrix or
+     * NR-NSA EUTRA CA Matrix page class. This is reliable because v6.b.k0()
+     * is called synchronously from e8.b.n0() / g8.i.n0() while the page is
+     * constructing its builder.
+     */
+    private String findLteMatrixCaller() {
+        try {
+            for (StackTraceElement element : Thread.currentThread().getStackTrace()) {
+                String cls = element.getClassName();
+                if (CLASS_LTE_CA_MATRIX.equals(cls)) return CLASS_LTE_CA_MATRIX;
+                if (CLASS_NRNSA_EUTRA_MATRIX.equals(cls)) return CLASS_NRNSA_EUTRA_MATRIX;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "LteCellColorHook: stack trace inspection failed: " + e);
+        }
+        return null;
+    }
+
     // -----------------------------------------------------------------------
-    // Hook 3: v6.b.I(...) after-hook — apply live text colors to attached TextViews
+    // Hook 2: v6.b.I(...) after-hook — apply live text colors to attached TextViews
     // -----------------------------------------------------------------------
 
     private void installV6bIHook() {
@@ -236,11 +216,23 @@ public class LteCellColorHook {
                     Object result = chain.proceed();
                     try {
                         Object v6bInstance = chain.getThisObject();
+                        String fragmentClass = v6bInstance.getClass().getName();
+                        Log.i(TAG, "LteCellColorHook: v6.b.I() after-hook for fragment class: "
+                                + fragmentClass);
+
                         Object k2aObj = v6bYField.get(v6bInstance);
-                        if (k2aObj == null) return result;
-                        Integer carriers = lteK2aCarriers.get(k2aObj);
-                        if (carriers == null) return result; // not an LTE/EUTRA CA Matrix fragment
-                        applyLiveTextColors(k2aObj, carriers);
+                        if (k2aObj == null) {
+                            Log.w(TAG, "LteCellColorHook: v6.b.I() has no k2.a builder (Y is null)");
+                            return result;
+                        }
+
+                        if (!lteK2aBuilders.containsKey(k2aObj)) {
+                            Log.i(TAG, "LteCellColorHook: k2.a builder is not an LTE/EUTRA CA Matrix builder, skipping");
+                            return result;
+                        }
+
+                        Log.i(TAG, "LteCellColorHook: applying live SCell colors to LTE/EUTRA builder");
+                        applyLiveTextColors(k2aObj, 0);
                     } catch (Exception e) {
                         Log.w(TAG, "LteCellColorHook: I-hook outer failed: " + e);
                     }
@@ -256,7 +248,11 @@ public class LteCellColorHook {
     private void updateFieldColors(Object k2aObj) {
         try {
             ArrayList<?> elements = (ArrayList<?>) k2aElementsField.get(k2aObj);
-            if (elements == null) return;
+            if (elements == null) {
+                Log.w(TAG, "LteCellColorHook: updateFieldColors — no elements in builder");
+                return;
+            }
+            int patched = 0;
             Map<Object, Integer> rankMap = buildRankScellMap(elements);
             for (Object elem : elements) {
                 if (!vgClass.isInstance(elem)) continue;
@@ -265,8 +261,10 @@ public class LteCellColorHook {
                 int idx = resolveScellIndex(elem, rankMap);
                 if (idx > 0 && idx < SCELL_COLORS.length) {
                     vgColorField.set(elem, SCELL_COLORS[idx]);
+                    patched++;
                 }
             }
+            Log.i(TAG, "LteCellColorHook: updateFieldColors patched " + patched + " SCell element(s)");
         } catch (Exception e) {
             Log.w(TAG, "LteCellColorHook: updateFieldColors failed: " + e);
         }
@@ -279,14 +277,20 @@ public class LteCellColorHook {
     private void applyLiveTextColors(Object k2aObj, int carriers) {
         try {
             ArrayList<?> elements = (ArrayList<?>) k2aElementsField.get(k2aObj);
-            if (elements == null) return;
+            if (elements == null) {
+                Log.w(TAG, "LteCellColorHook: applyLiveTextColors — no elements in builder");
+                return;
+            }
 
             Map<Object, Integer> rankMap = buildRankScellMap(elements);
+            int applied = 0;
+            int scellCount = 0;
             for (Object elem : elements) {
                 if (!vgClass.isInstance(elem)) continue;
 
                 int idx = resolveScellIndex(elem, rankMap);
                 if (idx <= 0 || idx >= SCELL_COLORS.length) continue;
+                scellCount++;
 
                 int targetColor = SCELL_COLORS[idx];
 
@@ -297,9 +301,12 @@ public class LteCellColorHook {
                     View v = (View) vgViewField.get(elem);
                     if (v instanceof TextView) {
                         ((TextView) v).setTextColor(targetColor);
+                        applied++;
                     }
                 } catch (Exception ignored) {}
             }
+            Log.i(TAG, "LteCellColorHook: applyLiveTextColors found " + scellCount
+                    + " SCell element(s), applied colors to " + applied + " live TextView(s)");
         } catch (Exception e) {
             Log.w(TAG, "LteCellColorHook: applyLiveTextColors failed: " + e);
         }
