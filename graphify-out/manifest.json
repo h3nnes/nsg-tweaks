@@ -1,0 +1,187 @@
+{
+  "nsg-band-hook/app/build.gradle": {
+    "mtime": 1783791578.406013,
+    "ast_hash": "c84c1ed2d86106dd17686bdb3101eb8c",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/BandColumnHook.java": {
+    "mtime": 1782921662.533517,
+    "ast_hash": "6b7440c4f8510db87cc073a9bfe08b76",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/CellIdMatchHook.java": {
+    "mtime": 1782921662.533517,
+    "ast_hash": "05a13c5ec09e350a3f7976c27d826691",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/CellRowHeightHook.java": {
+    "mtime": 1782921662.533517,
+    "ast_hash": "87e8dc424158d000a47fe667b8589e9b",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/EutraRsrpRowHook.java": {
+    "mtime": 1782921662.533517,
+    "ast_hash": "9b2dd82aee964ba1f5a24d019bbd449f",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/GranularSeekBarHook.java": {
+    "mtime": 1782921662.5345168,
+    "ast_hash": "9b8480a88caf1125394527ed45b80be6",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/LteBandwidthColumnHook.java": {
+    "mtime": 1782921662.5345168,
+    "ast_hash": "9cf785fdf7e4cde84a956b670675ca5d",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/LteCaMatrixUlQpskHook.java": {
+    "mtime": 1783790350.9171784,
+    "ast_hash": "cfaf9bde05878ac179bf4782af089211",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/LteRsrpRowHook.java": {
+    "mtime": 1782921662.5345168,
+    "ast_hash": "4634caac64953ad3d1c86a5d630e2a28",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/MainHook.java": {
+    "mtime": 1783931345.9410834,
+    "ast_hash": "b8e5abd679717b3466a6b3cb206d35d7",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrNsaBandwidthColumnHook.java": {
+    "mtime": 1782921662.5345168,
+    "ast_hash": "bdc64462ee986f99b6991329d411d9ca",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrNsaExtCellsHook.java": {
+    "mtime": 1782921662.535517,
+    "ast_hash": "d00df48c49694b2b788861d73137eda0",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrNsaScellDualConnectivityHook.java": {
+    "mtime": 1783418033.2058277,
+    "ast_hash": "d8d459c9eac5d1bacc3712d74512d3c5",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaBwpIdHook.java": {
+    "mtime": 1782921662.536517,
+    "ast_hash": "3f2e2fe49d3c18c0f05bfe51a2969c54",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaCarrierCountHook.java": {
+    "mtime": 1782921662.536517,
+    "ast_hash": "1fdb056d4273fb26c9811d2c15ec9266",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaCellColorHook.java": {
+    "mtime": 1782921662.536517,
+    "ast_hash": "a5ba6cfe2b7030bad3785e2684ed00de",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaCellColumnsHook.java": {
+    "mtime": 1783699928.6600225,
+    "ast_hash": "981a0fb6ee95516bef3ce0575ea14143",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaCsiSnrRowHook.java": {
+    "mtime": 1782921662.5375168,
+    "ast_hash": "d155e67e162b42156aded06010889458",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaMimoFormatHook.java": {
+    "mtime": 1783522224.8927488,
+    "ast_hash": "c261dd8bb49b96df2ba0b2fe93799cd1",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaModUsageRowHook.java": {
+    "mtime": 1783711079.150446,
+    "ast_hash": "2755037d3a7bdca1dcae827af7d36164",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaPucchTxRowHook.java": {
+    "mtime": 1783704995.9339604,
+    "ast_hash": "ab92c2d24d5a0f7eb1eca4d804d5633e",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaRsrpRowHook.java": {
+    "mtime": 1782921662.5375168,
+    "ast_hash": "68dca2557c7456b7d8f554061853b0b4",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/PageDotJumpHook.java": {
+    "mtime": 1782921662.538517,
+    "ast_hash": "9e53817ec636a66793aef4e28c6dee9d",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/RefreshIntervalHook.java": {
+    "mtime": 1782921662.538517,
+    "ast_hash": "09a25a9842457fecc35c664ee71be33e",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/ReplayStatusBarHook.java": {
+    "mtime": 1782921662.538517,
+    "ast_hash": "c1834882b947d52b99bca7def6fd97bb",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/RtPlayHook.java": {
+    "mtime": 1783418043.2487977,
+    "ast_hash": "c5b02f8a1ce561999cf8a70954c630a4",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/ScrollBarHook.java": {
+    "mtime": 1783411197.8345134,
+    "ast_hash": "ff53d812daff9f33a530d1295d5872bb",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/SettingsToggleHook.java": {
+    "mtime": 1783786946.4555526,
+    "ast_hash": "41bc5dc6521d4556533e3f1e1295fa9b",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/SignalingSearchHook.java": {
+    "mtime": 1782921662.539517,
+    "ast_hash": "223f2601f5ea540e3b3ebeb13319c26a",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/SignalingShareHook.java": {
+    "mtime": 1782921662.5405169,
+    "ast_hash": "cb2ddb1d30f01e365f7d3f6e44335cac",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/build.gradle": {
+    "mtime": 1783417825.4468148,
+    "ast_hash": "08ff83b2ed0db3df6c2cdff478bf77c5",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/gradlew": {
+    "mtime": 1778791130.1416683,
+    "ast_hash": "288d7850f31d4d776c23c8a1965e540e",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/settings.gradle": {
+    "mtime": 1778791130.1420348,
+    "ast_hash": "8a5be40ee931bf9f6e22676d75a8c890",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1782298382.886471,
+    "ast_hash": "0864ff1ce570233d99083a8ad78cd6c5",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/NrSaHeaderPathlossHook.java": {
+    "mtime": 1783788713.0467417,
+    "ast_hash": "2e70b851da3a64d84453bc63eba43507",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/RenamePuschTxLabelHook.java": {
+    "mtime": 1783791168.2146494,
+    "ast_hash": "830402fd1dd3d2c6651c0750a9f2714f",
+    "semantic_hash": ""
+  },
+  "nsg-band-hook/app/src/main/java/com/nsgmod/band/LteCellColorHook.java": {
+    "mtime": 1783932164.4356644,
+    "ast_hash": "058d5a41f379539975afb4b9928d9d64",
+    "semantic_hash": ""
+  }
+}

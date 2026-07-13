@@ -1,0 +1,16 @@
+{
+  "0": "MainHook.java",
+  "1": ".HiddenFieldProbeHook",
+  "2": "HiddenFieldProbeHook.java",
+  "3": "HiddenFieldProbeHook",
+  "4": ".install",
+  "5": "NrSaHeaderPathlossHook",
+  "6": "NrSaCellColumnsHook",
+  "7": ".NrSaCellColumnsHook",
+  "8": ".NrSaHeaderPathlossHook",
+  "9": ".readPropertyWithIndex",
+  "10": "Field",
+  "11": "Method",
+  "12": "XposedInterface",
+  "13": "NrSaModUsageRowHook"
+}
