@@ -32,6 +32,7 @@ public class MainHook extends XposedModule {
         lteBwHook.install();
         new LteRsrpRowHook(this, param.getClassLoader()).install();
         new EutraRsrpRowHook(this, param.getClassLoader()).install();
+        new LteCellColorHook(this, param.getClassLoader()).install();
         new NrSaRsrpRowHook(this, param.getClassLoader(),
                 NrSaCsiSnrRowHook.carrierCountInO0).install();
         new NrSaCsiSnrRowHook(this, param.getClassLoader()).install();
