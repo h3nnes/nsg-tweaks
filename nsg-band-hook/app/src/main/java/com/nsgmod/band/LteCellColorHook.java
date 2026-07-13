@@ -164,8 +164,6 @@ public class LteCellColorHook {
                     String sourceClass = findLteMatrixCaller();
                     if (sourceClass != null) {
                         lteK2aBuilders.put(k2aArg, Boolean.TRUE);
-                        Log.i(TAG, "LteCellColorHook: v6.b.k0() detected " + sourceClass
-                                + " builder, updating field colors for fragment recreation");
                         updateFieldColors(k2aArg);
                     }
                     return result;
@@ -213,10 +211,6 @@ public class LteCellColorHook {
                     Object result = chain.proceed();
                     try {
                         Object v6bInstance = chain.getThisObject();
-                        String fragmentClass = v6bInstance.getClass().getName();
-                        Log.i(TAG, "LteCellColorHook: v6.b.I() after-hook for fragment class: "
-                                + fragmentClass);
-
                         Object k2aObj = v6bYField.get(v6bInstance);
                         if (k2aObj == null) {
                             Log.w(TAG, "LteCellColorHook: v6.b.I() has no k2.a builder (Y is null)");
@@ -224,11 +218,9 @@ public class LteCellColorHook {
                         }
 
                         if (!lteK2aBuilders.containsKey(k2aObj)) {
-                            Log.i(TAG, "LteCellColorHook: k2.a builder is not an LTE/EUTRA CA Matrix builder, skipping");
                             return result;
                         }
 
-                        Log.i(TAG, "LteCellColorHook: applying live SCell colors to LTE/EUTRA builder");
                         applyLiveTextColors(k2aObj, 0);
                     } catch (Exception e) {
                         Log.w(TAG, "LteCellColorHook: I-hook outer failed: " + e);
@@ -261,7 +253,7 @@ public class LteCellColorHook {
                     patched++;
                 }
             }
-            Log.i(TAG, "LteCellColorHook: updateFieldColors patched " + patched + " SCell element(s)");
+
         } catch (Exception e) {
             Log.w(TAG, "LteCellColorHook: updateFieldColors failed: " + e);
         }
@@ -301,10 +293,6 @@ public class LteCellColorHook {
                     row = (float) v6aRowField.get(elem);
                 } catch (Exception ignored) {}
 
-                String keySnippet = keyHolder[0] != null ? keyHolder[0] : "n/a";
-                Log.i(TAG, "LteCellColorHook: element col=" + col + " row=" + row
-                        + " index=" + idx + " key=" + keySnippet);
-
                 try {
                     View v = (View) vgViewField.get(elem);
                     if (v instanceof TextView) {
@@ -313,8 +301,7 @@ public class LteCellColorHook {
                     }
                 } catch (Exception ignored) {}
             }
-            Log.i(TAG, "LteCellColorHook: applyLiveTextColors found " + scellCount
-                    + " SCell element(s), applied colors to " + applied + " live TextView(s)");
+
         } catch (Exception e) {
             Log.w(TAG, "LteCellColorHook: applyLiveTextColors failed: " + e);
         }

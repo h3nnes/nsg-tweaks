@@ -137,10 +137,7 @@ public class RenamePuschTxLabelHook {
                 }
             }
 
-            if (renamedCount > 0) {
-                Log.i(TAG, "RenamePuschTxLabelHook: renamed " + renamedCount
-                        + " label(s) in " + className);
-            }
+
         } catch (Exception e) {
             Log.w(TAG, "RenamePuschTxLabelHook: renameLabel failed for " + className + ": " + e);
         }
