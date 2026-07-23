@@ -33,7 +33,6 @@ public final class ClassMapping {
     static {
         Set<String> identity = new HashSet<>();
         // Classes confirmed identical in both qtrun and gplay v4.8.8.
-        identity.add("h8.c");
         identity.add("y7.a");
         identity.add("w1.a");
         identity.add("d.d");
@@ -101,13 +100,15 @@ public final class ClassMapping {
         map.put("g8.h", "p6.h");
         map.put("g8.i", "p6.i");
 
-        // Classes intentionally unavailable on gplay.
-        map.put("g8.b", null);
-        map.put("h8.c", null);
-        map.put("t7.t", null);
+        // NR-NSA / NR-SA CA Matrix UL fragments moved to p6 / q6 on gplay.
+        map.put("g8.b", "p6.b");
+        map.put("h8.c", "q6.c");
 
-        // Classes with no confident gplay equivalent found.
-        map.put("x6.b", null);
+        // Experiments settings fragment moved to c6.z on gplay.
+        map.put("t7.t", "c6.z");
+
+        // AdvancedAdapter moved from x6.b to g5.b on gplay.
+        map.put("x6.b", "g5.b");
 
         GPLAY_OVERRIDES = Collections.unmodifiableMap(map);
 
@@ -120,7 +121,7 @@ public final class ClassMapping {
         // v6.b static factory: qtrun k0(k2.a) -> gplay j0(b6.e)
         methodMap.put("v6.b|k0", "j0");
         // PlaybackControlsFragment seekbar sync: qtrun i0(float) -> gplay h0(float)
-        methodMap.put("t6.f|i0", "h0");
+        methodMap.put("k8.f|i0", "h0");
         // LTE CA Matrix DL builder method: qtrun e8.b.n0() -> gplay n6.b.m0()
         methodMap.put("e8.b|n0", "m0");
         // NR-NSA EUTRA CA Matrix DL builder method: qtrun g8.i.n0() -> gplay p6.i.m0()
@@ -128,12 +129,22 @@ public final class ClassMapping {
         // NR-SA CA Matrix DL builder method: qtrun h8.b.o0() -> gplay q6.b.n0()
         methodMap.put("h8.b|o0", "n0");
         methodMap.put("h8.b|Q", "Q");
+        // NR-NSA / NR-SA CA Matrix UL builder method: qtrun l0(Context) -> gplay k0(Context)
+        methodMap.put("g8.b|l0", "k0");
+        methodMap.put("h8.c|l0", "k0");
         // NR-SA KPI fragment builder method: qtrun d8.i.l0(Context) -> gplay m6.i.k0(Context)
         methodMap.put("d8.i|l0", "k0");
         // LTE CA Matrix UL builder method: qtrun e8.a.l0(Context) -> gplay n6.a.k0(Context)
         methodMap.put("e8.a|l0", "k0");
         // Cell-DB WHERE-clause builder: qtrun ma.a.j(...) -> gplay z8.a.h(...)
         methodMap.put("ma.a|j", "h");
+        // Note: ma.a in qtrun is Installation.kt; on gplay its functionality is split.
+        // The timestamp formatter lives in v8.a.c(Date), so hooks that need it fall
+        // back to v8.a directly (see GranularSeekBarHook / RtPlayHook).
+        // Experiments settings fragment: qtrun t7.t.i0(String) -> gplay c6.z.h0(String)
+        methodMap.put("t7.t|i0", "h0");
+        // ActivityResultLauncher launch: qtrun d.d.c(Object) -> gplay d.d.a(Object)
+        methodMap.put("d.d|c", "a");
         GPLAY_METHOD_OVERRIDES = Collections.unmodifiableMap(methodMap);
 
         Map<String, String> fieldMap = new HashMap<>();
@@ -150,18 +161,27 @@ public final class ClassMapping {
         // u7.a synthetic click-listener fields: qtrun a/b -> gplay b/c
         fieldMap.put("u7.a|a", "b");
         fieldMap.put("u7.a|b", "c");
-        // com.qtrun.sys.Workspace static/instance fields: qtrun j/a/c/d -> gplay k/b/d/e
+        // com.qtrun.sys.Workspace static/instance fields: qtrun j/a/c/d/g/h/i/f -> gplay k/b/d/e/i/h/j/g
         fieldMap.put("com.qtrun.sys.Workspace|j", "k");
         fieldMap.put("com.qtrun.sys.Workspace|a", "b");
         fieldMap.put("com.qtrun.sys.Workspace|c", "d");
         fieldMap.put("com.qtrun.sys.Workspace|d", "e");
-        // a4.h synthetic load-completion fields: qtrun a/b/c -> gplay b/d/c
+        fieldMap.put("com.qtrun.sys.Workspace|g", "i");
+        fieldMap.put("com.qtrun.sys.Workspace|h", "h");
+        fieldMap.put("com.qtrun.sys.Workspace|i", "j");
+        fieldMap.put("com.qtrun.sys.Workspace|f", "g");
+        // a4.h synthetic load-completion fields (gplay c6.h): qtrun a/b/c -> gplay b/d/c
         fieldMap.put("a4.h|a", "b");
         fieldMap.put("a4.h|b", "d");
         fieldMap.put("a4.h|c", "c");
         // t7.e synthetic file-picker fields (gplay c6.f): qtrun a/b -> gplay b/c
         fieldMap.put("t7.e|a", "b");
         fieldMap.put("t7.e|b", "c");
+        // CirclePageIndicator fields on gplay: a->b, e->f, g->h, q->r (k/l stay the same)
+        fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|a", "b");
+        fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|e", "f");
+        fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|g", "h");
+        fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|q", "r");
         GPLAY_FIELD_OVERRIDES = Collections.unmodifiableMap(fieldMap);
     }
 

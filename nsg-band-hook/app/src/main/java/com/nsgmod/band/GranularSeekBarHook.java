@@ -133,10 +133,13 @@ public class GranularSeekBarHook {
             // Workspace fields/methods
             String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
             String wsDataSourceName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            String wsMaxKeyName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "h", loader);
+            String wsCurrentKeyName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "g", loader);
+            String wsDateName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "i", loader);
             wsJ = workspaceClass.getField(wsSingletonName);          // static, public
-            wsH = workspaceClass.getDeclaredField("h");  wsH.setAccessible(true);
-            wsG = workspaceClass.getDeclaredField("g");  wsG.setAccessible(true);
-            wsI = workspaceClass.getDeclaredField("i");  wsI.setAccessible(true);
+            wsH = workspaceClass.getDeclaredField(wsMaxKeyName);  wsH.setAccessible(true);
+            wsG = workspaceClass.getDeclaredField(wsCurrentKeyName);  wsG.setAccessible(true);
+            wsI = workspaceClass.getDeclaredField(wsDateName);  wsI.setAccessible(true);
             wsC = workspaceClass.getDeclaredField(wsDataSourceName);  wsC.setAccessible(true);
             wsGMethod = workspaceClass.getDeclaredMethod("g", long.class, Object.class);
             wsGMethod.setAccessible(true);
@@ -145,7 +148,7 @@ public class GranularSeekBarHook {
 
             // Timestamp formatter: qtrun ma.a.m(Date); gplay v8.a.c(Date)
             try {
-                maAMMethod = maAClass.getDeclaredMethod("m", dateClass);
+                maAMMethod = ClassMapping.getDeclaredMethod(maAClass, "ma.a", "m", loader, dateClass);
                 maAMMethod.setAccessible(true);
             } catch (NoSuchMethodException nsme) {
                 try {

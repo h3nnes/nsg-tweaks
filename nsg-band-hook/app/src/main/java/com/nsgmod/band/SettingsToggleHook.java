@@ -180,7 +180,7 @@ public class SettingsToggleHook {
                         + " not available on this flavor, skipping");
                 return;
             }
-            Method i0 = fragCls.getDeclaredMethod("i0", String.class);
+            Method i0 = ClassMapping.getDeclaredMethod(fragCls, FRAGMENT_CLS, "i0", loader, String.class);
 
             xposed.hook(i0).intercept(new Hooker() {
                 @Override

@@ -140,10 +140,6 @@ public class ReplayStatusBarHook {
     }
 
     private void initReflection() {
-        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.QTRUN) {
-            Log.i(TAG, "ReplayStatusBarHook: gplay flavor not supported, skipping");
-            return;
-        }
         try {
             Class<?> hClass  = ClassMapping.loadClass("a4.h", loader);
             Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
@@ -152,12 +148,15 @@ public class ReplayStatusBarHook {
                 return;
             }
 
-            f76a = hClass.getDeclaredField("a"); f76a.setAccessible(true);  // int discriminator
-            f77b = hClass.getDeclaredField("b"); f77b.setAccessible(true);  // AdvancedActivity
-            f78c = hClass.getDeclaredField("c"); f78c.setAccessible(true);  // filename String
+            String hDiscriminator = ClassMapping.runtimeFieldName("a4.h", "a", loader);
+            String hActivity      = ClassMapping.runtimeFieldName("a4.h", "b", loader);
+            String hFilename      = ClassMapping.runtimeFieldName("a4.h", "c", loader);
+            f76a = hClass.getDeclaredField(hDiscriminator); f76a.setAccessible(true);  // int discriminator
+            f77b = hClass.getDeclaredField(hActivity);      f77b.setAccessible(true);  // AdvancedActivity
+            f78c = hClass.getDeclaredField(hFilename);      f78c.setAccessible(true);  // filename String
 
-            wsSingleton  = wsClass.getField("j");
-            wsDataSource = wsClass.getField("c");
+            wsSingleton  = wsClass.getField(ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader));
+            wsDataSource = wsClass.getField(ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader));
 
             // Prong E reflection
             Class<?> advActivityClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
@@ -165,7 +164,7 @@ public class ReplayStatusBarHook {
             advActivityKField.setAccessible(true);
 
             Class<?> ddClass = ClassMapping.loadClass("d.d", loader);
-            pickerCMethod = ddClass.getDeclaredMethod("c", Object.class);
+            pickerCMethod = ClassMapping.getDeclaredMethod(ddClass, "d.d", "c", loader, Object.class);
             pickerCMethod.setAccessible(true);
 
             Class<?> appClass = ClassMapping.loadClass("com.qtrun.sys.Application", loader);
@@ -175,14 +174,16 @@ public class ReplayStatusBarHook {
             Class<?> drawerClass = ClassMapping.loadClass("androidx.drawerlayout.widget.DrawerLayout", loader);
             drawerDMethod = drawerClass.getMethod("d", boolean.class);
 
-            // Prong F reflection — t7.e fields (runtime names "a" and "b")
+            // Prong F reflection — t7.e discriminator / activity fields
             Class<?> teClass = ClassMapping.loadClass("t7.e", loader);
             if (teClass == null) {
                 Log.i(TAG, "ReplayStatusBarHook: t7.e not available, skipping Prong F");
                 return;
             }
-            teDiscriminator = teClass.getDeclaredField("a"); teDiscriminator.setAccessible(true);
-            teActivity      = teClass.getDeclaredField("b"); teActivity.setAccessible(true);
+            String teDiscName = ClassMapping.runtimeFieldName("t7.e", "a", loader);
+            String teActName  = ClassMapping.runtimeFieldName("t7.e", "b", loader);
+            teDiscriminator = teClass.getDeclaredField(teDiscName); teDiscriminator.setAccessible(true);
+            teActivity      = teClass.getDeclaredField(teActName);  teActivity.setAccessible(true);
 
             reflectionReady = true;
         } catch (Exception e) {

@@ -95,7 +95,7 @@ public class RenamePuschTxLabelHook {
                         + " not available on this flavor, skipping");
                 return;
             }
-            Method l0Method = targetClass.getMethod("l0", Context.class);
+            Method l0Method = ClassMapping.getMethod(targetClass, className, "l0", loader, Context.class);
 
             xposed.hook(l0Method).intercept(new Hooker() {
                 @Override

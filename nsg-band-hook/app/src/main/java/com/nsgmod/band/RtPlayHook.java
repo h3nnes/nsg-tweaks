@@ -100,10 +100,6 @@ public class RtPlayHook {
     // ── Reflection setup ──────────────────────────────────────────────────────
 
     private void initReflection() {
-        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.QTRUN) {
-            Log.i(TAG, "RtPlayHook: gplay flavor not supported, skipping");
-            return;
-        }
         try {
             Class<?> fragmentClass  = ClassMapping.loadClass("k8.f", loader);
             Class<?> advActAClass   = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity$a", loader);
@@ -138,12 +134,18 @@ public class RtPlayHook {
             advActAField.setAccessible(true);
 
             // Workspace
-            wsJ      = workspaceClass.getField("j");
-            wsG      = workspaceClass.getDeclaredField("g"); wsG.setAccessible(true);
-            wsH      = workspaceClass.getDeclaredField("h"); wsH.setAccessible(true);
-            wsI      = workspaceClass.getDeclaredField("i"); wsI.setAccessible(true);
-            wsC      = workspaceClass.getDeclaredField("c"); wsC.setAccessible(true);
-            wsF      = workspaceClass.getDeclaredField("f"); wsF.setAccessible(true);
+            String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsMaxKeyName    = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "h", loader);
+            String wsCurrentKeyName= ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "g", loader);
+            String wsDateName      = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "i", loader);
+            String wsDataSourceName= ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            String wsAttrName      = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "f", loader);
+            wsJ      = workspaceClass.getField(wsSingletonName);
+            wsG      = workspaceClass.getDeclaredField(wsCurrentKeyName); wsG.setAccessible(true);
+            wsH      = workspaceClass.getDeclaredField(wsMaxKeyName); wsH.setAccessible(true);
+            wsI      = workspaceClass.getDeclaredField(wsDateName); wsI.setAccessible(true);
+            wsC      = workspaceClass.getDeclaredField(wsDataSourceName); wsC.setAccessible(true);
+            wsF      = workspaceClass.getDeclaredField(wsAttrName); wsF.setAccessible(true);
             wsGMethod = workspaceClass.getDeclaredMethod("g", long.class, Object.class);
             wsGMethod.setAccessible(true);
             wsIMethod = workspaceClass.getDeclaredMethod("i");
@@ -160,8 +162,8 @@ public class RtPlayHook {
             iterValue = iterClass.getDeclaredMethod("value");          iterValue.setAccessible(true);
             iterNext  = iterClass.getDeclaredMethod("next");           iterNext.setAccessible(true);
 
-            // ma.a.m(Date) → String
-            maAMMethod = maAClass.getDeclaredMethod("m", dateClass); maAMMethod.setAccessible(true);
+            // ma.a.m(Date) → String (gplay v8.a.c(Date))
+            maAMMethod = ClassMapping.getDeclaredMethod(maAClass, "ma.a", "m", loader, dateClass); maAMMethod.setAccessible(true);
 
             reflectionReady = true;
         } catch (Exception e) {

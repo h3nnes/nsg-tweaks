@@ -52,10 +52,6 @@ public class PageDotJumpHook {
     }
 
     private void initReflection() {
-        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.QTRUN) {
-            Log.i(TAG, "PageDotJumpHook: gplay flavor not supported, skipping");
-            return;
-        }
         try {
             Class<?> indicatorClass = ClassMapping.loadClass(
                     "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", loader);
@@ -64,22 +60,35 @@ public class PageDotJumpHook {
                 return;
             }
 
+            String viewPagerName = ClassMapping.runtimeFieldName(
+                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "e", loader);
+            String currentPageName = ClassMapping.runtimeFieldName(
+                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "g", loader);
+            String radiusName = ClassMapping.runtimeFieldName(
+                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "a", loader);
+            String draggingName = ClassMapping.runtimeFieldName(
+                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "q", loader);
+            String orientationName = ClassMapping.runtimeFieldName(
+                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "k", loader);
+            String centeredName = ClassMapping.runtimeFieldName(
+                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "l", loader);
+
             for (Field f : indicatorClass.getDeclaredFields()) {
                 f.setAccessible(true);
                 String name = f.getName();
                 Class<?> type = f.getType();
 
-                if ("e".equals(name)) {
+                if (viewPagerName.equals(name)) {
                     viewPagerField = f;
-                } else if ("g".equals(name) && type == int.class) {
+                } else if (currentPageName.equals(name) && type == int.class) {
                     currentPageField = f;
-                } else if ("a".equals(name) && type == float.class) {
+                } else if (radiusName.equals(name) && type == float.class) {
                     radiusField = f;
-                } else if ("q".equals(name) && type == boolean.class) {
+                } else if (draggingName.equals(name) && type == boolean.class) {
                     draggingField = f;
-                } else if ("k".equals(name) && type == int.class) {
+                } else if (orientationName.equals(name) && type == int.class) {
                     orientationField = f;
-                } else if ("l".equals(name) && type == boolean.class) {
+                } else if (centeredName.equals(name) && type == boolean.class) {
                     centeredField = f;
                 }
             }

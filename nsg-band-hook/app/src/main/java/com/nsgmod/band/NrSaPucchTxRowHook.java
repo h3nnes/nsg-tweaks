@@ -161,7 +161,7 @@ public class NrSaPucchTxRowHook {
                 Log.i(TAG, "NrSaPucchTxRowHook: h8.c not available on this flavor, skipping");
                 return;
             }
-            Method l0Method = h8cClass.getMethod("l0", Context.class);
+            Method l0Method = ClassMapping.getMethod(h8cClass, "h8.c", "l0", loader, Context.class);
 
             xposed.hook(l0Method).intercept(new Hooker() {
                 @Override
