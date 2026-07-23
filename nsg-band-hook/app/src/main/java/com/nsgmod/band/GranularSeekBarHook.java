@@ -54,6 +54,10 @@ public class GranularSeekBarHook {
 
     private static final String TAG = "NSGBandHook";
 
+    /** True while the user is dragging the seekbar thumb; used to suppress
+     *  external fragment thumb-sync calls (gplay fires them more aggressively). */
+    private static volatile boolean isDragging = false;
+
     /** Vertical dp upward before Zone 2 activates (5× finer). */
     private static final float THRESHOLD_1_DP = 60f;
 
@@ -191,11 +195,25 @@ public class GranularSeekBarHook {
                             seekBar, fragment, thresh1, thresh2,
                             wsJ, wsH, wsG, wsI, wsC, wsGMethod, wsIMethod,
                             fragmentYField, advActAField, fragmentZField,
-                            fragmentI0Method, maAMMethod));
+                            maAMMethod));
                 } catch (Throwable t) {
                     Log.w(TAG, "failed to attach granular listener: " + t);
                 }
                 return result;
+            }
+        });
+
+        // Suppress external fragment thumb-sync calls while the user is dragging.
+        // On gplay the replay fragment receives more aggressive workspace updates
+        // that call i0()/h0(float), which would otherwise yank the thumb back to
+        // the latest position during a drag.
+        xposed.hook(fragmentI0Method).intercept(new Hooker() {
+            @Override
+            public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                if (isDragging) {
+                    return null;
+                }
+                return chain.proceed();
             }
         });
 
@@ -219,7 +237,7 @@ public class GranularSeekBarHook {
 
         // Fragment reflection handles
         private final Field  fragmentYField, advActAField, fragmentZField;
-        private final Method fragmentI0Method, maAMMethod;
+        private final Method maAMMethod;
 
         // ── per-drag state ───────────────────────────────────────────────────
         private float touchDownY         = 0f;
@@ -244,7 +262,7 @@ public class GranularSeekBarHook {
                 Field wsJ, Field wsH, Field wsG, Field wsI, Field wsC,
                 Method wsGMethod, Method wsIMethod,
                 Field fragmentYField, Field advActAField, Field fragmentZField,
-                Method fragmentI0Method, Method maAMMethod) {
+                Method maAMMethod) {
             this.seekBar         = seekBar;
             this.fragment        = fragment;
             this.thresh1         = thresh1;
@@ -259,7 +277,6 @@ public class GranularSeekBarHook {
             this.fragmentYField  = fragmentYField;
             this.advActAField    = advActAField;
             this.fragmentZField  = fragmentZField;
-            this.fragmentI0Method = fragmentI0Method;
             this.maAMMethod      = maAMMethod;
         }
 
@@ -270,6 +287,7 @@ public class GranularSeekBarHook {
             switch (action) {
 
                 case MotionEvent.ACTION_DOWN: {
+                    isDragging        = true;
                     touchDownY        = event.getY();
                     anchorX           = event.getX();
                     anchorKeyD        = (double) currentKey();
@@ -336,21 +354,25 @@ public class GranularSeekBarHook {
 
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL: {
-                    if (!inFineZone) {
-                        forwardAtProgress(action, event, lastProgressZone1);
-                    } else {
-                        // Finalise at the last fine key; send synthetic UP so
-                        // SeekBar clears mIsDragging / pressed state cleanly.
-                        seekWorkspace(lastKeyFine);
-                        updateSeekBarThumb();
-                        updateTimestampLabel();
-                        float safeY = seekBar.getHeight() / 2f;
-                        MotionEvent synth = MotionEvent.obtain(
-                                event.getDownTime(), event.getEventTime(),
-                                action, scaledXForKey(lastKeyFine), safeY,
-                                event.getMetaState());
-                        try { seekBar.onTouchEvent(synth); }
-                        finally { synth.recycle(); }
+                    try {
+                        if (!inFineZone) {
+                            forwardAtProgress(action, event, lastProgressZone1);
+                        } else {
+                            // Finalise at the last fine key; send synthetic UP so
+                            // SeekBar clears mIsDragging / pressed state cleanly.
+                            seekWorkspace(lastKeyFine);
+                            updateSeekBarThumb();
+                            updateTimestampLabel();
+                            float safeY = seekBar.getHeight() / 2f;
+                            MotionEvent synth = MotionEvent.obtain(
+                                    event.getDownTime(), event.getEventTime(),
+                                    action, scaledXForKey(lastKeyFine), safeY,
+                                    event.getMetaState());
+                            try { seekBar.onTouchEvent(synth); }
+                            finally { synth.recycle(); }
+                        }
+                    } finally {
+                        isDragging = false;
                     }
                     return true;
                 }
@@ -396,19 +418,19 @@ public class GranularSeekBarHook {
             }
         }
 
-        /** Syncs the SeekBar thumb to the current workspace position. */
-        private void updateSeekBarThumb() {
-            try {
-                Object ws = wsJ.get(null);
-                if (ws == null) return;
-                float fraction = (float) wsIMethod.invoke(ws);
-                if (fraction >= 0f) {
-                    fragmentI0Method.invoke(fragment, fraction);
-                }
-            } catch (Throwable t) {
-                Log.w(TAG, "updateSeekBarThumb failed: " + t);
+    /** Syncs the SeekBar thumb to the current workspace position. */
+    private void updateSeekBarThumb() {
+        try {
+            Object ws = wsJ.get(null);
+            if (ws == null) return;
+            float fraction = (float) wsIMethod.invoke(ws);
+            if (fraction >= 0f) {
+                seekBar.setProgress(Math.round(fraction * seekBar.getMax()));
             }
+        } catch (Throwable t) {
+            Log.w(TAG, "updateSeekBarThumb failed: " + t);
         }
+    }
 
         /** Updates the timestamp TextView (k8.f.Z) to match the current workspace time. */
         private void updateTimestampLabel() {

@@ -79,6 +79,9 @@ public class NrNsaScellDualConnectivityHook {
 
     private boolean reflectionReady = false;
 
+    /** Runtime class for g8.h (qtrun) / p6.h (gplay). Used for exact-fragment checks. */
+    private Class<?> targetFragmentClass;
+
     private Object unsafe;
     private Method unsafeObjectFieldOffset;
     private Method unsafeAllocateInstance;
@@ -170,6 +173,12 @@ public class NrNsaScellDualConnectivityHook {
                     || v6fClass == null || v6gClass == null || attrAClass == null || dsClass == null
                     || fontTextViewClass == null || progressTextViewClass == null) {
                 Log.i(TAG, "NrNsaScellDualConnectivityHook: essential class missing, skipping");
+                return;
+            }
+
+            targetFragmentClass = ClassMapping.loadClass(TARGET_FRAGMENT, loader);
+            if (targetFragmentClass == null) {
+                Log.i(TAG, "NrNsaScellDualConnectivityHook: target fragment class missing, skipping");
                 return;
             }
 
@@ -314,7 +323,7 @@ public class NrNsaScellDualConnectivityHook {
                     Object result = chain.proceed();
                     try {
                         Object fragment = chain.getThisObject();
-                        if (fragment != null && fragment.getClass().getName().equals(TARGET_FRAGMENT)) {
+                        if (fragment != null && fragment.getClass() == targetFragmentClass) {
                             resetAndRebuild(fragment);
                         }
                     } catch (Exception e) {
