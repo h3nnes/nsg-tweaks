@@ -163,8 +163,7 @@ public class NrNsaScellDualConnectivityHook {
 
     private void initReflection() {
         try {
-            Log.v(TAG, "initReflection start; flavor=" + FlavorDetector.detect(loader));
-            Class<?> k2aClass = ClassMapping.loadClass(K2A_CLASS, loader);
+Class<?> k2aClass = ClassMapping.loadClass(K2A_CLASS, loader);
             Class<?> v6aClass = ClassMapping.loadClass(V6_A_CLASS, loader);
             Class<?> v6dClass = ClassMapping.loadClass(V6_D_CLASS, loader);
             v6eClass = ClassMapping.loadClass(V6_E_CLASS, loader);
@@ -174,13 +173,7 @@ public class NrNsaScellDualConnectivityHook {
             Class<?> dsClass = ClassMapping.loadClass(DATA_SOURCE_CLASS, loader);
             Class<?> fontTextViewClass = ClassMapping.loadClass(FONT_TEXT_VIEW_CLASS, loader);
             Class<?> progressTextViewClass = ClassMapping.loadClass(PROGRESS_TEXT_VIEW_CLASS, loader);
-
-            Log.v(TAG, "loaded classes: k2a=" + (k2aClass != null ? k2aClass.getName() : null)
-                    + " v6a=" + (v6aClass != null ? v6aClass.getName() : null)
-                    + " v6d=" + (v6dClass != null ? v6dClass.getName() : null)
-                    + " target=" + ClassMapping.runtimeName(TARGET_FRAGMENT, loader));
-
-            if (k2aClass == null || v6aClass == null || v6dClass == null || v6eClass == null
+if (k2aClass == null || v6aClass == null || v6dClass == null || v6eClass == null
                     || v6fClass == null || v6gClass == null || attrAClass == null || dsClass == null
                     || fontTextViewClass == null || progressTextViewClass == null) {
                 Log.i(TAG, "NrNsaScellDualConnectivityHook: essential class missing, skipping");
@@ -188,8 +181,7 @@ public class NrNsaScellDualConnectivityHook {
             }
 
             targetFragmentClass = ClassMapping.loadClass(TARGET_FRAGMENT, loader);
-            Log.v(TAG, "targetFragmentClass=" + targetFragmentClass);
-            if (targetFragmentClass == null) {
+if (targetFragmentClass == null) {
                 Log.i(TAG, "NrNsaScellDualConnectivityHook: target fragment class missing, skipping");
                 return;
             }
@@ -236,9 +228,7 @@ public class NrNsaScellDualConnectivityHook {
             String attrFormatName = ClassMapping.runtimeFieldName("com.qtrun.sys.a", "b", loader);
             String attrIndexName = ClassMapping.runtimeFieldName("com.qtrun.sys.a", "c", loader);
             String attrPropertyName = ClassMapping.runtimeFieldName("com.qtrun.sys.a", "d", loader);
-            Log.v(TAG, "Attribute field names: key=" + attrKeyName + " format=" + attrFormatName
-                    + " index=" + attrIndexName + " property=" + attrPropertyName);
-            attrKeyOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField(attrKeyName));
+attrKeyOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField(attrKeyName));
             attrFormatOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField(attrFormatName));
             attrIndexOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField(attrIndexName));
             attrPropertyOffset = (Long) unsafeObjectFieldOffset.invoke(unsafe, attrAClass.getDeclaredField(attrPropertyName));
@@ -246,9 +236,7 @@ public class NrNsaScellDualConnectivityHook {
             String k2aCellsName = ClassMapping.runtimeFieldName(K2A_CLASS, "d", loader);
             k2aCellsField = k2aClass.getDeclaredField(k2aCellsName);
             k2aCellsField.setAccessible(true);
-            Log.v(TAG, "k2a cells field: " + k2aCellsName);
-
-            String v6aViewName = ClassMapping.runtimeFieldName(V6_A_CLASS, "a", loader);
+String v6aViewName = ClassMapping.runtimeFieldName(V6_A_CLASS, "a", loader);
             String v6aRowName = ClassMapping.runtimeFieldName(V6_A_CLASS, "b", loader);
             String v6aHeightName = ClassMapping.runtimeFieldName(V6_A_CLASS, "c", loader);
             String v6aXName = ClassMapping.runtimeFieldName(V6_A_CLASS, "d", loader);
@@ -260,15 +248,10 @@ public class NrNsaScellDualConnectivityHook {
             v6aHeightField.setAccessible(true);
             v6aXField = v6aClass.getDeclaredField(v6aXName);
             v6aXField.setAccessible(true);
-            Log.v(TAG, "v6.a fields: view=" + v6aViewName + " row=" + v6aRowName
-                    + " height=" + v6aHeightName + " x=" + v6aXName);
-
-            String v6dCellsFieldName = ClassMapping.runtimeFieldName(V6_D_CLASS, "a", loader);
+String v6dCellsFieldName = ClassMapping.runtimeFieldName(V6_D_CLASS, "a", loader);
             v6dCellsField = v6dClass.getDeclaredField(v6dCellsFieldName);
             v6dCellsField.setAccessible(true);
-            Log.v(TAG, "v6.d cells runtime field name: " + v6dCellsFieldName + " -> " + v6dCellsField);
-
-            String v6gFormattersName = ClassMapping.runtimeFieldName(V6_G_CLASS, "f", loader);
+String v6gFormattersName = ClassMapping.runtimeFieldName(V6_G_CLASS, "f", loader);
             String v6gSeparatorName = ClassMapping.runtimeFieldName(V6_G_CLASS, "h", loader);
             String v6gColorName = ClassMapping.runtimeFieldName(V6_G_CLASS, "i", loader);
             String v6gAltColorName = ClassMapping.runtimeFieldName(V6_G_CLASS, "j", loader);
@@ -283,10 +266,7 @@ public class NrNsaScellDualConnectivityHook {
             v6gAltColorField.setAccessible(true);
             v6gGravityField = v6gClass.getDeclaredField(v6gGravityName);
             v6gGravityField.setAccessible(true);
-            Log.v(TAG, "v6.g fields: formatters=" + v6gFormattersName + " separator=" + v6gSeparatorName
-                    + " color=" + v6gColorName + " altColor=" + v6gAltColorName + " gravity=" + v6gGravityName);
-
-            String v6fValueName = ClassMapping.runtimeFieldName(V6_F_CLASS, "f", loader);
+String v6fValueName = ClassMapping.runtimeFieldName(V6_F_CLASS, "f", loader);
             String v6fFormatterName = ClassMapping.runtimeFieldName(V6_F_CLASS, "g", loader);
             String v6fManualName = ClassMapping.runtimeFieldName(V6_F_CLASS, "i", loader);
             String v6fColorName = ClassMapping.runtimeFieldName(V6_F_CLASS, "j", loader);
@@ -301,15 +281,10 @@ public class NrNsaScellDualConnectivityHook {
             v6fColorField.setAccessible(true);
             v6fMaxField = v6fClass.getDeclaredField(v6fMaxName);
             v6fMaxField.setAccessible(true);
-            Log.v(TAG, "v6.f fields: value=" + v6fValueName + " formatter=" + v6fFormatterName
-                    + " manual=" + v6fManualName + " color=" + v6fColorName + " max=" + v6fMaxName);
-
-            String v6eTextName = ClassMapping.runtimeFieldName(V6_E_CLASS, "f", loader);
+String v6eTextName = ClassMapping.runtimeFieldName(V6_E_CLASS, "f", loader);
             v6eTextField = v6eClass.getDeclaredField(v6eTextName);
             v6eTextField.setAccessible(true);
-            Log.v(TAG, "v6.e text field: " + v6eTextName);
-
-            v6aUpdateMethod = ClassMapping.getMethod(v6aClass, V6_A_CLASS, "a", loader,
+v6aUpdateMethod = ClassMapping.getMethod(v6aClass, V6_A_CLASS, "a", loader,
                     long.class, dsClass, short.class);
             v6aResetMethod = ClassMapping.getMethod(v6aClass, V6_A_CLASS, "b", loader);
             v6eRenderMethod = ClassMapping.getMethod(v6eClass, V6_E_CLASS, "e", loader);
@@ -374,9 +349,7 @@ public class NrNsaScellDualConnectivityHook {
                     try {
                         Object fragment = chain.getThisObject();
                         boolean match = fragment != null && fragment.getClass() == targetFragmentClass;
-                        Log.v(TAG, "v6.b.I hook; fragmentClass=" + (fragment != null ? fragment.getClass().getName() : null)
-                                + " target=" + targetFragmentClass.getName() + " match=" + match);
-                        if (match) {
+if (match) {
                             resetAndRebuild(fragment);
                         }
                     } catch (Exception e) {
@@ -391,8 +364,7 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     private void resetAndRebuild(Object fragment) {
-        Log.v(TAG, "resetAndRebuild; currentlyStretched=" + currentlyStretched + " oldBindings=" + rowBindings.size());
-        // If the view was recreated while we were stretched, restore normal
+// If the view was recreated while we were stretched, restore normal
         // geometry before we forget what "normal" looks like.
         if (currentlyStretched) {
             for (RowBinding binding : rowBindings) {
@@ -416,8 +388,7 @@ public class NrNsaScellDualConnectivityHook {
         currentlyStretched = false;
 
         Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
-        Log.v(TAG, "buildBindings: fragment.Y=" + k2a);
-        if (k2a == null) {
+if (k2a == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: fragment.Y is null");
             return;
         }
@@ -430,12 +401,9 @@ public class NrNsaScellDualConnectivityHook {
             return;
         }
         if (cells == null) {
-            Log.v(TAG, "buildBindings: cells list null");
-            return;
+return;
         }
-        Log.v(TAG, "buildBindings: total cells=" + cells.size());
-
-        // Group cells by row.
+// Group cells by row.
         Map<Integer, RowCells> rows = new HashMap<>();
         for (Object cell : cells) {
             if (cell == null) continue;
@@ -456,14 +424,11 @@ public class NrNsaScellDualConnectivityHook {
             }
             if (approxEquals(x, LABEL_COLUMN_X, COLUMN_TOLERANCE)) {
                 rc.label = cell;
-                Log.v(TAG, "buildBindings: row=" + rowInt + " x=" + x + " height=" + height + " -> label");
-            } else if (approxEquals(x, LTE_COLUMN_X, COLUMN_TOLERANCE)) {
+} else if (approxEquals(x, LTE_COLUMN_X, COLUMN_TOLERANCE)) {
                 rc.lte = cell;
-                Log.v(TAG, "buildBindings: row=" + rowInt + " x=" + x + " height=" + height + " -> lte (" + cell.getClass().getName() + ")");
-            } else if (approxEquals(x, NR_COLUMN_X, COLUMN_TOLERANCE)) {
+} else if (approxEquals(x, NR_COLUMN_X, COLUMN_TOLERANCE)) {
                 rc.nr = cell;
-                Log.v(TAG, "buildBindings: row=" + rowInt + " x=" + x + " height=" + height + " -> nr (" + cell.getClass().getName() + ")");
-            }
+}
         }
 
         for (Map.Entry<Integer, RowCells> entry : rows.entrySet()) {
@@ -474,10 +439,8 @@ public class NrNsaScellDualConnectivityHook {
             RowBinding binding = new RowBinding(row, rc.label, rc.lte, rc.nr);
             preparePcellFormatters(binding, rc.nr, row);
             rowBindings.add(binding);
-            Log.v(TAG, "buildBindings: row=" + row + " bound (nrClass=" + rc.nr.getClass().getName() + ")");
-        }
-        Log.v(TAG, "buildBindings: bound " + rowBindings.size() + " NR rows");
-    }
+}
+}
 
     // -------------------------------------------------------------------------
     // Helpers: wrap/unwrap NR column views on first/last SCell detection.
@@ -491,8 +454,7 @@ public class NrNsaScellDualConnectivityHook {
 
     @SuppressWarnings("unchecked")
     private boolean wrapAllRows(Object fragment) {
-        Log.v(TAG, "wrapAllRows start");
-        Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
+Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
         if (k2a == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, fragment.Y is null");
             return false;
@@ -502,9 +464,7 @@ public class NrNsaScellDualConnectivityHook {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, grid is null");
             return false;
         }
-        Log.v(TAG, "wrapAllRows: gridView=" + gridView);
-
-        List<Object> gridCells;
+List<Object> gridCells;
         try {
             gridCells = (List<Object>) v6dCellsField.get(gridView);
         } catch (Exception e) {
@@ -515,9 +475,7 @@ public class NrNsaScellDualConnectivityHook {
             Log.w(TAG, "wrapAllRows: gridCells null");
             return false;
         }
-        Log.v(TAG, "wrapAllRows: gridCells=" + gridCells.size());
-
-        // Validate that every unwrapped NR cell still maps to a TextView child.
+// Validate that every unwrapped NR cell still maps to a TextView child.
         ViewGroup gridGroup = (ViewGroup) gridView;
         for (RowBinding binding : rowBindings) {
             if (binding.wrapped) continue;
@@ -531,8 +489,7 @@ public class NrNsaScellDualConnectivityHook {
                 Log.w(TAG, "NrNsaScellDualConnectivityHook: grid child is not a TextView for row " + binding.originalRow);
                 return false;
             }
-            Log.v(TAG, "wrapAllRows: validated row=" + binding.originalRow + " index=" + index);
-        }
+}
 
         for (RowBinding binding : rowBindings) {
             if (binding.wrapped) continue;
@@ -555,17 +512,11 @@ public class NrNsaScellDualConnectivityHook {
             scellView.setText("-");
             if (binding.nrCell.getClass() == v6gClass) {
                 scellView.setTextColor(TURQUOISE);
-                Log.v(TAG, "wrapAllRows: turquoise color for v6.g row=" + binding.originalRow);
-            }
+}
 
             gridGroup.removeViewAt(index);
             gridGroup.addView(container, index);
-            Log.v(TAG, "wrapAllRows: replaced row=" + binding.originalRow + " childIndex=" + index
-                    + " old=" + originalView.getClass().getSimpleName()
-                    + " new=" + container.getClass().getSimpleName()
-                    + " measured=" + originalView.getMeasuredWidth() + "x" + originalView.getMeasuredHeight());
-
-            // Stack PCell and SCell sub-views with a small transparent gap
+// Stack PCell and SCell sub-views with a small transparent gap
             // between them, matching the 2 dp row distance used by the grid
             // (v6.d.f8115g). This mirrors the NR-SA CA Matrix DL 3x NR-CA layout
             // where PCell and SCell values are separated by an empty gap, not a
@@ -590,31 +541,25 @@ public class NrNsaScellDualConnectivityHook {
             binding.scellView = scellView;
             binding.scellCell = createScellCell(binding, scellView);
             binding.wrapped = true;
-            Log.v(TAG, "wrapAllRows: wrapped row=" + binding.originalRow + " scellCell=" + binding.scellCell);
-
-            // Now that the SCell is present, make the PCell cell use the
+// Now that the SCell is present, make the PCell cell use the
             // PCell-specific formatter keys so PCell and SCell values are fetched
             // independently. Refresh the cell with the current sample so the
             // display updates immediately.
             applyPcellFormatters(binding, true);
         }
-        Log.v(TAG, "wrapAllRows: complete");
-        return true;
+return true;
     }
 
     private TextView createScellView(Context ctx, TextView pcellView) {
         try {
             Class<?> pcellClass = pcellView.getClass();
             if (pcellClass == progressTextViewCtor.getDeclaringClass()) {
-                Log.v(TAG, "createScellView: cloning ProgressTextView");
-                return (TextView) progressTextViewCtor.newInstance(ctx, (AttributeSet) null);
+return (TextView) progressTextViewCtor.newInstance(ctx, (AttributeSet) null);
             }
             if (pcellClass == fontTextViewCtor.getDeclaringClass()) {
-                Log.v(TAG, "createScellView: cloning FontTextView");
-                return (TextView) fontTextViewCtor.newInstance(ctx, (AttributeSet) null);
+return (TextView) fontTextViewCtor.newInstance(ctx, (AttributeSet) null);
             }
-            Log.v(TAG, "createScellView: pcellView class " + pcellClass.getName() + " not cloned, using TextView fallback");
-        } catch (Exception e) {
+} catch (Exception e) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: createScellView failed, using fallback: " + e);
         }
         return new TextView(ctx);
@@ -676,9 +621,7 @@ public class NrNsaScellDualConnectivityHook {
             }
             Method bMethod = ClassMapping.getMethod(g8hClass, TARGET_FRAGMENT, "b", loader,
                     dsClass, long.class, short.class, Object.class);
-            Log.v(TAG, "hookB: " + TARGET_FRAGMENT + ".b(...) -> " + bMethod);
-
-            xposed.hook(bMethod).intercept(new Hooker() {
+xposed.hook(bMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -702,11 +645,7 @@ public class NrNsaScellDualConnectivityHook {
         lastModuleIndex = moduleIndex;
 
         boolean scellPresent = isScellPresent(dataSource, sampleKey, moduleIndex);
-        Log.v(TAG, "onDataUpdate sampleKey=" + sampleKey + " moduleIndex=" + moduleIndex
-                + " dataSource=" + (dataSource != null ? dataSource.getClass().getName() : null)
-                + " scellPresent=" + scellPresent + " bindings=" + rowBindings.size()
-                + " currentlyStretched=" + currentlyStretched);
-        boolean layoutNeeded = false;
+boolean layoutNeeded = false;
 
         if (scellPresent) {
             if (!anyWrapped()) {
@@ -736,8 +675,7 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     private void stretchGrid(boolean stretch) {
-        Log.v(TAG, "stretchGrid stretch=" + stretch + " bindings=" + rowBindings.size());
-        for (RowBinding binding : rowBindings) {
+for (RowBinding binding : rowBindings) {
             int row = binding.originalRow;
 
             if (row == TECHNOLOGY_ROW) {
@@ -762,8 +700,7 @@ public class NrNsaScellDualConnectivityHook {
                 // lower, matching h8.b's o0() geometry in 3x NR-CA mode.
                 if (binding.lteCell != null) {
                     if (binding.lteCell.getClass() == v6fClass) {
-                        Log.v(TAG, "stretchGrid: row=" + row + " LTE is v6.f, using short bar geometry");
-                        setGeometry(binding.lteCell, newRow + 0.3f, 1.4f);
+setGeometry(binding.lteCell, newRow + 0.3f, 1.4f);
                     } else {
                         setGeometry(binding.lteCell, newRow, 2.0f);
                     }
@@ -876,9 +813,7 @@ public class NrNsaScellDualConnectivityHook {
         try {
             Object nrCell = binding.nrCell;
             Class<?> nrClass = nrCell.getClass();
-            Log.v(TAG, "createScellCell: row=" + binding.originalRow + " nrClass=" + nrClass.getName());
-
-            if (nrClass == v6eClass) {
+if (nrClass == v6eClass) {
                 // Label/technology row: keep the SCell sub-view empty.
                 return new ScellCell(true, null, null);
             }
@@ -1025,13 +960,9 @@ public class NrNsaScellDualConnectivityHook {
             Class<?> nrClass = nrCell.getClass();
             String[] pcellKeys = getPcellKeys(row);
             if (pcellKeys == null || pcellKeys.length == 0) {
-                Log.v(TAG, "preparePcellFormatters: row=" + row + " no PCell keys");
-                return;
+return;
             }
-            Log.v(TAG, "preparePcellFormatters: row=" + row + " nrClass=" + nrClass.getName()
-                    + " keys=" + pcellKeys.length);
-
-            if (nrClass == v6gClass) {
+if (nrClass == v6gClass) {
                 List<Object> formatters = (List<Object>) v6gFormattersField.get(nrCell);
                 if (formatters == null) return;
                 List<Object> originals = new ArrayList<>(formatters);
@@ -1064,9 +995,7 @@ public class NrNsaScellDualConnectivityHook {
         if (binding.usingPcellFormatters == usePcell) return;
         try {
             Class<?> nrClass = binding.nrCell.getClass();
-            Log.v(TAG, "applyPcellFormatters: row=" + binding.originalRow + " usePcell=" + usePcell
-                    + " nrClass=" + nrClass.getName());
-            if (nrClass == v6gClass && binding.originalV6gFormatters != null) {
+if (nrClass == v6gClass && binding.originalV6gFormatters != null) {
                 List<Object> target = usePcell ? binding.pcellV6gFormatters : binding.originalV6gFormatters;
                 v6gFormattersField.set(binding.nrCell, target);
             } else if (nrClass == v6fClass && binding.originalV6fFormatter != null) {
@@ -1084,8 +1013,7 @@ public class NrNsaScellDualConnectivityHook {
         try {
             v6aResetMethod.invoke(nrCell);
             Object changed = v6aUpdateMethod.invoke(nrCell, lastSampleKey, lastDataSource, lastModuleIndex);
-            Log.v(TAG, "refreshPcellCell: row=" + row + " changed=" + changed);
-            if (Boolean.TRUE.equals(changed)) {
+if (Boolean.TRUE.equals(changed)) {
                 Class<?> nrClass = nrCell.getClass();
                 Method render = null;
                 if (nrClass == v6eClass) {
@@ -1097,8 +1025,7 @@ public class NrNsaScellDualConnectivityHook {
                 }
                 if (render != null) {
                     render.invoke(nrCell);
-                    Log.v(TAG, "refreshPcellCell: row=" + row + " rendered via " + render);
-                }
+}
             }
         } catch (Exception e) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: refreshPcellCell failed for row " + row + ": " + e);
@@ -1230,13 +1157,11 @@ public class NrNsaScellDualConnectivityHook {
 
             Object property = getProperty.invoke(ds, KEY_SCELL_PCI, (int) moduleIndex);
             if (property == null) {
-                Log.v(TAG, "isScellPresent: property " + KEY_SCELL_PCI + " not found");
-                return false;
+return false;
             }
             Object it = iteratorB.invoke(property, sampleKey);
             if (it == null || (boolean) end.invoke(it)) {
-                Log.v(TAG, "isScellPresent: no SCell PCI data at sampleKey=" + sampleKey);
-                return false;
+return false;
             }
             Object val = value.invoke(it);
             if (val == null) {
@@ -1248,16 +1173,14 @@ public class NrNsaScellDualConnectivityHook {
                 }
             }
             if (!(val instanceof Object[])) {
-                Log.v(TAG, "isScellPresent: value is not an array: " + (val != null ? val.getClass().getName() : null));
-                return false;
+return false;
             }
             Object[] arr = (Object[]) val;
             if (arr.length == 0) return false;
             Object first = arr[0];
             if (first instanceof Number) {
                 int pci = ((Number) first).intValue();
-                Log.v(TAG, "isScellPresent: SCell PCI=" + pci + " at sampleKey=" + sampleKey);
-                return pci >= 0;
+return pci >= 0;
             }
         } catch (Exception e) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: SCell PCI check failed: " + e);

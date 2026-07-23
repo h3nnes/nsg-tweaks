@@ -101,9 +101,7 @@ public class RtPlayHook {
 
     private void initReflection() {
         try {
-            Log.v(TAG, "initReflection start; flavor=" + FlavorDetector.detect(loader));
-
-            Class<?> fragmentClass  = ClassMapping.loadClass("k8.f", loader);
+Class<?> fragmentClass  = ClassMapping.loadClass("k8.f", loader);
             Class<?> advActAClass   = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity$a", loader);
             Class<?> workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
             Class<?> attrClass      = ClassMapping.loadClass("com.qtrun.sys.a", loader);
@@ -114,13 +112,7 @@ public class RtPlayHook {
             Class<?> inflaterClass  = ClassMapping.loadClass("android.view.LayoutInflater", loader);
             Class<?> viewGroupClass = ClassMapping.loadClass("android.view.ViewGroup", loader);
             Class<?> bundleClass    = ClassMapping.loadClass("android.os.Bundle", loader);
-
-            Log.v(TAG, "loaded classes: fragment=" + (fragmentClass != null ? fragmentClass.getName() : null)
-                    + " advActA=" + (advActAClass != null ? advActAClass.getName() : null)
-                    + " workspace=" + (workspaceClass != null ? workspaceClass.getName() : null)
-                    + " maA=" + (maAClass != null ? maAClass.getName() : null));
-
-            if (fragmentClass == null || advActAClass == null || workspaceClass == null
+if (fragmentClass == null || advActAClass == null || workspaceClass == null
                     || maAClass == null) {
                 Log.i(TAG, "RtPlayHook: essential class missing, skipping");
                 return;
@@ -129,23 +121,16 @@ public class RtPlayHook {
             // k8.f
             onCreateViewMethod = fragmentClass.getDeclaredMethod(
                     "I", inflaterClass, viewGroupClass, bundleClass);
-            Log.v(TAG, "k8.f.I(...) -> " + onCreateViewMethod);
-
-            fragmentYField    = fragmentClass.getDeclaredField("Y"); fragmentYField.setAccessible(true);
+fragmentYField    = fragmentClass.getDeclaredField("Y"); fragmentYField.setAccessible(true);
             fragmentZField    = fragmentClass.getDeclaredField("Z"); fragmentZField.setAccessible(true);
-            Log.v(TAG, "k8.f fields: Y=" + fragmentYField + " Z=" + fragmentZField);
-
-            fragmentI0Method  = ClassMapping.getDeclaredMethod(fragmentClass, "k8.f", "i0", loader, float.class);
+fragmentI0Method  = ClassMapping.getDeclaredMethod(fragmentClass, "k8.f", "i0", loader, float.class);
             fragmentI0Method.setAccessible(true);
-            Log.v(TAG, "k8.f.i0(float) -> " + fragmentI0Method);
-
-            // AdvancedActivity.a back-ref to k8.f: runtime "a", JADX mangles to "f3807a"
+// AdvancedActivity.a back-ref to k8.f: runtime "a", JADX mangles to "f3807a"
             Field f3807a = null;
             for (String candidate : new String[]{"a", "f3807a", "f3863a"}) {
                 try {
                     f3807a = advActAClass.getDeclaredField(candidate);
-                    Log.v(TAG, "AdvancedActivity.a back-ref field resolved: " + candidate);
-                    break;
+break;
                 } catch (NoSuchFieldException ignored) { }
             }
             if (f3807a == null) {
@@ -161,11 +146,7 @@ public class RtPlayHook {
             String wsDateName      = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "i", loader);
             String wsDataSourceName= ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
             String wsAttrName      = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "f", loader);
-            Log.v(TAG, "Workspace runtime field names: singleton=" + wsSingletonName
-                    + " current=" + wsCurrentKeyName + " max=" + wsMaxKeyName
-                    + " date=" + wsDateName + " ds=" + wsDataSourceName + " attr=" + wsAttrName);
-
-            wsJ      = workspaceClass.getField(wsSingletonName);
+wsJ      = workspaceClass.getField(wsSingletonName);
             wsG      = workspaceClass.getDeclaredField(wsCurrentKeyName); wsG.setAccessible(true);
             wsH      = workspaceClass.getDeclaredField(wsMaxKeyName); wsH.setAccessible(true);
             wsI      = workspaceClass.getDeclaredField(wsDateName); wsI.setAccessible(true);
@@ -175,33 +156,24 @@ public class RtPlayHook {
             wsGMethod.setAccessible(true);
             wsIMethod = workspaceClass.getDeclaredMethod("i");
             wsIMethod.setAccessible(true);
-            Log.v(TAG, "Workspace methods: g(long,Object)=" + wsGMethod + " i()=" + wsIMethod);
-
-            // Attribute → Property
+// Attribute → Property
             attrD = attrClass.getDeclaredField("d"); attrD.setAccessible(true);
-            Log.v(TAG, "com.qtrun.sys.a.d (Property) -> " + attrD);
-
-            // Property / Iterator
+// Property / Iterator
             iterCtor        = iterClass.getDeclaredConstructor(propClass); iterCtor.setAccessible(true);
             iterForwardLong = iterClass.getDeclaredMethod("forward", long.class); iterForwardLong.setAccessible(true);
             iterEnd   = iterClass.getDeclaredMethod("end");            iterEnd.setAccessible(true);
             iterKey   = iterClass.getDeclaredMethod("key");            iterKey.setAccessible(true);
             iterValue = iterClass.getDeclaredMethod("value");          iterValue.setAccessible(true);
             iterNext  = iterClass.getDeclaredMethod("next");           iterNext.setAccessible(true);
-            Log.v(TAG, "Property$Iterator methods resolved");
-
-            // ma.a.m(Date) → String (gplay v8.a.c(Date))
+// ma.a.m(Date) → String (gplay v8.a.c(Date))
             try {
                 maAMMethod = ClassMapping.getDeclaredMethod(maAClass, "ma.a", "m", loader, dateClass);
                 maAMMethod.setAccessible(true);
-                Log.v(TAG, "timestamp formatter primary: " + maAMMethod);
-            } catch (NoSuchMethodException nsme) {
-                Log.v(TAG, "timestamp formatter primary not found on " + maAClass.getName() + ", trying v8.a fallback");
-                Class<?> v8aClass = Class.forName("v8.a", false, loader);
+} catch (NoSuchMethodException nsme) {
+Class<?> v8aClass = Class.forName("v8.a", false, loader);
                 maAMMethod = ClassMapping.getDeclaredMethod(v8aClass, "ma.a", "m", loader, dateClass);
                 maAMMethod.setAccessible(true);
-                Log.v(TAG, "timestamp formatter fallback: " + maAMMethod);
-            }
+}
 
             reflectionReady = true;
             Log.i(TAG, "initReflection ready");
@@ -214,15 +186,12 @@ public class RtPlayHook {
 
     public void install() {
         if (!reflectionReady) { Log.e(TAG, "install skipped — reflection not ready"); return; }
-        Log.v(TAG, "install start");
-
-        xposed.hook(onCreateViewMethod).intercept(new Hooker() {
+xposed.hook(onCreateViewMethod).intercept(new Hooker() {
             @Override
             public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                 Object result = chain.proceed();
                 try {
-                    Log.v(TAG, "onCreateView hook fired; result=" + result);
-                    if (result instanceof View) {
+if (result instanceof View) {
                         attachButton(chain.getThisObject(), (View) result);
                     } else {
                         Log.w(TAG, "onCreateView returned non-View: " + result);
@@ -241,13 +210,11 @@ public class RtPlayHook {
         try {
             Class<?> advActClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
             Method jMethod = advActClass.getDeclaredMethod("J");
-            Log.v(TAG, "AdvancedActivity.J() -> " + jMethod);
-            xposed.hook(jMethod).intercept(new Hooker() {
+xposed.hook(jMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     RtPlayController ctrl = activeController;
-                    Log.v(TAG, "AdvancedActivity.J() hook fired; activeController=" + ctrl);
-                    if (ctrl != null) {
+if (ctrl != null) {
                         ctrl.stop();
                         activeController = null;
                     }
@@ -263,19 +230,15 @@ public class RtPlayHook {
     // ── Button injection ──────────────────────────────────────────────────────
 
     private void attachButton(Object fragment, View rootView) {
-        Log.v(TAG, "attachButton start; fragment=" + fragment + " rtPlayEnabled=" + SettingsToggleHook.rtPlayEnabled());
-        if (!SettingsToggleHook.rtPlayEnabled()) {
-            Log.v(TAG, "attachButton: RT-Play toggle disabled");
-            return;
+if (!SettingsToggleHook.rtPlayEnabled()) {
+return;
         }
         View forwardBtn = rootView.findViewById(ID_FWD);
         if (forwardBtn == null) {
             Log.w(TAG, "playback_forward_500ms (0x7f09022c) not found in view tree");
             return;
         }
-        Log.v(TAG, "forwardBtn found: " + forwardBtn + " class=" + forwardBtn.getClass().getName());
-
-        ViewGroup parent = (ViewGroup) forwardBtn.getParent();
+ViewGroup parent = (ViewGroup) forwardBtn.getParent();
         if (!(parent instanceof LinearLayout)) {
             Log.w(TAG, "parent is not LinearLayout: " + parent.getClass().getName());
             return;
@@ -287,9 +250,7 @@ public class RtPlayHook {
             if (row.getChildAt(i) == forwardBtn) { fwdIndex = i; break; }
         }
         if (fwdIndex < 0) { Log.w(TAG, "forward btn not found in parent children"); return; }
-        Log.v(TAG, "forwardBtn index=" + fwdIndex + " row childCount=" + row.getChildCount());
-
-        // Use the same pattern as SignalingShareHook:
+// Use the same pattern as SignalingShareHook:
         //   1. Remove forwardBtn from the row.
         //   2. Create a horizontal LinearLayout container sized by forwardBtn's own LayoutParams.
         //   3. Add RT-Play button (MATCH_PARENT height) then forwardBtn (MATCH_PARENT height)
@@ -396,8 +357,7 @@ public class RtPlayHook {
                 fragmentYField, advActAField, fragmentZField,
                 fragmentI0Method, maAMMethod);
         btn.setOnClickListener(v -> {
-            Log.v(TAG, "RT-Play button clicked; controller=" + controller + " playing=" + controller.isPlaying());
-            controller.toggle();
+controller.toggle();
         });
         activeController = controller; // expose to J() hook so it can stop the loop
         Log.i(TAG, "attachButton complete; activeController set");
@@ -510,52 +470,39 @@ public class RtPlayHook {
             @Override
             public void run() {
                 if (!playing) {
-                    Log.v(TAG, "stepRunnable: not playing, exiting");
-                    return;
+return;
                 }
                 try {
                     Object ws = wsJ.get(null);
-                    Log.v(TAG, "stepRunnable tick; ws=" + ws + " ds=" + (ws != null ? wsC.get(ws) : null));
-                    if (ws == null || wsC.get(ws) == null) {
+if (ws == null || wsC.get(ws) == null) {
                         Log.w(TAG, "stepRunnable: no workspace/datasource — stopping");
                         stop(); return;
                     }
 
                     long curKey = wsG.getLong(ws);
-                    Log.v(TAG, "stepRunnable: curKey=" + curKey);
-
-                    // Get the Common::Timestamp Property
+// Get the Common::Timestamp Property
                     Object attr = wsF.get(ws);
                     if (attr == null) { Log.w(TAG, "tick: attr null"); stop(); return; }
                     Object prop = attrD.get(attr);
                     if (prop == null) { Log.w(TAG, "tick: prop null"); stop(); return; }
-                    Log.v(TAG, "stepRunnable: attr=" + attr + " prop=" + prop);
-
-                    // Get current Date from Workspace.i — use its real wall-clock ms
+// Get current Date from Workspace.i — use its real wall-clock ms
                     // to compute the 1-second boundary. Keys are NOT in milliseconds.
                     Date curDate = (Date) wsI.get(ws);
                     if (curDate == null) { Log.w(TAG, "tick: curDate null"); stop(); return; }
                     long targetMs = curDate.getTime() + 1000L;
-                    Log.v(TAG, "stepRunnable: curDate=" + curDate + " targetMs=" + targetMs);
-
-                    // Position iterator at current key, then step forward until
+// Position iterator at current key, then step forward until
                     // we find the first record whose Date >= targetMs
                     Object it = iterCtor.newInstance(prop);
                     iterForwardLong.invoke(it, curKey);  // seek to current position first
-                    Log.v(TAG, "stepRunnable: iterator forward(" + curKey + ")");
-
-                    // step past current record (we're already at it)
+// step past current record (we're already at it)
                     iterNext.invoke(it);
-                    Log.v(TAG, "stepRunnable: iterator next()");
-
-                    long nextKey = -1L;
+long nextKey = -1L;
                     Date nextDate = null;
                     int steps = 0;
                     while (!((Boolean) iterEnd.invoke(it))) {
                         Date d = (Date) iterValue.invoke(it);
                         long k = (Long) iterKey.invoke(it);
-                        Log.v(TAG, "stepRunnable: scanning key=" + k + " date=" + d);
-                        if (d != null && d.getTime() >= targetMs) {
+if (d != null && d.getTime() >= targetMs) {
                             nextKey  = k;
                             nextDate = d;
                             break;
@@ -566,11 +513,8 @@ public class RtPlayHook {
                             break;
                         }
                     }
-                    Log.v(TAG, "stepRunnable: nextKey=" + nextKey + " nextDate=" + nextDate);
-
-                    if (nextKey < 0) {
-                        Log.v(TAG, "stepRunnable: no next record, stopping");
-                        stop(); return;
+if (nextKey < 0) {
+stop(); return;
                     }
 
                     // Resolve targetFragment the same way onProgressChanged does
@@ -578,31 +522,23 @@ public class RtPlayHook {
                     Object targetFragment = (callbackHolder != null)
                             ? advActAField.get(callbackHolder)
                             : fragment;
-                    Log.v(TAG, "stepRunnable: callbackHolder=" + callbackHolder
-                            + " targetFragment=" + targetFragment + " fragment=" + fragment);
-
-                    // Seek Workspace to next record (notifies all subscribers)
-                    Log.v(TAG, "stepRunnable: invoking Workspace.g(" + nextKey + ", " + targetFragment + ")");
-                    wsGMethod.invoke(ws, nextKey, targetFragment);
+// Seek Workspace to next record (notifies all subscribers)
+wsGMethod.invoke(ws, nextKey, targetFragment);
 
                     // Sync seekbar thumb
                     float fraction = (Float) wsIMethod.invoke(ws);
-                    Log.v(TAG, "stepRunnable: fraction=" + fraction);
-                    if (fraction >= 0f) fragmentI0Method.invoke(fragment, fraction);
+if (fraction >= 0f) fragmentI0Method.invoke(fragment, fraction);
 
                     // Sync timestamp label (k8.f.Z TextView)
                     Object tvSrc = (targetFragment != null) ? targetFragment : fragment;
                     Object tvObj = fragmentZField.get(tvSrc);
-                    Log.v(TAG, "stepRunnable: tvSrc=" + tvSrc + " tvObj=" + tvObj);
-                    if (tvObj instanceof TextView) {
+if (tvObj instanceof TextView) {
                         String label = (String) maAMMethod.invoke(null, nextDate);
-                        Log.v(TAG, "stepRunnable: label=" + label);
-                        ((TextView) tvObj).setText(label);
+((TextView) tvObj).setText(label);
                     }
 
                     // Schedule next step after fixed 1000ms wall-clock tick
-                    Log.v(TAG, "stepRunnable: scheduling next tick in 1000ms");
-                    handler.postDelayed(this, 1000L);
+handler.postDelayed(this, 1000L);
 
                 } catch (Throwable t) {
                     Log.w(TAG, "stepRunnable error: " + t, t);
@@ -647,20 +583,17 @@ public class RtPlayHook {
         }
 
         void toggle() {
-            Log.v(TAG, "toggle; playing=" + playing);
-            if (playing) stop(); else start();
+if (playing) stop(); else start();
         }
 
         private void start() {
-            Log.v(TAG, "start");
-            playing = true;
+playing = true;
             button.setText(LABEL_ON);
             handler.post(stepRunnable);
         }
 
         void stop() {
-            Log.v(TAG, "stop");
-            playing = false;
+playing = false;
             handler.removeCallbacks(stepRunnable);
             // button.setText must run on UI thread; handler is main-looper so this is safe
             button.post(() -> button.setText(LABEL_OFF));
