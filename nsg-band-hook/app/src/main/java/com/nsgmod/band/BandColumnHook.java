@@ -79,15 +79,24 @@ public class BandColumnHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> dsClass   = loader.loadClass("com.qtrun.sys.DataSource");
-            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
-            Class<?> bbClass   = loader.loadClass("a8.b$b");
+            Class<?> wsClass   = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> dsClass   = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> bbClass   = ClassMapping.loadClass("a8.b$b", loader);
+            Class<?> k8cClass  = ClassMapping.loadClass("k8.c", loader);
+            if (wsClass == null || dsClass == null || propClass == null || iterClass == null
+                    || bbClass == null || k8cClass == null) {
+                Log.i(TAG, "BandColumnHook: essential class missing, skipping");
+                return;
+            }
 
-            wsSingleton    = wsClass.getField("j");
-            wsModuleIndex  = wsClass.getField("a");
-            wsDataSource   = wsClass.getField("c");
+            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsSingleton    = wsClass.getField(wsJName);
+            wsModuleIndex  = wsClass.getField(wsAName);
+            wsDataSource   = wsClass.getField(wsCName);
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -95,9 +104,11 @@ public class BandColumnHook {
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
 
-            eField  = bbClass.getField("e");   // Object[] sources array
+            String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
+            eField  = bbClass.getField(eFieldName);   // Object[] sources array
             hMethod = bbClass.getMethod("h", int.class);  // Pair<source, intraRow>
-            f5509cField = loader.loadClass("k8.c").getField("c"); // data sample key (f5509c)
+            String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
+            f5509cField = k8cClass.getField(sampleKeyFieldName); // data sample key (f5509c)
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -200,7 +211,11 @@ public class BandColumnHook {
     // -----------------------------------------------------------------------
     private void hookGetView() {
         try {
-            Class<?> adapterClass  = loader.loadClass("a8.h$a");
+            Class<?> adapterClass  = ClassMapping.loadClass("a8.h$a", loader);
+            if (adapterClass == null) {
+                Log.i(TAG, "BandColumnHook: a8.h$a not available, skipping getView hook");
+                return;
+            }
             Method   getViewMethod = adapterClass.getMethod("getView",
                     int.class, View.class, ViewGroup.class);
 
@@ -324,7 +339,11 @@ public class BandColumnHook {
     // -----------------------------------------------------------------------
     private void hookOnCreateView() {
         try {
-            Class<?> fragClass = loader.loadClass("a8.h");
+            Class<?> fragClass = ClassMapping.loadClass("a8.h", loader);
+            if (fragClass == null) {
+                Log.i(TAG, "BandColumnHook: a8.h not available, skipping onCreateView hook");
+                return;
+            }
             Method   iMethod   = fragClass.getMethod("I",
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 

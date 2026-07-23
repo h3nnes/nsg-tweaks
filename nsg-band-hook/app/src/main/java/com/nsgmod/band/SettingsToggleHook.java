@@ -174,8 +174,13 @@ public class SettingsToggleHook {
 
     public void install() {
         try {
-            Class<?> fragCls = loader.loadClass(FRAGMENT_CLS);
-            Method i0 = fragCls.getDeclaredMethod("i0", String.class);
+            Class<?> fragCls = ClassMapping.loadClass(FRAGMENT_CLS, loader);
+            if (fragCls == null) {
+                Log.i(TAG, "SettingsToggleHook: " + FRAGMENT_CLS
+                        + " not available on this flavor, skipping");
+                return;
+            }
+            Method i0 = ClassMapping.getDeclaredMethod(fragCls, FRAGMENT_CLS, "i0", loader, String.class);
 
             xposed.hook(i0).intercept(new Hooker() {
                 @Override
@@ -201,7 +206,7 @@ public class SettingsToggleHook {
         // --- 1. Get PreferenceScreen via field reflection ---
         // fragment.Y  →  PreferenceManager (androidx.preference.f)
         // prefManager.<field of type PreferenceScreen>  →  PreferenceScreen
-        Class<?> baseCls = loader.loadClass("androidx.preference.c");
+        Class<?> baseCls = ClassMapping.loadClass("androidx.preference.c", loader);
         Field yField = baseCls.getField("Y");
         Object prefManager = yField.get(fragment);
         if (prefManager == null) {
@@ -209,7 +214,7 @@ public class SettingsToggleHook {
             return;
         }
 
-        Class<?> prefScreenCls = loader.loadClass("androidx.preference.PreferenceScreen");
+        Class<?> prefScreenCls = ClassMapping.loadClass("androidx.preference.PreferenceScreen", loader);
         Class<?> prefMgrCls    = prefManager.getClass();
 
         Field screenField = null;
@@ -239,7 +244,7 @@ public class SettingsToggleHook {
         // --- 2. Guard against double-injection ---
         // findPreference generic signature <T extends Preference> T F(CharSequence) erases
         // return type to Object at runtime — match on CharSequence parameter only.
-        Class<?> prefCls = loader.loadClass("androidx.preference.Preference");
+        Class<?> prefCls = ClassMapping.loadClass("androidx.preference.Preference", loader);
         Method findPref = null;
         for (Method m : prefScreenCls.getMethods()) {
             Class<?>[] p = m.getParameterTypes();
@@ -266,7 +271,7 @@ public class SettingsToggleHook {
         Context ctx = (Context) reqCtx.invoke(fragment);
 
         // --- 4. Locate SwitchPreferenceCompat constructor ---
-        Class<?> swCls = loader.loadClass("androidx.preference.SwitchPreferenceCompat");
+        Class<?> swCls = ClassMapping.loadClass("androidx.preference.SwitchPreferenceCompat", loader);
         java.lang.reflect.Constructor<?> swCtor = null;
         for (java.lang.reflect.Constructor<?> c : swCls.getDeclaredConstructors()) {
             Class<?>[] p = c.getParameterTypes();
@@ -281,7 +286,7 @@ public class SettingsToggleHook {
         swCtor.setAccessible(true);
 
         // --- 5. Locate key/title/summary/iconSpaceReserved fields on Preference ---
-        Class<?> prefBaseCls = loader.loadClass("androidx.preference.Preference");
+        Class<?> prefBaseCls = ClassMapping.loadClass("androidx.preference.Preference", loader);
         Field keyField     = null;
         Field titleField   = null;
         Field summaryField = null;
@@ -337,7 +342,7 @@ public class SettingsToggleHook {
         if (attachMethod != null) attachMethod.setAccessible(true);
 
         // parent (PreferenceGroup) field on Preference
-        Class<?> prefGroupCls = loader.loadClass("androidx.preference.PreferenceGroup");
+        Class<?> prefGroupCls = ClassMapping.loadClass("androidx.preference.PreferenceGroup", loader);
         Field parentField = null;
         outer2:
         for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {

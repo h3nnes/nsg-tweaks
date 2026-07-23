@@ -68,14 +68,16 @@ public class NrSaBwpIdHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = loader.loadClass("k2.a");
-            Class<?> veClass  = loader.loadClass("v6.e");
-            Class<?> vgClass  = loader.loadClass("v6.g");
-            Class<?> v6bClass = loader.loadClass("v6.b");
-            Class<?> vaClass  = loader.loadClass("v6.a");
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
+            Class<?> vgClass  = ClassMapping.loadClass("v6.g", loader);
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> vaClass  = ClassMapping.loadClass("v6.a", loader);
 
-            k2aRMethod = k2aClass.getMethod("r", float.class, float.class, float.class, float.class);
-            k2aTMethod = k2aClass.getMethod("t", float.class, float.class, float.class, float.class);
+            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
+                    float.class, float.class, float.class, float.class);
 
             veF = veClass.getField("f");
             veG = veClass.getField("g");
@@ -88,8 +90,8 @@ public class NrSaBwpIdHook {
             vaColField.setAccessible(true);
             vaWidthField.setAccessible(true);
 
-            sysBClass = loader.loadClass("com.qtrun.sys.b");
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAFieldA = sysAClass.getDeclaredField("a");
             sysAFieldB = sysAClass.getDeclaredField("b");
             sysAFieldC = sysAClass.getDeclaredField("c");
@@ -131,8 +133,12 @@ public class NrSaBwpIdHook {
             return;
         }
         try {
-            Class<?> d8iClass = loader.loadClass("d8.i");
-            Method l0Method = d8iClass.getMethod("l0", Context.class);
+            Class<?> d8iClass = ClassMapping.loadClass("d8.i", loader);
+            if (d8iClass == null) {
+                Log.i(TAG, "NrSaBwpIdHook: d8.i not available on this flavor, skipping");
+                return;
+            }
+            Method l0Method = ClassMapping.getMethod(d8iClass, "d8.i", "l0", loader, Context.class);
 
             xposed.hook(l0Method).intercept(new Hooker() {
                 @Override

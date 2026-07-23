@@ -52,7 +52,14 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class GranularSeekBarHook {
 
-    private static final String TAG = "NSGBandHook";
+    private static final String TAG = "NSGBandHook:Granular";
+
+    /** True while the user is dragging the seekbar thumb. On gplay we use this
+     *  to suppress external fragment thumb-sync calls (h0(float)) that would
+     *  otherwise yank the thumb back to the latest position during a drag.
+     *  On qtrun the guard is intentionally NOT used so behaviour stays exactly
+     *  as before the gplay fixes. */
+    private static volatile boolean isDragging = false;
 
     /** Vertical dp upward before Zone 2 activates (5× finer). */
     private static final float THRESHOLD_1_DP = 60f;
@@ -93,14 +100,19 @@ public class GranularSeekBarHook {
 
     private void initReflection() {
         try {
-            Class<?> fragmentClass   = loader.loadClass("k8.f");
-            Class<?> advActAClass    = loader.loadClass("com.qtrun.nsg.AdvancedActivity$a");
-            Class<?> workspaceClass  = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> inflaterClass   = loader.loadClass("android.view.LayoutInflater");
-            Class<?> viewGroupClass  = loader.loadClass("android.view.ViewGroup");
-            Class<?> bundleClass     = loader.loadClass("android.os.Bundle");
-            Class<?> maAClass        = loader.loadClass("ma.a");
-            Class<?> dateClass       = loader.loadClass("java.util.Date");
+Class<?> fragmentClass   = ClassMapping.loadClass("k8.f", loader);
+            Class<?> advActAClass    = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity$a", loader);
+            Class<?> workspaceClass  = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> inflaterClass   = ClassMapping.loadClass("android.view.LayoutInflater", loader);
+            Class<?> viewGroupClass  = ClassMapping.loadClass("android.view.ViewGroup", loader);
+            Class<?> bundleClass     = ClassMapping.loadClass("android.os.Bundle", loader);
+            Class<?> maAClass        = ClassMapping.loadClass("ma.a", loader);
+            Class<?> dateClass       = ClassMapping.loadClass("java.util.Date", loader);
+if (fragmentClass == null || advActAClass == null || workspaceClass == null
+                    || maAClass == null) {
+                Log.i(TAG, "GranularSeekBarHook: essential class missing, skipping");
+                return;
+            }
 
             // k8.f fields/methods
             fragmentSeekBarField = fragmentClass.getDeclaredField("X");
@@ -109,38 +121,56 @@ public class GranularSeekBarHook {
             fragmentYField.setAccessible(true);
             fragmentZField = fragmentClass.getDeclaredField("Z");
             fragmentZField.setAccessible(true);
-            fragmentI0Method = fragmentClass.getDeclaredMethod("i0", float.class);
+            fragmentI0Method = ClassMapping.getDeclaredMethod(fragmentClass, "k8.f", "i0", loader, float.class);
             fragmentI0Method.setAccessible(true);
             onCreateViewMethod = fragmentClass.getDeclaredMethod(
                     "I", inflaterClass, viewGroupClass, bundleClass);
-
-            // AdvancedActivity.a.f3807a back-reference to k8.f
+// AdvancedActivity.a.f3807a back-reference to k8.f
             // JADX renames it f3807a but runtime name is "a" — check both
             Field f3807aCandidate = null;
-            try {
-                f3807aCandidate = advActAClass.getDeclaredField("a");
-            } catch (NoSuchFieldException e) {
-                f3807aCandidate = advActAClass.getDeclaredField("f3807a");
+            for (String candidate : new String[]{"a", "f3807a", "f3863a"}) {
+                try {
+                    f3807aCandidate = advActAClass.getDeclaredField(candidate);
+break;
+                } catch (NoSuchFieldException ignored) { }
+            }
+            if (f3807aCandidate == null) {
+                throw new NoSuchFieldException("AdvancedActivity.a fragment back-ref not found");
             }
             advActAField = f3807aCandidate;
             advActAField.setAccessible(true);
 
             // Workspace fields/methods
-            wsJ = workspaceClass.getField("j");          // static, public
-            wsH = workspaceClass.getDeclaredField("h");  wsH.setAccessible(true);
-            wsG = workspaceClass.getDeclaredField("g");  wsG.setAccessible(true);
-            wsI = workspaceClass.getDeclaredField("i");  wsI.setAccessible(true);
-            wsC = workspaceClass.getDeclaredField("c");  wsC.setAccessible(true);
+            String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsDataSourceName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            String wsMaxKeyName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "h", loader);
+            String wsCurrentKeyName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "g", loader);
+            String wsDateName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "i", loader);
+wsJ = workspaceClass.getField(wsSingletonName);          // static, public
+            wsH = workspaceClass.getDeclaredField(wsMaxKeyName);  wsH.setAccessible(true);
+            wsG = workspaceClass.getDeclaredField(wsCurrentKeyName);  wsG.setAccessible(true);
+            wsI = workspaceClass.getDeclaredField(wsDateName);  wsI.setAccessible(true);
+            wsC = workspaceClass.getDeclaredField(wsDataSourceName);  wsC.setAccessible(true);
             wsGMethod = workspaceClass.getDeclaredMethod("g", long.class, Object.class);
             wsGMethod.setAccessible(true);
             wsIMethod = workspaceClass.getDeclaredMethod("i");
             wsIMethod.setAccessible(true);
-
-            // ma.a.m(Date) → formatted timestamp String
-            maAMMethod = maAClass.getDeclaredMethod("m", dateClass);
-            maAMMethod.setAccessible(true);
+// Timestamp formatter: qtrun ma.a.m(Date); gplay v8.a.c(Date)
+            try {
+                maAMMethod = ClassMapping.getDeclaredMethod(maAClass, "ma.a", "m", loader, dateClass);
+                maAMMethod.setAccessible(true);
+} catch (NoSuchMethodException nsme) {
+                try {
+                    Class<?> fallbackFormatter = Class.forName("v8.a", false, loader);
+                    maAMMethod = fallbackFormatter.getDeclaredMethod("c", dateClass);
+                    maAMMethod.setAccessible(true);
+} catch (Throwable t) {
+                    Log.w(TAG, "GranularSeekBarHook: timestamp formatter not found, continuing without label sync: " + t);
+                }
+            }
 
             reflectionReady = true;
+            Log.i(TAG, "initReflection ready");
         } catch (Exception e) {
             Log.e(TAG, "initReflection failed: " + e);
         }
@@ -151,15 +181,15 @@ public class GranularSeekBarHook {
             Log.e(TAG, "install skipped — reflection not ready");
             return;
         }
-
-        xposed.hook(onCreateViewMethod).intercept(new Hooker() {
+        final boolean gplay = FlavorDetector.isGplay(loader);
+xposed.hook(onCreateViewMethod).intercept(new Hooker() {
             @Override
             public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                 Object result = chain.proceed();
                 try {
                     Object fragment = chain.getThisObject();
                     SeekBar seekBar = (SeekBar) fragmentSeekBarField.get(fragment);
-                    if (seekBar == null) {
+if (seekBar == null) {
                         Log.w(TAG, "seekBar field is null after onCreateView");
                         return result;
                     }
@@ -168,10 +198,10 @@ public class GranularSeekBarHook {
                     float thresh1 = THRESHOLD_1_DP * density;
                     float thresh2 = THRESHOLD_2_DP * density;
                     seekBar.setOnTouchListener(new GranularTouchListener(
-                            seekBar, fragment, thresh1, thresh2,
+                            seekBar, fragment, thresh1, thresh2, gplay,
                             wsJ, wsH, wsG, wsI, wsC, wsGMethod, wsIMethod,
                             fragmentYField, advActAField, fragmentZField,
-                            fragmentI0Method, maAMMethod));
+                            maAMMethod));
                 } catch (Throwable t) {
                     Log.w(TAG, "failed to attach granular listener: " + t);
                 }
@@ -179,7 +209,24 @@ public class GranularSeekBarHook {
             }
         });
 
-        Log.i(TAG, "GranularSeekBarHook: installed");
+        // Suppress external fragment thumb-sync calls while the user is dragging.
+        // On gplay the replay fragment receives more aggressive workspace updates
+        // that call i0()/h0(float), which would otherwise yank the thumb back to
+        // the latest position during a drag. On qtrun the guard is intentionally
+        // disabled so behaviour stays exactly as before.
+        if (gplay) {
+            xposed.hook(fragmentI0Method).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (isDragging) {
+return null;
+                    }
+                    return chain.proceed();
+                }
+            });
+        }
+
+        Log.i(TAG, "GranularSeekBarHook: installed; guard=" + gplay);
     }
 
     // =========================================================================
@@ -192,6 +239,7 @@ public class GranularSeekBarHook {
         private final Object  fragment;     // k8.f instance
         private final float   thresh1;
         private final float   thresh2;
+        private final boolean gplay;        // true on gplay (guard enabled)
 
         // Workspace reflection handles (passed from outer class)
         private final Field  wsJ, wsH, wsG, wsI, wsC;
@@ -199,7 +247,7 @@ public class GranularSeekBarHook {
 
         // Fragment reflection handles
         private final Field  fragmentYField, advActAField, fragmentZField;
-        private final Method fragmentI0Method, maAMMethod;
+        private final Method maAMMethod;
 
         // ── per-drag state ───────────────────────────────────────────────────
         private float touchDownY         = 0f;
@@ -220,15 +268,16 @@ public class GranularSeekBarHook {
         private boolean inFineZone       = false;
 
         GranularTouchListener(
-                SeekBar seekBar, Object fragment, float thresh1, float thresh2,
+                SeekBar seekBar, Object fragment, float thresh1, float thresh2, boolean gplay,
                 Field wsJ, Field wsH, Field wsG, Field wsI, Field wsC,
                 Method wsGMethod, Method wsIMethod,
                 Field fragmentYField, Field advActAField, Field fragmentZField,
-                Method fragmentI0Method, Method maAMMethod) {
+                Method maAMMethod) {
             this.seekBar         = seekBar;
             this.fragment        = fragment;
             this.thresh1         = thresh1;
             this.thresh2         = thresh2;
+            this.gplay           = gplay;
             this.wsJ             = wsJ;
             this.wsH             = wsH;
             this.wsG             = wsG;
@@ -239,17 +288,16 @@ public class GranularSeekBarHook {
             this.fragmentYField  = fragmentYField;
             this.advActAField    = advActAField;
             this.fragmentZField  = fragmentZField;
-            this.fragmentI0Method = fragmentI0Method;
             this.maAMMethod      = maAMMethod;
         }
 
         @Override
         public boolean onTouch(View v, MotionEvent event) {
             int action = event.getActionMasked();
-
-            switch (action) {
+switch (action) {
 
                 case MotionEvent.ACTION_DOWN: {
+                    if (gplay) isDragging = true;
                     touchDownY        = event.getY();
                     anchorX           = event.getX();
                     anchorKeyD        = (double) currentKey();
@@ -257,7 +305,7 @@ public class GranularSeekBarHook {
                     inFineZone        = false;
                     lastProgressZone1 = seekBar.getProgress();
                     lastKeyFine       = currentKey();
-                    // Forward DOWN so SeekBar enters drag mode (mIsDragging=true).
+// Forward DOWN so SeekBar enters drag mode (mIsDragging=true).
                     seekBar.onTouchEvent(event);
                     return true;
                 }
@@ -275,12 +323,12 @@ public class GranularSeekBarHook {
                         // Anchor key = where we actually are right now.
                         anchorKeyD = (double) currentKey();
                         lastDivisor = divisor;
-                    }
+}
 
                     inFineZone = (divisor > 1f);
 
                     float barUsable = barUsable();
-                    if (barUsable <= 0f) return true;
+if (barUsable <= 0f) return true;
 
                     float dxPx = event.getX() - anchorX;
 
@@ -297,7 +345,7 @@ public class GranularSeekBarHook {
                                 anchorKeyD / (maxK > 0 ? maxK : 1) * max + dxProgress);
                         newProgress = Math.max(0, Math.min(max, newProgress));
                         lastProgressZone1 = newProgress;
-                        forwardAtProgress(MotionEvent.ACTION_MOVE, event, newProgress);
+forwardAtProgress(MotionEvent.ACTION_MOVE, event, newProgress);
                     } else {
                         // ── Zones 2/3: direct Workspace key seek ────────────
                         // Compute key delta in full key-space, then divide.
@@ -307,7 +355,7 @@ public class GranularSeekBarHook {
                         double scaledKey = anchorKeyD + dxKey / divisor;
                         long   newKey    = Math.max(0, Math.min(maxK, Math.round(scaledKey)));
                         lastKeyFine = newKey;
-                        seekWorkspace(newKey);
+seekWorkspace(newKey);
                         updateSeekBarThumb();
                         updateTimestampLabel();
                     }
@@ -316,21 +364,25 @@ public class GranularSeekBarHook {
 
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL: {
-                    if (!inFineZone) {
-                        forwardAtProgress(action, event, lastProgressZone1);
-                    } else {
-                        // Finalise at the last fine key; send synthetic UP so
-                        // SeekBar clears mIsDragging / pressed state cleanly.
-                        seekWorkspace(lastKeyFine);
-                        updateSeekBarThumb();
-                        updateTimestampLabel();
-                        float safeY = seekBar.getHeight() / 2f;
-                        MotionEvent synth = MotionEvent.obtain(
-                                event.getDownTime(), event.getEventTime(),
-                                action, scaledXForKey(lastKeyFine), safeY,
-                                event.getMetaState());
-                        try { seekBar.onTouchEvent(synth); }
-                        finally { synth.recycle(); }
+                    try {
+if (!inFineZone) {
+                            forwardAtProgress(action, event, lastProgressZone1);
+                        } else {
+                            // Finalise at the last fine key; send synthetic UP so
+                            // SeekBar clears mIsDragging / pressed state cleanly.
+                            seekWorkspace(lastKeyFine);
+                            updateSeekBarThumb();
+                            updateTimestampLabel();
+                            float safeY = seekBar.getHeight() / 2f;
+                            MotionEvent synth = MotionEvent.obtain(
+                                    event.getDownTime(), event.getEventTime(),
+                                    action, scaledXForKey(lastKeyFine), safeY,
+                                    event.getMetaState());
+                            try { seekBar.onTouchEvent(synth); }
+                            finally { synth.recycle(); }
+                        }
+                    } finally {
+                        if (gplay) isDragging = false;
                     }
                     return true;
                 }
@@ -346,7 +398,8 @@ public class GranularSeekBarHook {
             try {
                 Object ws = wsJ.get(null);
                 if (ws == null) return 0L;
-                return wsG.getLong(ws);
+                long v = wsG.getLong(ws);
+return v;
             } catch (Throwable t) { return 0L; }
         }
 
@@ -354,7 +407,8 @@ public class GranularSeekBarHook {
             try {
                 Object ws = wsJ.get(null);
                 if (ws == null) return 0L;
-                return wsH.getLong(ws);
+                long v = wsH.getLong(ws);
+return v;
             } catch (Throwable t) { return 0L; }
         }
 
@@ -370,7 +424,7 @@ public class GranularSeekBarHook {
                 Object targetFragment = (callbackHolder != null)
                         ? advActAField.get(callbackHolder)
                         : fragment;
-                wsGMethod.invoke(ws, key, targetFragment);
+wsGMethod.invoke(ws, key, targetFragment);
             } catch (Throwable t) {
                 Log.w(TAG, "seekWorkspace failed: " + t, t);
             }
@@ -382,8 +436,8 @@ public class GranularSeekBarHook {
                 Object ws = wsJ.get(null);
                 if (ws == null) return;
                 float fraction = (float) wsIMethod.invoke(ws);
-                if (fraction >= 0f) {
-                    fragmentI0Method.invoke(fragment, fraction);
+if (fraction >= 0f) {
+                    seekBar.setProgress(Math.round(fraction * seekBar.getMax()));
                 }
             } catch (Throwable t) {
                 Log.w(TAG, "updateSeekBarThumb failed: " + t);
@@ -404,7 +458,7 @@ public class GranularSeekBarHook {
                 TextView tv = (TextView) fragmentZField.get(targetFragment);
                 if (tv == null) return;
                 String text = (String) maAMMethod.invoke(null, date);
-                tv.setText(text);
+tv.setText(text);
             } catch (Throwable t) {
                 Log.w(TAG, "updateTimestampLabel failed: " + t);
             }

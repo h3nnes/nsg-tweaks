@@ -7,6 +7,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
@@ -28,7 +29,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *
  * NSG behaviour (unhooked):
  *   t7.e.b() case 4: shows wait_progress_layout ("Loading <file> …")
- *   a4.h.e() case 5: calls AdvancedActivity.K() → sets layout GONE, then
+ *   a4.h.e() case 5: calls AdvancedActivity.K() -> sets layout GONE, then
  *                    populates Workspace, calls M() and invalidateOptionsMenu().
  *
  * Strategy — three hooks that work together:
@@ -40,12 +41,12 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *
  * Prong B: AdvancedActivity.K() intercept.
  *   Uses Workspace.c (DataSource field) to distinguish the two K() callers:
- *   • DataSource == null  → called from a4.h.e() case 5 during file loading
+ *   • DataSource == null  -> called from a4.h.e() case 5 during file loading
  *     (workspace.c() clears it first; workspace.f() sets it after K()).
- *     → Suppress K(), keep bar visible.
- *   • DataSource != null  → called from t7.e.e() case 1 (user stopped replay).
+ *     -> Suppress K(), keep bar visible.
+ *   • DataSource != null  -> called from t7.e.e() case 1 (user stopped replay).
  *     g0.G() never clears the DataSource, so it remains set.
- *     → Allow K(), clear replayActive so save-log / live mode resume normally.
+ *     -> Allow K(), clear replayActive so save-log / live mode resume normally.
  *
  * Prong C: t7.g0.E() before-hook (start-new-test).
  *   When menu_open_new_test is tapped in replay mode, NSG calls g0.D(false) then
@@ -90,6 +91,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 public class ReplayStatusBarHook {
 
     private static final String TAG = "NSGBandHook";
+    private static final String REPLAY_TAG = "NSGBandHook:ReplayBar";
 
     /**
      * True while a log file is loaded and being replayed.
@@ -112,24 +114,27 @@ public class ReplayStatusBarHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // a4.h fields — runtime names are a/b/c (JADX renames them to f76a/f77b/f78c)
-    private Field f76a;  // int   — switch case       (runtime: "a")
-    private Field f77b;  // Object — AdvancedActivity (runtime: "b")
-    private Field f78c;  // Object — filename String  (runtime: "c")
+    // a4.h fields — runtime names are a/b/c on qtrun, b/d/c on gplay
+    private Field f76a;  // int   — switch case
+    private Field f77b;  // Object — AdvancedActivity
+    private Field f78c;  // Object — filename String
 
-    // Workspace fields (used to detect live→replay transition)
+    // Workspace fields (used to detect live->replay transition)
     private Field wsSingleton;
     private Field wsDataSource;
 
     // Prong E: t7.q menu handler bypass
     private Field advActivityKField;    // AdvancedActivity.K — the logfile picker (d.d)
-    private Method pickerCMethod;       // d.d.c(Object) — launches file picker
+    private Method pickerCMethod;       // d.d.c(Object) [qtrun] / d.d.a(Object) [gplay]
     private Method appDMethod;          // com.qtrun.sys.Application.d() — subscription check
     private Method drawerDMethod;       // DrawerLayout.d(boolean) — closeDrawers()
 
     // Prong F: t7.e.b(Object) — runtime field names for the discriminator and Activity
-    private Field teDiscriminator;      // t7.e.a (int, renamed f7749a by JADX)
-    private Field teActivity;           // t7.e.b (AdvancedActivity, renamed f7750b by JADX)
+    private Field teDiscriminator;      // t7.e.a (int) [qtrun] / c6.f.b (int) [gplay]
+    private Field teActivity;           // t7.e.b (AdvancedActivity) [qtrun] / c6.f.c [gplay]
+
+    // a4.h / c6.h synthetic switch case that signals a successful log load.
+    private int loadCompleteCase;
 
     private boolean reflectionReady = false;
 
@@ -141,46 +146,58 @@ public class ReplayStatusBarHook {
 
     private void initReflection() {
         try {
-            Class<?> hClass  = loader.loadClass("a4.h");
-            Class<?> wsClass = loader.loadClass("com.qtrun.sys.Workspace");
-
-            f76a = hClass.getDeclaredField("a"); f76a.setAccessible(true);  // int discriminator
-            f77b = hClass.getDeclaredField("b"); f77b.setAccessible(true);  // AdvancedActivity
-            f78c = hClass.getDeclaredField("c"); f78c.setAccessible(true);  // filename String
-
-            wsSingleton  = wsClass.getField("j");
-            wsDataSource = wsClass.getField("c");
-
-            // Prong E reflection
-            Class<?> advActivityClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
-            advActivityKField = advActivityClass.getDeclaredField("K");
+            Class<?> hClass  = ClassMapping.loadClass("a4.h", loader);
+            Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            if (hClass == null || wsClass == null) {
+                Log.i(REPLAY_TAG, "initReflection: a4.h or Workspace missing, skipping");
+                return;
+            }
+String hDiscriminator = ClassMapping.runtimeFieldName("a4.h", "a", loader);
+            String hActivity      = ClassMapping.runtimeFieldName("a4.h", "b", loader);
+            String hFilename      = ClassMapping.runtimeFieldName("a4.h", "c", loader);
+            f76a = hClass.getDeclaredField(hDiscriminator); f76a.setAccessible(true);  // int discriminator
+            f77b = hClass.getDeclaredField(hActivity);      f77b.setAccessible(true);  // AdvancedActivity
+            f78c = hClass.getDeclaredField(hFilename);      f78c.setAccessible(true);  // filename String
+String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsDataSourceName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsSingleton  = wsClass.getField(wsSingletonName);
+            wsDataSource = wsClass.getField(wsDataSourceName);
+// Prong E reflection
+            Class<?> advActivityClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
+            String advKFieldName = ClassMapping.runtimeFieldName("com.qtrun.nsg.AdvancedActivity", "K", loader);
+            advActivityKField = advActivityClass.getDeclaredField(advKFieldName);
             advActivityKField.setAccessible(true);
-
-            Class<?> ddClass = loader.loadClass("d.d");
-            pickerCMethod = ddClass.getDeclaredMethod("c", Object.class);
+Class<?> ddClass = ClassMapping.loadClass("d.d", loader);
+            pickerCMethod = ClassMapping.getDeclaredMethod(ddClass, "d.d", "c", loader, Object.class);
             pickerCMethod.setAccessible(true);
-
-            Class<?> appClass = loader.loadClass("com.qtrun.sys.Application");
-            appDMethod = appClass.getDeclaredMethod("d");
+Class<?> appClass = ClassMapping.loadClass("com.qtrun.sys.Application", loader);
+            appDMethod = ClassMapping.getDeclaredMethod(appClass, "com.qtrun.sys.Application", "d", loader);
             // d() is public static synchronized — accessible without setAccessible
-
-            Class<?> drawerClass = loader.loadClass("androidx.drawerlayout.widget.DrawerLayout");
-            drawerDMethod = drawerClass.getMethod("d", boolean.class);
-
-            // Prong F reflection — t7.e fields (runtime names "a" and "b")
-            Class<?> teClass = loader.loadClass("t7.e");
-            teDiscriminator = teClass.getDeclaredField("a"); teDiscriminator.setAccessible(true);
-            teActivity      = teClass.getDeclaredField("b"); teActivity.setAccessible(true);
-
-            reflectionReady = true;
+Class<?> drawerClass = ClassMapping.loadClass("androidx.drawerlayout.widget.DrawerLayout", loader);
+            drawerDMethod = ClassMapping.getMethod(drawerClass, "androidx.drawerlayout.widget.DrawerLayout",
+                    "d", loader, boolean.class);
+// Prong F reflection — t7.e discriminator / activity fields
+            Class<?> teClass = ClassMapping.loadClass("t7.e", loader);
+            if (teClass == null) {
+                Log.i(REPLAY_TAG, "initReflection: t7.e not available, skipping Prong F");
+                return;
+            }
+            String teDiscName = ClassMapping.runtimeFieldName("t7.e", "a", loader);
+            String teActName  = ClassMapping.runtimeFieldName("t7.e", "b", loader);
+            teDiscriminator = teClass.getDeclaredField(teDiscName); teDiscriminator.setAccessible(true);
+            teActivity      = teClass.getDeclaredField(teActName);  teActivity.setAccessible(true);
+// a4.h / c6.h switch case for successful log load (qtrun=5, gplay=0).
+            loadCompleteCase = ClassMapping.runtimeIntConstant("a4.h|LOAD_COMPLETE_CASE", 5, loader);
+reflectionReady = true;
+            Log.i(REPLAY_TAG, "initReflection: reflection ready");
         } catch (Exception e) {
-            Log.e(TAG, "initReflection failed: " + e);
+            Log.e(REPLAY_TAG, "initReflection failed: " + e);
         }
     }
 
     public void install() {
         if (!reflectionReady) {
-            Log.e(TAG, "install skipped — reflection not ready");
+            Log.e(REPLAY_TAG, "install skipped — reflection not ready");
             return;
         }
         installProngA();
@@ -190,7 +207,7 @@ public class ReplayStatusBarHook {
         installProngE();
         installProngF();
         installProngG();
-        Log.i(TAG, "ReplayStatusBarHook: installed (7 prongs)");
+        Log.i(REPLAY_TAG, "installed (7 prongs), loadCompleteCase=" + loadCompleteCase);
     }
 
     // -----------------------------------------------------------------------
@@ -198,27 +215,26 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngA() {
         try {
-            Class<?> hClass  = loader.loadClass("a4.h");
-            Method   eMethod = hClass.getMethod("e", Object.class);
-
-            xposed.hook(eMethod).intercept(new Hooker() {
+            Class<?> hClass  = ClassMapping.loadClass("a4.h", loader);
+            Method   eMethod = ClassMapping.getMethod(hClass, "a4.h", "e", loader, Object.class);
+xposed.hook(eMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     try {
                         int switchCase = f76a.getInt(chain.getThisObject());
-                        if (switchCase != 5) return result;
+if (switchCase != loadCompleteCase) return result;
 
                         Object dataSourceArg = chain.getArg(0);
                         if (dataSourceArg == null) {
                             // Load failed — make sure flag is clear
-                            replayActive = false;
+replayActive = false;
                             return result;
                         }
 
                         Activity activity = (Activity) f77b.get(chain.getThisObject());
                         String   filename = (String)   f78c.get(chain.getThisObject());
-                        if (activity == null || filename == null) return result;
+if (activity == null || filename == null) return result;
 
                         // Mark replay active BEFORE showing bar so Prong B won't
                         // suppress an immediate re-layout triggered by setVisibility.
@@ -226,15 +242,15 @@ public class ReplayStatusBarHook {
                         replayActive = true;
                         replayBarDismissed = false;
                         replayActivity = new WeakReference<>(activity);
-                        showReplayBar(activity, filename);
+showReplayBar(activity, filename);
                     } catch (Throwable t) {
-                        Log.w(TAG, "Prong A failed: " + t);
+                        Log.w(REPLAY_TAG, "Prong A failed: " + t);
                     }
                     return result;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "installProngA failed: " + e);
+            Log.e(REPLAY_TAG, "installProngA failed: " + e);
         }
     }
 
@@ -245,17 +261,17 @@ public class ReplayStatusBarHook {
     // How to distinguish the two K() callers:
     //   • K() called from a4.h.e() case 5 (file loading):
     //       workspace.c (DataSource) is NULL — load hasn't set it yet.
-    //       → Suppress K(), keep the bar visible.
+    //       -> Suppress K(), keep the bar visible.
     //   • K() called from t7.e.e() case 1 (user tapped stop/save):
     //       g0.G() ran but never clears workspace.c; DataSource is still set.
-    //       → Allow K(), clear replayActive so normal behaviour resumes.
+    //       -> Allow K(), clear replayActive so normal behaviour resumes.
     // -----------------------------------------------------------------------
     private void installProngB() {
         try {
-            Class<?> activityClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
-            Method   kMethod       = activityClass.getDeclaredMethod("K");
-
-            xposed.hook(kMethod).intercept(new Hooker() {
+            Class<?> activityClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
+            Method   kMethod       = ClassMapping.getDeclaredMethod(activityClass,
+                    "com.qtrun.nsg.AdvancedActivity", "K", loader);
+xposed.hook(kMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     if (!replayActive) {
@@ -271,17 +287,16 @@ public class ReplayStatusBarHook {
                             dataSourceNull = (wsDataSource.get(ws) == null);
                         }
                     } catch (Throwable t) {
-                        Log.w(TAG, "Prong B: workspace check failed: " + t);
+                        Log.w(REPLAY_TAG, "Prong B: workspace check failed: " + t);
                     }
-
-                    if (dataSourceNull) {
+if (dataSourceNull) {
                         // K() is called during file loading — DataSource not yet assigned.
                         // Suppress it, clear FLAG_NOT_TOUCHABLE so UI stays interactive.
                         try {
                             Activity activity = (Activity) chain.getThisObject();
                             activity.getWindow().clearFlags(16);
-                        } catch (Throwable t) {
-                            Log.w(TAG, "Prong B: clearFlags failed: " + t);
+} catch (Throwable t) {
+                            Log.w(REPLAY_TAG, "Prong B: clearFlags failed: " + t);
                             return chain.proceed(); // fall back on error
                         }
                         return null; // skip original K()
@@ -289,12 +304,12 @@ public class ReplayStatusBarHook {
                         // K() is called because user stopped replay (DataSource still live).
                         // Allow it to run so the bar hides and save-log works normally.
                         replayActive = false;
-                        return chain.proceed();
+return chain.proceed();
                     }
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "installProngB failed: " + e);
+            Log.e(REPLAY_TAG, "installProngB failed: " + e);
         }
     }
 
@@ -302,7 +317,7 @@ public class ReplayStatusBarHook {
     // Prong C: t7.g0.E() — start-new-test, the primary "end replay" signal.
     //
     // When menu_open_new_test is tapped in replay mode, NSG calls:
-    //   J() → g0.D(false) → g0.E()
+    //   J() -> g0.D(false) -> g0.E()
     // It NEVER calls K(), so Prong B never fires and replayActive stays true.
     // Hook g0.E() before it runs: clear replayActive and hide the bar.
     // g0.E() runs on the main thread, so we can touch views directly.
@@ -310,29 +325,32 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngC() {
         try {
-            Class<?> h0Class  = loader.loadClass("t7.g0");
-            Method   eMethod  = h0Class.getDeclaredMethod("E");
-
-            xposed.hook(eMethod).intercept(new Hooker() {
+            Class<?> h0Class  = ClassMapping.loadClass("t7.g0", loader);
+            if (h0Class == null) {
+                Log.i(REPLAY_TAG, "installProngC: t7.g0 not available, skipping Prong C");
+                return;
+            }
+            Method   eMethod  = ClassMapping.getDeclaredMethod(h0Class, "t7.g0", "E", loader);
+xposed.hook(eMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    if (replayActive) {
+if (replayActive) {
                         replayActive = false;
-                        hideReplayBar();
+hideReplayBar();
                     }
                     return chain.proceed();
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "installProngC failed: " + e);
+            Log.e(REPLAY_TAG, "installProngC failed: " + e);
         }
     }
 
     // -----------------------------------------------------------------------
     // Prong D: t7.w0.c(Activity) — graceful-exit path in replay mode.
     //
-    // In live mode:  menu_exit → g0.A()==true → t7.b runnable → activity.I() → w0.c()
-    // In replay mode: menu_exit → g0.A()==false → w0.c() DIRECTLY (no I() call)
+    // In live mode:  menu_exit -> g0.A()==true -> t7.b runnable -> activity.I() -> w0.c()
+    // In replay mode: menu_exit -> g0.A()==false -> w0.c() DIRECTLY (no I() call)
     //
     // Fix: before w0.c() proceeds, show the spinner bar so the user sees the
     //      normal "Stopping…" loading animation during the ~250 ms before finish().
@@ -340,29 +358,32 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngD() {
         try {
-            Class<?> x0Class   = loader.loadClass("t7.w0");
-            Class<?> actClass  = loader.loadClass("android.app.Activity");
-            Method   cMethod   = x0Class.getDeclaredMethod("c", actClass);
-
-            xposed.hook(cMethod).intercept(new Hooker() {
+            Class<?> x0Class   = ClassMapping.loadClass("t7.w0", loader);
+            Class<?> actClass  = ClassMapping.loadClass("android.app.Activity", loader);
+            if (x0Class == null || actClass == null) {
+                Log.i(REPLAY_TAG, "installProngD: t7.w0 or Activity missing, skipping Prong D");
+                return;
+            }
+            Method   cMethod   = ClassMapping.getDeclaredMethod(x0Class, "t7.w0", "c", loader, actClass);
+xposed.hook(cMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    if (replayActive) {
+if (replayActive) {
                         replayActive = false; // clear first so Prong B doesn't suppress K()
                         try {
                             Activity activity = (Activity) chain.getArg(0);
                             if (activity != null && !activity.isFinishing()) {
-                                showExitSpinner(activity);
+showExitSpinner(activity);
                             }
                         } catch (Throwable t) {
-                            Log.w(TAG, "Prong D: showExitSpinner failed: " + t);
+                            Log.w(REPLAY_TAG, "Prong D: showExitSpinner failed: " + t);
                         }
                     }
                     return chain.proceed();
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "installProngD failed: " + e);
+            Log.e(REPLAY_TAG, "installProngD failed: " + e);
         }
     }
 
@@ -380,19 +401,22 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngE() {
         try {
-            Class<?> tqClass      = loader.loadClass("t7.p");
-            Class<?> menuItemClass = loader.loadClass("android.view.MenuItem");
-            Method   aMethod       = tqClass.getDeclaredMethod("a", menuItemClass);
+            Class<?> tqClass      = ClassMapping.loadClass("t7.p", loader);
+            Class<?> menuItemClass = ClassMapping.loadClass("android.view.MenuItem", loader);
+            if (tqClass == null || menuItemClass == null) {
+                Log.i(REPLAY_TAG, "installProngE: t7.p or MenuItem missing, skipping Prong E");
+                return;
+            }
+            Method   aMethod       = ClassMapping.getDeclaredMethod(tqClass, "t7.p", "a", loader, menuItemClass);
             aMethod.setAccessible(true);
-
-            xposed.hook(aMethod).intercept(new Hooker() {
+xposed.hook(aMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     if (!replayActive) {
                         return chain.proceed();
                     }
                     try {
-                        android.view.MenuItem item = (android.view.MenuItem) chain.getArg(0);
+                        MenuItem item = (MenuItem) chain.getArg(0);
                         if (item == null) return chain.proceed();
 
                         // Resolve menu_load_logfile resource id at runtime
@@ -402,7 +426,7 @@ public class ReplayStatusBarHook {
 
                         int loadLogfileId = activity.getResources().getIdentifier(
                                 "menu_load_logfile", "id", "com.qtrun.QuickTest");
-                        if (loadLogfileId == 0 || item.getItemId() != loadLogfileId) {
+if (loadLogfileId == 0 || item.getItemId() != loadLogfileId) {
                             return chain.proceed(); // not our item — proceed normally
                         }
 
@@ -412,56 +436,51 @@ public class ReplayStatusBarHook {
                         try {
                             subscribed = (boolean) appDMethod.invoke(null);
                         } catch (Throwable t) {
-                            Log.w(TAG, "Prong E: Application.d() failed: " + t);
+                            Log.w(REPLAY_TAG, "Prong E: Application.d() failed: " + t);
                         }
-
-                        if (subscribed) {
+if (subscribed) {
                             Object kPicker = advActivityKField.get(activity);
                             if (kPicker != null) {
-                                pickerCMethod.invoke(kPicker, new Object[]{new String[]{"*/*"}});
+pickerCMethod.invoke(kPicker, new Object[]{new String[]{"*/*"}});
                             } else {
-                                Log.w(TAG, "Prong E: advancedActivity.K is null");
+                                Log.w(REPLAY_TAG, "Prong E: advancedActivity.K is null");
                                 return chain.proceed(); // fall back
                             }
                         } else {
                             // Not subscribed — show the upgrade dialog via w0.e(activity)
                             try {
-                                Class<?> w0Class  = loader.loadClass("t7.w0");
-                                Method   eMethod  = w0Class.getDeclaredMethod("e",
-                                        loader.loadClass("com.qtrun.nsg.AdvancedActivity"));
+                                Class<?> w0Class  = ClassMapping.loadClass("t7.w0", loader);
+                                Class<?> advClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
+                                Method   eMethod  = ClassMapping.getDeclaredMethod(w0Class, "t7.w0", "e", loader, advClass);
                                 eMethod.setAccessible(true);
-                                eMethod.invoke(null, activity);
+eMethod.invoke(null, activity);
                             } catch (Throwable t) {
-                                Log.w(TAG, "Prong E: w0.e() fallback failed: " + t);
+                                Log.w(REPLAY_TAG, "Prong E: w0.e() fallback failed: " + t);
                             }
                         }
 
                         // Close the drawer (d(false) == closeDrawers())
                         try {
-                            // The DrawerLayout is a field on t7.p — find it via the chain's this-object
-                            java.lang.reflect.Field[] fields = chain.getThisObject().getClass().getDeclaredFields();
-                            for (java.lang.reflect.Field f : fields) {
-                                f.setAccessible(true);
-                                Object val = f.get(chain.getThisObject());
-                                if (val != null && val.getClass().getName().equals(
-                                        "androidx.drawerlayout.widget.DrawerLayout")) {
-                                    drawerDMethod.invoke(val, false);
-                                    break;
-                                }
+                            String drawerFieldName = ClassMapping.runtimeFieldName("t7.p", "a", loader);
+                            Field drawerField = chain.getThisObject().getClass().getDeclaredField(drawerFieldName);
+                            drawerField.setAccessible(true);
+                            Object drawerLayout = drawerField.get(chain.getThisObject());
+                            if (drawerLayout != null) {
+drawerDMethod.invoke(drawerLayout, false);
                             }
                         } catch (Throwable t) {
-                            Log.w(TAG, "Prong E: closeDrawers failed: " + t);
+                            Log.w(REPLAY_TAG, "Prong E: closeDrawers failed: " + t);
                         }
 
                         return true; // consumed — skip original a() body
                     } catch (Throwable t) {
-                        Log.w(TAG, "Prong E failed: " + t);
+                        Log.w(REPLAY_TAG, "Prong E failed: " + t);
                         return chain.proceed(); // fail safe
                     }
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "installProngE failed: " + e);
+            Log.e(REPLAY_TAG, "installProngE failed: " + e);
         }
     }
 
@@ -479,46 +498,36 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngF() {
         try {
-            Class<?> teClass  = loader.loadClass("t7.e");
-            Method   bMethod  = teClass.getDeclaredMethod("b", Object.class);
+            Class<?> teClass  = ClassMapping.loadClass("t7.e", loader);
+            if (teClass == null) {
+                Log.i(REPLAY_TAG, "installProngF: t7.e not available, skipping Prong F");
+                return;
+            }
+            Method   bMethod  = ClassMapping.getDeclaredMethod(teClass, "t7.e", "b", loader, Object.class);
             bMethod.setAccessible(true);
-
-            xposed.hook(bMethod).intercept(new Hooker() {
+xposed.hook(bMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     if (replayActive) {
                         try {
                             int discriminator = teDiscriminator.getInt(chain.getThisObject());
-                            if (discriminator == 4 && chain.getArg(0) != null) {
+                            Object arg = chain.getArg(0);
+if (discriminator == 4 && arg != null) {
                                 // About to show the "Loading…" bar — restore spinner visibility
                                 Activity activity = (Activity) teActivity.get(chain.getThisObject());
                                 if (activity != null && !activity.isFinishing()) {
-                                    String pkg     = "com.qtrun.QuickTest";
-                                    int layoutId   = activity.getResources().getIdentifier(
-                                            "wait_progress_layout", "id", pkg);
-                                    int progressId = activity.getResources().getIdentifier(
-                                            "wait_progress_bar", "id", pkg);
-                                    if (layoutId != 0 && progressId != 0) {
-                                        View layout = activity.findViewById(layoutId);
-                                        if (layout != null) {
-                                            View pb = layout.findViewById(progressId);
-                                            if (pb != null) {
-                                                activity.runOnUiThread(() ->
-                                                        pb.setVisibility(View.VISIBLE));
-                                            }
-                                        }
-                                    }
+                                    restoreProgressBarVisibility(activity);
                                 }
                             }
                         } catch (Throwable t) {
-                            Log.w(TAG, "Prong F: pre-restore failed: " + t);
+                            Log.w(REPLAY_TAG, "Prong F: pre-restore failed: " + t);
                         }
                     }
                     return chain.proceed();
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "installProngF failed: " + e);
+            Log.e(REPLAY_TAG, "installProngF failed: " + e);
         }
     }
 
@@ -533,11 +542,11 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngG() {
         try {
-            Class<?> advClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
-            Method iMethod = advClass.getDeclaredMethod("I", int.class);
+            Class<?> advClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
+            Method iMethod = ClassMapping.getDeclaredMethod(advClass,
+                    "com.qtrun.nsg.AdvancedActivity", "I", loader, int.class);
             iMethod.setAccessible(true);
-
-            xposed.hook(iMethod).intercept(new Hooker() {
+xposed.hook(iMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -550,17 +559,17 @@ public class ReplayStatusBarHook {
                         if (layout instanceof ViewGroup) {
                             View xBtn = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
                             if (xBtn != null) {
-                                xBtn.setVisibility(View.GONE);
+xBtn.setVisibility(View.GONE);
                             }
                         }
                     } catch (Throwable t) {
-                        Log.w(TAG, "Prong G failed: " + t);
+                        Log.w(REPLAY_TAG, "Prong G failed: " + t);
                     }
                     return result;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "installProngG failed: " + e);
+            Log.e(REPLAY_TAG, "installProngG failed: " + e);
         }
     }
 
@@ -568,10 +577,33 @@ public class ReplayStatusBarHook {
     // Helpers
     // -----------------------------------------------------------------------
 
+    /** Restore ProgressBar visibility inside wait_progress_layout before a second load. */
+    private void restoreProgressBarVisibility(Activity activity) {
+        try {
+            String pkg     = "com.qtrun.QuickTest";
+            int layoutId   = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
+            int progressId = activity.getResources().getIdentifier("wait_progress_bar",    "id", pkg);
+            if (layoutId == 0 || progressId == 0) {
+                Log.w(REPLAY_TAG, "restoreProgressBarVisibility: view ids not found");
+                return;
+            }
+            View layout = activity.findViewById(layoutId);
+            if (layout == null) return;
+            View pb = layout.findViewById(progressId);
+            if (pb != null) {
+                activity.runOnUiThread(() -> pb.setVisibility(View.VISIBLE));
+}
+        } catch (Throwable t) {
+            Log.w(REPLAY_TAG, "restoreProgressBarVisibility failed: " + t);
+        }
+    }
+
     /** Hide the replay bar using the stored Activity reference. */
     private void hideReplayBar() {
         Activity activity = replayActivity.get();
-        if (activity == null || activity.isFinishing()) return;
+        if (activity == null || activity.isFinishing()) {
+return;
+        }
         Runnable run = () -> {
             try {
                 String pkg     = "com.qtrun.QuickTest";
@@ -580,7 +612,7 @@ public class ReplayStatusBarHook {
                 if (layoutId == 0) return;
                 View layout = activity.findViewById(layoutId);
                 if (layout != null) {
-                    layout.setVisibility(View.GONE);
+layout.setVisibility(View.GONE);
                     // Restore spinner to VISIBLE so NSG's next "Loading…" phase works normally.
                     if (progressId != 0) {
                         View pb = layout.findViewById(progressId);
@@ -588,7 +620,7 @@ public class ReplayStatusBarHook {
                     }
                 }
             } catch (Throwable t) {
-                Log.w(TAG, "hideReplayBar failed: " + t);
+                Log.w(REPLAY_TAG, "hideReplayBar failed: " + t);
             }
         };
         if (Looper.myLooper() == Looper.getMainLooper()) {
@@ -604,19 +636,18 @@ public class ReplayStatusBarHook {
             int layoutId   = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
             int progressId = activity.getResources().getIdentifier("wait_progress_bar",    "id", pkg);
             int tipsId     = activity.getResources().getIdentifier("wait_progress_tips",   "id", pkg);
-
-            if (layoutId == 0 || progressId == 0 || tipsId == 0) {
-                Log.w(TAG, "showReplayBar: view ids not found");
+if (layoutId == 0 || progressId == 0 || tipsId == 0) {
+                Log.w(REPLAY_TAG, "showReplayBar: view ids not found");
                 return;
             }
 
             View layout = activity.findViewById(layoutId);
-            if (layout == null) { Log.w(TAG, "showReplayBar: layout not found"); return; }
+            if (layout == null) { Log.w(REPLAY_TAG, "showReplayBar: layout not found"); return; }
 
             View     progressBar = layout.findViewById(progressId);
             TextView tipsView    = (TextView) layout.findViewById(tipsId);
             if (progressBar == null || tipsView == null) {
-                Log.w(TAG, "showReplayBar: child views not found");
+                Log.w(REPLAY_TAG, "showReplayBar: child views not found");
                 return;
             }
 
@@ -675,21 +706,20 @@ public class ReplayStatusBarHook {
 
                     ll.addView(row);
                     layout.setTag("nsgmod_replay"); // mark as initialised
-                } catch (Throwable t) {
-                    Log.w(TAG, "showReplayBar: could not add X button: " + t);
+} catch (Throwable t) {
+                    Log.w(REPLAY_TAG, "showReplayBar: could not add X button: " + t);
                 }
             }
 
             layout.setVisibility(View.VISIBLE);
-
-            // Ensure the X button is visible when showing the replay bar
+// Ensure the X button is visible when showing the replay bar
             View xBtnRestore = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
             if (xBtnRestore != null) {
                 xBtnRestore.setVisibility(View.VISIBLE);
             }
 
         } catch (Throwable t) {
-            Log.w(TAG, "showReplayBar failed: " + t);
+            Log.w(REPLAY_TAG, "showReplayBar failed: " + t);
         }
     }
 
@@ -700,19 +730,18 @@ public class ReplayStatusBarHook {
             int layoutId   = activity.getResources().getIdentifier("wait_progress_layout", "id", pkg);
             int progressId = activity.getResources().getIdentifier("wait_progress_bar",    "id", pkg);
             int tipsId     = activity.getResources().getIdentifier("wait_progress_tips",   "id", pkg);
-
-            if (layoutId == 0 || progressId == 0 || tipsId == 0) {
-                Log.w(TAG, "showExitSpinner: view ids not found");
+if (layoutId == 0 || progressId == 0 || tipsId == 0) {
+                Log.w(REPLAY_TAG, "showExitSpinner: view ids not found");
                 return;
             }
 
             View layout = activity.findViewById(layoutId);
-            if (layout == null) { Log.w(TAG, "showExitSpinner: layout not found"); return; }
+            if (layout == null) { Log.w(REPLAY_TAG, "showExitSpinner: layout not found"); return; }
 
             View     progressBar = layout.findViewById(progressId);
             TextView tipsView    = (TextView) layout.findViewById(tipsId);
             if (progressBar == null || tipsView == null) {
-                Log.w(TAG, "showExitSpinner: child views not found");
+                Log.w(REPLAY_TAG, "showExitSpinner: child views not found");
                 return;
             }
 
@@ -726,14 +755,13 @@ public class ReplayStatusBarHook {
                 tipsView.setText("Stopping…");
             }
             layout.setVisibility(View.VISIBLE);
-
-            // Hide the X dismiss button if it was added by showReplayBar()
+// Hide the X dismiss button if it was added by showReplayBar()
             View xBtn = findViewWithTagRecursive((ViewGroup) layout, "nsgmod_replay_x");
             if (xBtn != null) {
                 xBtn.setVisibility(View.GONE);
             }
         } catch (Throwable t) {
-            Log.w(TAG, "showExitSpinner failed: " + t);
+            Log.w(REPLAY_TAG, "showExitSpinner failed: " + t);
         }
     }
 

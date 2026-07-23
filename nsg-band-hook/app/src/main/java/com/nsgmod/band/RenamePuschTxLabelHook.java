@@ -60,9 +60,9 @@ public class RenamePuschTxLabelHook {
 
     private void initReflection() {
         try {
-            Class<?> v6bClass = loader.loadClass("v6.b");
-            Class<?> k2aClass = loader.loadClass("k2.a");
-            veClass = loader.loadClass("v6.e");
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            veClass = ClassMapping.loadClass("v6.e", loader);
 
             v6bYField = v6bClass.getField("Y");
 
@@ -89,8 +89,13 @@ public class RenamePuschTxLabelHook {
 
     private void installForClass(String className) {
         try {
-            Class<?> targetClass = loader.loadClass(className);
-            Method l0Method = targetClass.getMethod("l0", Context.class);
+            Class<?> targetClass = ClassMapping.loadClass(className, loader);
+            if (targetClass == null) {
+                Log.i(TAG, "RenamePuschTxLabelHook: " + className
+                        + " not available on this flavor, skipping");
+                return;
+            }
+            Method l0Method = ClassMapping.getMethod(targetClass, className, "l0", loader, Context.class);
 
             xposed.hook(l0Method).intercept(new Hooker() {
                 @Override

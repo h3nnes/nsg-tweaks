@@ -83,11 +83,11 @@ public class NrSaCellColorHook {
 
     private void initReflection() {
         try {
-            vgClass = loader.loadClass("v6.g");
-            Class<?> v6aClass  = loader.loadClass("v6.a");
-            Class<?> v6bClass  = loader.loadClass("v6.b");
-            Class<?> k2aClass  = loader.loadClass("k2.a");
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            vgClass = ClassMapping.loadClass("v6.g", loader);
+            Class<?> v6aClass  = ClassMapping.loadClass("v6.a", loader);
+            Class<?> v6bClass  = ClassMapping.loadClass("v6.b", loader);
+            Class<?> k2aClass  = ClassMapping.loadClass("k2.a", loader);
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
 
             vgBindingsField = vgClass.getDeclaredField("f");
             vgBindingsField.setAccessible(true);
@@ -113,10 +113,9 @@ public class NrSaCellColorHook {
             v6aRowField = v6aClass.getDeclaredField("b");
             v6aRowField.setAccessible(true);
 
-            try {
-                rankBindingClass = loader.loadClass("d7.i$k");
-            } catch (ClassNotFoundException e2) {
-                Log.w(TAG, "NrSaCellColorHook: d7.i$k not found, Rank fallback disabled");
+            rankBindingClass = ClassMapping.loadClass("d7.i$k", loader);
+            if (rankBindingClass == null) {
+                Log.w(TAG, "NrSaCellColorHook: d7.i$k not available, Rank fallback disabled");
             }
 
             ready = true;
@@ -131,12 +130,12 @@ public class NrSaCellColorHook {
             return;
         }
         try {
-            Class<?> v6bClass = loader.loadClass("v6.b");
-            Class<?> k2aClass = loader.loadClass("k2.a");
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
 
             // Hook 1: v6.b.k0(k2.a) — update f8126i on all matching v6.g objects so that
             // any future c() call (e.g. fragment recreation) bakes the right color.
-            Method k0Method = v6bClass.getMethod("k0", k2aClass);
+            Method k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {

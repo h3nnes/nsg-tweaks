@@ -69,18 +69,22 @@ public class NrSaMimoFormatHook {
 
     private void initReflection() {
         try {
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAKeyField = sysAClass.getField("a");
 
-            Class<?> wsClass = loader.loadClass("com.qtrun.sys.Workspace");
-            dsClass = loader.loadClass("com.qtrun.sys.DataSource");
-            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
+            Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
 
-            wsJ = wsClass.getField("j");
-            wsG = wsClass.getDeclaredField("g"); wsG.setAccessible(true);
-            wsModuleIndex = wsClass.getField("a");
-            wsDataSource = wsClass.getField("c");
+            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsGName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "g", loader);
+            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsJ = wsClass.getField(wsJName);
+            wsG = wsClass.getDeclaredField(wsGName); wsG.setAccessible(true);
+            wsModuleIndex = wsClass.getField(wsAName);
+            wsDataSource = wsClass.getField(wsCName);
 
             dsGetProperty = dsClass.getMethod("getProperty", String.class, int.class);
             propBMethod = propClass.getMethod("b", long.class);
@@ -104,7 +108,11 @@ public class NrSaMimoFormatHook {
 
     private void installFormatterHook() {
         try {
-            Class<?> formatterClass = loader.loadClass("d7.i$c");
+            Class<?> formatterClass = ClassMapping.loadClass("d7.i$c", loader);
+            if (formatterClass == null) {
+                Log.i(TAG, "NrSaMimoFormatHook: d7.i$c not available, skipping formatter hook");
+                return;
+            }
             Method cMethod = formatterClass.getMethod("c", Object.class);
 
             xposed.hook(cMethod).intercept(new Hooker() {
@@ -146,7 +154,7 @@ public class NrSaMimoFormatHook {
 
     private void installGridValueLabelHook() {
         try {
-            Class<?> gridValueLabelClass = loader.loadClass("v6.g");
+            Class<?> gridValueLabelClass = ClassMapping.loadClass("v6.g", loader);
             Method aMethod = gridValueLabelClass.getMethod("a", long.class, dsClass, short.class);
 
             xposed.hook(aMethod).intercept(new Hooker() {

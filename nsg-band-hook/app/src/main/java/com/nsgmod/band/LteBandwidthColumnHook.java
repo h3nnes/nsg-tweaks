@@ -68,15 +68,24 @@ public class LteBandwidthColumnHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> dsClass   = loader.loadClass("com.qtrun.sys.DataSource");
-            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
-            Class<?> bbClass   = loader.loadClass("a8.b$b");
+            Class<?> wsClass   = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> dsClass   = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> bbClass   = ClassMapping.loadClass("a8.b$b", loader);
+            Class<?> k8cClass  = ClassMapping.loadClass("k8.c", loader);
+            if (wsClass == null || dsClass == null || propClass == null || iterClass == null
+                    || bbClass == null || k8cClass == null) {
+                Log.i(TAG, "LteBandwidthColumnHook: essential class missing, skipping");
+                return;
+            }
 
-            wsSingleton    = wsClass.getField("j");
-            wsModuleIndex  = wsClass.getField("a");
-            wsDataSource   = wsClass.getField("c");
+            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsSingleton    = wsClass.getField(wsJName);
+            wsModuleIndex  = wsClass.getField(wsAName);
+            wsDataSource   = wsClass.getField(wsCName);
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -84,9 +93,11 @@ public class LteBandwidthColumnHook {
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
 
-            eField      = bbClass.getField("e");
+            String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
+            eField      = bbClass.getField(eFieldName);
             hMethod     = bbClass.getMethod("h", int.class);
-            f5509cField = loader.loadClass("k8.c").getField("c");
+            String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
+            f5509cField = k8cClass.getField(sampleKeyFieldName);
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -168,7 +179,11 @@ public class LteBandwidthColumnHook {
             return;
         }
         try {
-            Class<?> adapterClass  = loader.loadClass("a8.f$a");
+            Class<?> adapterClass  = ClassMapping.loadClass("a8.f$a", loader);
+            if (adapterClass == null) {
+                Log.i(TAG, "LteBandwidthColumnHook: a8.f$a not available, skipping getView hook");
+                return;
+            }
             Method   getViewMethod = adapterClass.getMethod("getView",
                     int.class, View.class, ViewGroup.class);
 
@@ -325,7 +340,11 @@ public class LteBandwidthColumnHook {
     // -----------------------------------------------------------------------
     private void hookOnCreateView() {
         try {
-            Class<?> fragClass = loader.loadClass("a8.f");
+            Class<?> fragClass = ClassMapping.loadClass("a8.f", loader);
+            if (fragClass == null) {
+                Log.i(TAG, "LteBandwidthColumnHook: a8.f not available, skipping onCreateView hook");
+                return;
+            }
             Method   iMethod   = fragClass.getMethod("I",
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 

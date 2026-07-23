@@ -88,12 +88,14 @@ public class NrSaCsiSnrRowHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass  = loader.loadClass("k2.a");
-            Class<?> veClass   = loader.loadClass("v6.e");
-            Class<?> vfClass   = loader.loadClass("v6.f");
+            Class<?> k2aClass  = ClassMapping.loadClass("k2.a", loader);
+            Class<?> veClass   = ClassMapping.loadClass("v6.e", loader);
+            Class<?> vfClass   = ClassMapping.loadClass("v6.f", loader);
 
-            k2aRMethod = k2aClass.getMethod("r", float.class, float.class, float.class, float.class);
-            k2aSMethod = k2aClass.getMethod("s", float.class, float.class, float.class, float.class);
+            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
+                    float.class, float.class, float.class, float.class);
 
             // JADX renames fields to avoid collision with package names, e.g. "f" in package v6.f
             // becomes "f8116f". The actual bytecode field names are the originals: "f", "g", "h".
@@ -107,8 +109,8 @@ public class NrSaCsiSnrRowHook {
             vfF8120g = vfClass.getDeclaredField("g");
             vfF8120g.setAccessible(true);
 
-            sysBClass = loader.loadClass("com.qtrun.sys.b");
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAFieldA = sysAClass.getDeclaredField("a"); // final String key
             sysAFieldB = sysAClass.getDeclaredField("b"); // final String format
             sysAFieldC = sysAClass.getDeclaredField("c"); // int index
@@ -129,14 +131,14 @@ public class NrSaCsiSnrRowHook {
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
             // h8.b.f5066a0 = carrier count field; JADX renames it "f5066a0", actual name "a0"
-            Class<?> h8bClass = loader.loadClass("h8.b");
+            Class<?> h8bClass = ClassMapping.loadClass("h8.b", loader);
             h8bCarrierCountField = h8bClass.getDeclaredField("a0");
             h8bCarrierCountField.setAccessible(true);
 
             // k2.a ArrayList field "d" (JADX: f5437d); v6.a row float field "b" (JADX: f8101b)
             k2aListField = k2aClass.getDeclaredField("d");
             k2aListField.setAccessible(true);
-            Class<?> vaClass = loader.loadClass("v6.a");
+            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
@@ -162,8 +164,8 @@ public class NrSaCsiSnrRowHook {
 
     private void installO0FlagHook() {
         try {
-            Class<?> h8bClass = loader.loadClass("h8.b");
-            Method   o0Method = h8bClass.getMethod("o0");
+            Class<?> h8bClass = ClassMapping.loadClass("h8.b", loader);
+            Method   o0Method = ClassMapping.getMethod(h8bClass, "h8.b", "o0", loader);
 
             xposed.hook(o0Method).intercept(new Hooker() {
                 @Override
@@ -193,9 +195,9 @@ public class NrSaCsiSnrRowHook {
 
     private void installV6bK0Hook() {
         try {
-            Class<?> v6bClass = loader.loadClass("v6.b");
-            Class<?> k2aClass = loader.loadClass("k2.a");
-            Method   k0Method = v6bClass.getMethod("k0", k2aClass);
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            Method   k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
 
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override

@@ -53,8 +53,12 @@ public class CellIdMatchHook {
 
     public void install() {
         try {
-            Class<?> cls = loader.loadClass("ma.a");
-            Method method = cls.getDeclaredMethod("j",
+            Class<?> cls = ClassMapping.loadClass("ma.a", loader);
+            if (cls == null) {
+                Log.i(TAG, "CellIdMatchHook: ma.a not available on this flavor, skipping");
+                return;
+            }
+            Method method = ClassMapping.getDeclaredMethod(cls, "ma.a", "j", loader,
                     String.class, Integer.class, Integer.class, Double.class, Double.class);
             method.setAccessible(true);
 
@@ -129,7 +133,7 @@ public class CellIdMatchHook {
     private long readLteEci() {
         try {
             // --- 1. Create com.qtrun.sys.a wrapper for the signal path ---
-            Class<?> attrCls = loader.loadClass("com.qtrun.sys.a");
+            Class<?> attrCls = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             Object aVar = attrCls.getDeclaredConstructor(String.class)
                     .newInstance(SIGNAL_LTE_ECI);
 
@@ -138,7 +142,7 @@ public class CellIdMatchHook {
             dField.setAccessible(true);
 
             // --- 2. Get Workspace singleton (static field "j") ---
-            Class<?> wsCls = loader.loadClass("com.qtrun.sys.Workspace");
+            Class<?> wsCls = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
             Field wsField = wsCls.getDeclaredField("j");
             wsField.setAccessible(true);
             Object workspace = wsField.get(null);
@@ -167,8 +171,8 @@ public class CellIdMatchHook {
 
             // --- 3. Read the latest value via Property.Iterator ---
             Object property = dField.get(aVar);
-            Class<?> propCls = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterCls = loader.loadClass("com.qtrun.sys.Property$Iterator");
+            Class<?> propCls = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iterCls = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
 
             Object iter = iterCls.getDeclaredConstructor(propCls).newInstance(property);
             iterCls.getDeclaredMethod("reverse").invoke(iter);

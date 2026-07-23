@@ -80,8 +80,8 @@ public class SignalingShareHook {
 
     private void initReflection() {
         try {
-            Class<?> u7aClass = loader.loadClass("u7.a");
-            Class<?> u7fClass = loader.loadClass("u7.f");
+            Class<?> u7aClass = ClassMapping.loadClass("u7.a", loader);
+            Class<?> u7fClass = ClassMapping.loadClass("u7.f", loader);
 
             // u7.a.onItemClick
             onItemClickMethod = u7aClass.getMethod("onItemClick",
@@ -90,10 +90,12 @@ public class SignalingShareHook {
                     int.class,
                     long.class);
 
-            // u7.a fields: dex names are "a" (int) and "b" (u6.a)
-            u7aFieldA = u7aClass.getDeclaredField("a");
+            // u7.a fields: dex names are "a"/"b" on qtrun, "b"/"c" on gplay d6.a
+            String u7aFieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
+            String u7aFieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
+            u7aFieldA = u7aClass.getDeclaredField(u7aFieldAName);
             u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField("b");
+            u7aFieldB = u7aClass.getDeclaredField(u7aFieldBName);
             u7aFieldB.setAccessible(true);
 
             // u7.f PopupWindow field — find by type scan (actual dex name unknown)
@@ -318,8 +320,12 @@ public class SignalingShareHook {
                                              OutputStreamWriter w = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
                                             w.write(messageText);
                                         }
-                                        Class<?> fpClass = cl.loadClass(
-                                                "androidx.core.content.FileProvider");
+                                        Class<?> fpClass = ClassMapping.loadClass(
+                                                "androidx.core.content.FileProvider", cl);
+                                        if (fpClass == null) {
+                                            Log.i(TAG, "SignalingShareHook: FileProvider not available, cannot share file");
+                                            return;
+                                        }
                                         Method fpC = fpClass.getMethod("c",
                                                 Context.class, String.class);
                                         Object fpAInstance = fpC.invoke(null, ctx,

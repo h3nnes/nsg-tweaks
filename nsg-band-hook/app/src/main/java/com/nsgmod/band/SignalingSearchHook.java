@@ -80,8 +80,12 @@ public class SignalingSearchHook {
 
     private void initReflection() {
         try {
-            Class<?> u7aClass = loader.loadClass("u7.a");
-            Class<?> u7fClass = loader.loadClass("u7.f");
+            Class<?> u7aClass = ClassMapping.loadClass("u7.a", loader);
+            Class<?> u7fClass = ClassMapping.loadClass("u7.f", loader);
+            if (u7aClass == null || u7fClass == null) {
+                Log.i(TAG, "SignalingSearchHook: u7.a or u7.f missing, skipping");
+                return;
+            }
 
             onItemClickMethod = u7aClass.getMethod("onItemClick",
                     android.widget.AdapterView.class,
@@ -89,9 +93,11 @@ public class SignalingSearchHook {
                     int.class,
                     long.class);
 
-            u7aFieldA = u7aClass.getDeclaredField("a");
+            String u7aFieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
+            String u7aFieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
+            u7aFieldA = u7aClass.getDeclaredField(u7aFieldAName);
             u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField("b");
+            u7aFieldB = u7aClass.getDeclaredField(u7aFieldBName);
             u7aFieldB.setAccessible(true);
 
             u7fPopupField = findFieldByType(u7fClass, PopupWindow.class);

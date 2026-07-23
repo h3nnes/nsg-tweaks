@@ -58,8 +58,12 @@ public class ScrollBarHook {
 
     private void initReflection() {
         try {
-            Class<?> u7aClass = loader.loadClass("u7.a");
-            Class<?> u7fClass = loader.loadClass("u7.f");
+            Class<?> u7aClass = ClassMapping.loadClass("u7.a", loader);
+            Class<?> u7fClass = ClassMapping.loadClass("u7.f", loader);
+            if (u7aClass == null || u7fClass == null) {
+                Log.i(TAG, "ScrollBarHook: u7.a or u7.f missing, skipping");
+                return;
+            }
 
             // u7.a.onItemClick
             onItemClickMethod = u7aClass.getMethod("onItemClick",
@@ -68,10 +72,12 @@ public class ScrollBarHook {
                     int.class,
                     long.class);
 
-            // u7.a fields: dex names are "a" (int) and "b" (u6.a)
-            u7aFieldA = u7aClass.getDeclaredField("a");
+            // u7.a fields: dex names are "a"/"b" on qtrun, "b"/"c" on gplay d6.a
+            String u7aFieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
+            String u7aFieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
+            u7aFieldA = u7aClass.getDeclaredField(u7aFieldAName);
             u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField("b");
+            u7aFieldB = u7aClass.getDeclaredField(u7aFieldBName);
             u7aFieldB.setAccessible(true);
 
             // u7.f PopupWindow field — find by type scan (actual dex name unknown)

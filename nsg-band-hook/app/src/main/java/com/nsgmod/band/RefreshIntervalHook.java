@@ -65,7 +65,11 @@ public class RefreshIntervalHook {
     /** Resolve all classes / fields / methods once at construction time. */
     private void initReflection() {
         try {
-            g0Class = loader.loadClass("t7.g0");
+            g0Class = ClassMapping.loadClass("t7.g0", loader);
+            if (g0Class == null) {
+                Log.i(TAG, "RefreshIntervalHook: t7.g0 not available, skipping");
+                return;
+            }
             eMethod = g0Class.getDeclaredMethod("E");
             eMethod.setAccessible(true);
 
@@ -82,7 +86,7 @@ public class RefreshIntervalHook {
             }
 
             // Find ScheduledExecutorService field on TestService by type
-            Class<?> testServiceClass = loader.loadClass("com.qtrun.sys.TestService");
+            Class<?> testServiceClass = ClassMapping.loadClass("com.qtrun.sys.TestService", loader);
             for (Field f : testServiceClass.getDeclaredFields()) {
                 if (ScheduledExecutorService.class.isAssignableFrom(f.getType())) {
                     f.setAccessible(true);
@@ -94,7 +98,11 @@ public class RefreshIntervalHook {
                 throw new NoSuchFieldException("No ScheduledExecutorService field in TestService");
             }
 
-            e0Class = loader.loadClass("t7.e0");
+            e0Class = ClassMapping.loadClass("t7.e0", loader);
+            if (e0Class == null) {
+                Log.i(TAG, "RefreshIntervalHook: t7.e0 not available, skipping");
+                return;
+            }
             e0Ctor = e0Class.getDeclaredConstructor(g0Class, int.class);
             e0Ctor.setAccessible(true);
 
@@ -159,7 +167,7 @@ public class RefreshIntervalHook {
             prefListener = (sharedPreferences, key) -> {
                 if (!SettingsToggleHook.PREF_KEY_FAST_REFRESH.equals(key)) return;
                 try {
-                    Class<?> testServiceCls = loader.loadClass("com.qtrun.sys.TestService");
+                    Class<?> testServiceCls = ClassMapping.loadClass("com.qtrun.sys.TestService", loader);
                     Method oMethod = testServiceCls.getDeclaredMethod("o");
                     Object testService = oMethod.invoke(null);
                     if (testService != null && g0Class.isInstance(testService)) {

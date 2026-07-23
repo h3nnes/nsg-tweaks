@@ -85,15 +85,23 @@ public class NrSaCellColumnsHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> dsClass   = loader.loadClass("com.qtrun.sys.DataSource");
-            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
-            Class<?> dbClass   = loader.loadClass("a8.d$b");
+            Class<?> wsClass   = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> dsClass   = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> dbClass   = ClassMapping.loadClass("a8.d$b", loader);
+            if (wsClass == null || dsClass == null || propClass == null || iterClass == null
+                    || dbClass == null) {
+                Log.i(TAG, "NrSaCellColumnsHook: essential class missing, skipping");
+                return;
+            }
 
-            wsSingleton    = wsClass.getField("j");
-            wsModuleIndex  = wsClass.getField("a");
-            wsDataSource   = wsClass.getField("c");
+            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsSingleton    = wsClass.getField(wsJName);
+            wsModuleIndex  = wsClass.getField(wsAName);
+            wsDataSource   = wsClass.getField(wsCName);
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -101,7 +109,8 @@ public class NrSaCellColumnsHook {
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
 
-            sourcesField = dbClass.getField("d");   // a8.d.a[] sources
+            String sourcesFieldName = ClassMapping.runtimeFieldName("a8.d$b", "d", loader);
+            sourcesField = dbClass.getField(sourcesFieldName);   // a8.d.a[] sources
             gMethod      = dbClass.getMethod("g", int.class);
             // NOTE: a8.d.a extends k8.b (not k8.c), so there is no f5509c field.
             // Sample key is captured via hookDataCallback() instead.
@@ -144,8 +153,12 @@ public class NrSaCellColumnsHook {
      */
     private void hookDataCallback() {
         try {
-            Class<?> dClass  = loader.loadClass("a8.d");
-            Class<?> dsClass = loader.loadClass("com.qtrun.sys.DataSource");
+            Class<?> dClass  = ClassMapping.loadClass("a8.d", loader);
+            Class<?> dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            if (dClass == null || dsClass == null) {
+                Log.i(TAG, "NrSaCellColumnsHook: a8.d or DataSource missing, skipping data callback hook");
+                return;
+            }
             Method   bMethod = dClass.getDeclaredMethod("b",
                     dsClass, long.class, short.class, Object.class);
 
@@ -291,7 +304,11 @@ public class NrSaCellColumnsHook {
 
     private void hookGetView() {
         try {
-            Class<?> adapterClass  = loader.loadClass("a8.i$a");
+            Class<?> adapterClass  = ClassMapping.loadClass("a8.i$a", loader);
+            if (adapterClass == null) {
+                Log.i(TAG, "NrSaCellColumnsHook: a8.i$a not available, skipping getView hook");
+                return;
+            }
             Method   getViewMethod = adapterClass.getMethod("getView",
                     int.class, View.class, ViewGroup.class);
 
@@ -453,7 +470,11 @@ public class NrSaCellColumnsHook {
 
     private void hookOnCreateView() {
         try {
-            Class<?> fragClass = loader.loadClass("a8.i");
+            Class<?> fragClass = ClassMapping.loadClass("a8.i", loader);
+            if (fragClass == null) {
+                Log.i(TAG, "NrSaCellColumnsHook: a8.i not available, skipping onCreateView hook");
+                return;
+            }
             Method   iMethod   = fragClass.getMethod("I",
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
@@ -551,10 +572,14 @@ public class NrSaCellColumnsHook {
 
     private void hookH8bQ() {
         try {
-            Class<?> cls    = loader.loadClass("h8.b");
-            Method   qMeth  = cls.getDeclaredMethod("Q");
+            Class<?> cls    = ClassMapping.loadClass("h8.b", loader);
+            if (cls == null) {
+                Log.i(TAG, "NrSaCellColumnsHook: h8.b not available, skipping h8.b.Q hook");
+                return;
+            }
+            Method   qMeth  = ClassMapping.getDeclaredMethod(cls, "h8.b", "Q", loader);
             qMeth.setAccessible(true);
-            Method   o0Meth = cls.getDeclaredMethod("o0");
+            Method   o0Meth = ClassMapping.getDeclaredMethod(cls, "h8.b", "o0", loader);
             o0Meth.setAccessible(true);
 
             xposed.hook(qMeth).intercept(new Hooker() {

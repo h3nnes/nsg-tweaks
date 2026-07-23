@@ -54,13 +54,19 @@ public class NrNsaExtCellsHook {
 
     private void initReflection() {
         try {
-            nrNsaAdapterClass = loader.loadClass("a8.h$a");
-            lteAdapterClass   = loader.loadClass("a8.f$a");
-            Class<?> bbClass  = loader.loadClass("a8.b$b");
-            Class<?> kcClass  = loader.loadClass("k8.c");
+            nrNsaAdapterClass = ClassMapping.loadClass("a8.h$a", loader);
+            lteAdapterClass   = ClassMapping.loadClass("a8.f$a", loader);
+            Class<?> bbClass  = ClassMapping.loadClass("a8.b$b", loader);
+            Class<?> kcClass  = ClassMapping.loadClass("k8.c", loader);
+            if (nrNsaAdapterClass == null || lteAdapterClass == null || bbClass == null || kcClass == null) {
+                Log.i(TAG, "NrNsaExtCellsHook: essential adapter class missing, skipping");
+                return;
+            }
 
-            eField = bbClass.getField("e"); // public final a8.b$a[] f127e
-            dField = kcClass.getField("d"); // public int f5510d
+            String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
+            eField = bbClass.getField(eFieldName); // public final a8.b$a[] f127e
+            String dFieldName = ClassMapping.runtimeFieldName("k8.c", "d", loader);
+            dField = kcClass.getField(dFieldName); // public int f5510d
 
             ready = true;
         } catch (Exception e) {
@@ -74,7 +80,11 @@ public class NrNsaExtCellsHook {
             return;
         }
         try {
-            Class<?> bbClass        = loader.loadClass("a8.b$b");
+            Class<?> bbClass        = ClassMapping.loadClass("a8.b$b", loader);
+            if (bbClass == null) {
+                Log.i(TAG, "NrNsaExtCellsHook: a8.b$b not available, skipping install");
+                return;
+            }
             Method   getCountMethod = bbClass.getMethod("getCount");
 
             xposed.hook(getCountMethod).intercept(new Hooker() {

@@ -86,13 +86,15 @@ public class LteCaMatrixUlQpskHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = loader.loadClass("k2.a");
-            Class<?> veClass  = loader.loadClass("v6.e");
-            Class<?> vfClass  = loader.loadClass("v6.f");
-            Class<?> v6bClass = loader.loadClass("v6.b");
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
+            Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
 
-            k2aRMethod = k2aClass.getMethod("r", float.class, float.class, float.class, float.class);
-            k2aSMethod = k2aClass.getMethod("s", float.class, float.class, float.class, float.class);
+            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
+                    float.class, float.class, float.class, float.class);
 
             veF = veClass.getField("f");
             veG = veClass.getField("g");
@@ -102,8 +104,8 @@ public class LteCaMatrixUlQpskHook {
             vfF8120g.setAccessible(true);
             vfFMethod = vfClass.getMethod("f", int.class, float.class);
 
-            sysBClass = loader.loadClass("com.qtrun.sys.b");
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAFieldA = sysAClass.getDeclaredField("a");
             sysAFieldB = sysAClass.getDeclaredField("b");
             sysAFieldC = sysAClass.getDeclaredField("c");
@@ -124,7 +126,7 @@ public class LteCaMatrixUlQpskHook {
 
             k2aListField = k2aClass.getDeclaredField("d");
             k2aListField.setAccessible(true);
-            Class<?> vaClass = loader.loadClass("v6.a");
+            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
@@ -164,9 +166,9 @@ public class LteCaMatrixUlQpskHook {
             return;
         }
         try {
-            Class<?> e8aClass = loader.loadClass("e8.a");
+            Class<?> e8aClass = ClassMapping.loadClass("e8.a", loader);
             Class<?> contextClass = Class.forName("android.content.Context");
-            Method l0Method = e8aClass.getMethod("l0", contextClass);
+            Method l0Method = ClassMapping.getMethod(e8aClass, "e8.a", "l0", loader, contextClass);
 
             xposed.hook(l0Method).intercept(new Hooker() {
                 @Override

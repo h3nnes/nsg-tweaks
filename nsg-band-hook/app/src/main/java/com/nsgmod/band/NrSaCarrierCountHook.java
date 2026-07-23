@@ -86,13 +86,13 @@ public class NrSaCarrierCountHook {
 
     private void initReflection() {
         try {
-            vgClass = loader.loadClass("v6.g");
+            vgClass = ClassMapping.loadClass("v6.g", loader);
             vgF8124f = vgClass.getDeclaredField("f");
             vgF8124f.setAccessible(true);
             vgF8125g = vgClass.getDeclaredField("g");
             vgF8125g.setAccessible(true);
 
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAKeyField = sysAClass.getDeclaredField("a");
             sysAKeyField.setAccessible(true);
             sysAPropField = sysAClass.getDeclaredField("d");
@@ -100,22 +100,24 @@ public class NrSaCarrierCountHook {
             sysACField = sysAClass.getDeclaredField("c");
             sysACField.setAccessible(true);
 
-            Class<?> workspaceClass = loader.loadClass("com.qtrun.sys.Workspace");
-            Field wjField = workspaceClass.getDeclaredField("j");
+            Class<?> workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsTickName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            Field wjField = workspaceClass.getDeclaredField(wsSingletonName);
             wjField.setAccessible(true);
             workspaceInstance = wjField.get(null);
-            workspaceTickField = workspaceClass.getDeclaredField("a");
+            workspaceTickField = workspaceClass.getDeclaredField(wsTickName);
             workspaceTickField.setAccessible(true);
             workspaceHMethod = workspaceClass.getMethod("h", sysAClass, int.class);
 
-            Class<?> propertyClass = loader.loadClass("com.qtrun.sys.Property");
+            Class<?> propertyClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
             propertyBMethod = propertyClass.getMethod("b", long.class);
 
-            Class<?> iteratorClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
+            Class<?> iteratorClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
             iteratorEndMethod = iteratorClass.getMethod("end");
             iteratorValueMethod = iteratorClass.getMethod("value");
 
-            sysBClass = loader.loadClass("com.qtrun.sys.b");
+            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
             java.lang.reflect.Field unsafeField;
             try {
@@ -137,7 +139,7 @@ public class NrSaCarrierCountHook {
             unsafePutObject.invoke(unsafe, scellPciBinding, keyOffset, SCELL_PCI_KEY);
             sysACField.set(scellPciBinding, -1);
 
-            Class<?> k2aClass = loader.loadClass("k2.a");
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
             k2aListField = k2aClass.getDeclaredField("d");
             k2aListField.setAccessible(true);
 
@@ -159,9 +161,9 @@ public class NrSaCarrierCountHook {
 
     private void installV6bK0Hook() {
         try {
-            Class<?> v6bClass = loader.loadClass("v6.b");
-            Class<?> k2aClass = loader.loadClass("k2.a");
-            Method k0Method = v6bClass.getMethod("k0", k2aClass);
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            Method k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
 
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
@@ -207,8 +209,8 @@ public class NrSaCarrierCountHook {
 
     private void installV6gAHook() {
         try {
-            Class<?> vgClass = loader.loadClass("v6.g");
-            Class<?> dataSourceClass = loader.loadClass("com.qtrun.sys.DataSource");
+            Class<?> vgClass = ClassMapping.loadClass("v6.g", loader);
+            Class<?> dataSourceClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
             Method aMethod = vgClass.getMethod("a", long.class, dataSourceClass, short.class);
 
             xposed.hook(aMethod).intercept(new Hooker() {
