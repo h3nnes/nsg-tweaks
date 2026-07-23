@@ -191,6 +191,12 @@ public final class ClassMapping {
         fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|g", "h");
         fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|l", "m");
         fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|q", "r");
+        // com.qtrun.sys.a (Attribute) fields are identical in both flavors, but keep
+        // explicit identity entries so hooks can use runtimeFieldName safely.
+        fieldMap.put("com.qtrun.sys.a|a", "a");
+        fieldMap.put("com.qtrun.sys.a|b", "b");
+        fieldMap.put("com.qtrun.sys.a|c", "c");
+        fieldMap.put("com.qtrun.sys.a|d", "d");
         GPLAY_FIELD_OVERRIDES = Collections.unmodifiableMap(fieldMap);
     }
 
