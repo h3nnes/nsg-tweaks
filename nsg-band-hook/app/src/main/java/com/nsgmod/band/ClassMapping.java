@@ -29,6 +29,8 @@ public final class ClassMapping {
     private static final Map<String, String> GPLAY_METHOD_OVERRIDES;
     /** Field-name overrides for gplay: key = "logicalClass|logicalField". */
     private static final Map<String, String> GPLAY_FIELD_OVERRIDES;
+    /** Integer-constant overrides for gplay: key = "logicalClass|logicalConstant". */
+    private static final Map<String, Integer> GPLAY_CONSTANT_OVERRIDES;
 
     static {
         Set<String> identity = new HashSet<>();
@@ -198,6 +200,12 @@ public final class ClassMapping {
         fieldMap.put("com.qtrun.sys.a|c", "c");
         fieldMap.put("com.qtrun.sys.a|d", "d");
         GPLAY_FIELD_OVERRIDES = Collections.unmodifiableMap(fieldMap);
+
+        Map<String, Integer> constantMap = new HashMap<>();
+        // a4.h / c6.h synthetic switch case used for log-file load completion.
+        // qtrun R8 assigns case 5; gplay R8 assigns case 0.
+        constantMap.put("a4.h|LOAD_COMPLETE_CASE", 0);
+        GPLAY_CONSTANT_OVERRIDES = Collections.unmodifiableMap(constantMap);
     }
 
     private ClassMapping() {
@@ -274,6 +282,21 @@ public final class ClassMapping {
             return GPLAY_FIELD_OVERRIDES.get(key);
         }
         return logicalField;
+    }
+
+    /**
+     * Returns the runtime int constant for the given logical key, or
+     * {@code qtrunValue} if no gplay override exists.
+     */
+    public static int runtimeIntConstant(String logicalKey, int qtrunValue,
+                                          ClassLoader loader) {
+        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.GPLAY) {
+            return qtrunValue;
+        }
+        if (GPLAY_CONSTANT_OVERRIDES.containsKey(logicalKey)) {
+            return GPLAY_CONSTANT_OVERRIDES.get(logicalKey);
+        }
+        return qtrunValue;
     }
 
     /**
