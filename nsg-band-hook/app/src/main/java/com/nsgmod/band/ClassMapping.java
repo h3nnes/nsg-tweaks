@@ -138,6 +138,8 @@ public final class ClassMapping {
         methodMap.put("e8.a|l0", "k0");
         // Cell-DB WHERE-clause builder: qtrun ma.a.j(...) -> gplay z8.a.h(...)
         methodMap.put("ma.a|j", "h");
+        // Timestamp formatter: qtrun ma.a.m(Date) -> gplay v8.a.c(Date)
+        methodMap.put("ma.a|m", "c");
         // Note: ma.a in qtrun is Installation.kt; on gplay its functionality is split.
         // The timestamp formatter lives in v8.a.c(Date), so hooks that need it fall
         // back to v8.a directly (see GranularSeekBarHook / RtPlayHook).
@@ -177,10 +179,11 @@ public final class ClassMapping {
         // t7.e synthetic file-picker fields (gplay c6.f): qtrun a/b -> gplay b/c
         fieldMap.put("t7.e|a", "b");
         fieldMap.put("t7.e|b", "c");
-        // CirclePageIndicator fields on gplay: a->b, e->f, g->h, q->r (k/l stay the same)
+        // CirclePageIndicator fields on gplay: a->b, e->f, g->h, l->m, q->r (k stays the same)
         fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|a", "b");
         fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|e", "f");
         fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|g", "h");
+        fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|l", "m");
         fieldMap.put("com.qtrun.widget.viewpagerindicator.CirclePageIndicator|q", "r");
         GPLAY_FIELD_OVERRIDES = Collections.unmodifiableMap(fieldMap);
     }

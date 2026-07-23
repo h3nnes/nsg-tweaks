@@ -163,7 +163,14 @@ public class RtPlayHook {
             iterNext  = iterClass.getDeclaredMethod("next");           iterNext.setAccessible(true);
 
             // ma.a.m(Date) → String (gplay v8.a.c(Date))
-            maAMMethod = ClassMapping.getDeclaredMethod(maAClass, "ma.a", "m", loader, dateClass); maAMMethod.setAccessible(true);
+            try {
+                maAMMethod = ClassMapping.getDeclaredMethod(maAClass, "ma.a", "m", loader, dateClass);
+                maAMMethod.setAccessible(true);
+            } catch (NoSuchMethodException nsme) {
+                Class<?> v8aClass = Class.forName("v8.a", false, loader);
+                maAMMethod = ClassMapping.getDeclaredMethod(v8aClass, "ma.a", "m", loader, dateClass);
+                maAMMethod.setAccessible(true);
+            }
 
             reflectionReady = true;
         } catch (Exception e) {
