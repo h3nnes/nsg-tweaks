@@ -163,15 +163,21 @@ public final class ClassMapping {
         // u7.a synthetic click-listener fields: qtrun a/b -> gplay b/c
         fieldMap.put("u7.a|a", "b");
         fieldMap.put("u7.a|b", "c");
-        // com.qtrun.sys.Workspace static/instance fields: qtrun j/a/c/d/g/h/i/f -> gplay k/b/d/e/i/h/j/g
+        // com.qtrun.sys.Workspace static/instance fields:
+        // qtrun singleton j, moduleIndex a, listeners b, dispatcher d, modules e,
+        //           timestamp attr f, current key g, max key h, current date i
+        // gplay   singleton k, moduleIndex b, listeners c, dispatcher e, modules f,
+        //           timestamp attr g, current key h, max key i, current date j
         fieldMap.put("com.qtrun.sys.Workspace|j", "k");
         fieldMap.put("com.qtrun.sys.Workspace|a", "b");
+        fieldMap.put("com.qtrun.sys.Workspace|b", "c");
         fieldMap.put("com.qtrun.sys.Workspace|c", "d");
         fieldMap.put("com.qtrun.sys.Workspace|d", "e");
-        fieldMap.put("com.qtrun.sys.Workspace|g", "i");
-        fieldMap.put("com.qtrun.sys.Workspace|h", "h");
-        fieldMap.put("com.qtrun.sys.Workspace|i", "j");
+        fieldMap.put("com.qtrun.sys.Workspace|e", "f");
         fieldMap.put("com.qtrun.sys.Workspace|f", "g");
+        fieldMap.put("com.qtrun.sys.Workspace|g", "h");
+        fieldMap.put("com.qtrun.sys.Workspace|h", "i");
+        fieldMap.put("com.qtrun.sys.Workspace|i", "j");
         // a4.h synthetic load-completion fields (gplay c6.h): qtrun a/b/c -> gplay b/d/c
         fieldMap.put("a4.h|a", "b");
         fieldMap.put("a4.h|b", "d");
