@@ -80,8 +80,12 @@ public class SignalingSearchHook {
 
     private void initReflection() {
         try {
-            Class<?> u7aClass = loader.loadClass("u7.a");
-            Class<?> u7fClass = loader.loadClass("u7.f");
+            Class<?> u7aClass = ClassMapping.loadClass("u7.a", loader);
+            Class<?> u7fClass = ClassMapping.loadClass("u7.f", loader);
+            if (u7aClass == null || u7fClass == null) {
+                Log.i(TAG, "SignalingSearchHook: u7.a or u7.f missing, skipping");
+                return;
+            }
 
             onItemClickMethod = u7aClass.getMethod("onItemClick",
                     android.widget.AdapterView.class,

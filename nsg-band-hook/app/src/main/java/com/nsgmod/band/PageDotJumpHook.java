@@ -53,8 +53,12 @@ public class PageDotJumpHook {
 
     private void initReflection() {
         try {
-            Class<?> indicatorClass = loader.loadClass(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator");
+            Class<?> indicatorClass = ClassMapping.loadClass(
+                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", loader);
+            if (indicatorClass == null) {
+                Log.i(TAG, "PageDotJumpHook: CirclePageIndicator not available, skipping");
+                return;
+            }
 
             for (Field f : indicatorClass.getDeclaredFields()) {
                 f.setAccessible(true);
@@ -84,7 +88,7 @@ public class PageDotJumpHook {
 
             // Resolve adapter count method from w1.a (obfuscated: method is "c" not "getCount")
             try {
-                Class<?> w1aClass = loader.loadClass("w1.a");
+                Class<?> w1aClass = ClassMapping.loadClass("w1.a", loader);
                 getCountMethod = w1aClass.getMethod("c");
             } catch (Exception e) {
                 Log.w(TAG, "Could not find w1.a.c() count method");
@@ -93,7 +97,7 @@ public class PageDotJumpHook {
             // Adapter tech field: only x6.b has int h. x6.d has a different type for h.
             // This is optional — used only for debug logging.
             try {
-                Class<?> x6bClass = loader.loadClass("x6.b");
+                Class<?> x6bClass = ClassMapping.loadClass("x6.b", loader);
                 adapterTechField = x6bClass.getDeclaredField("h");
                 adapterTechField.setAccessible(true);
             } catch (Exception e) {
@@ -123,8 +127,12 @@ public class PageDotJumpHook {
             return;
         }
         try {
-            Class<?> indicatorClass = loader.loadClass(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator");
+            Class<?> indicatorClass = ClassMapping.loadClass(
+                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", loader);
+            if (indicatorClass == null) {
+                Log.i(TAG, "PageDotJumpHook: CirclePageIndicator not available, skipping install");
+                return;
+            }
             Method onTouchEventMethod = indicatorClass.getDeclaredMethod(
                     "onTouchEvent", MotionEvent.class);
 
@@ -260,8 +268,12 @@ public class PageDotJumpHook {
             // instances and wrap the listener with a guard that skips the call
             // if a short tap was recorded recently.
             try {
-                Class<?> indicatorCls = loader.loadClass(
-                        "com.qtrun.widget.viewpagerindicator.CirclePageIndicator");
+                Class<?> indicatorCls = ClassMapping.loadClass(
+                        "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", loader);
+                if (indicatorCls == null) {
+                    Log.i(TAG, "PageDotJumpHook: CirclePageIndicator not available for long-click guard");
+                    return;
+                }
                 Method setOnLongClickListenerMethod = View.class.getDeclaredMethod(
                         "setOnLongClickListener", View.OnLongClickListener.class);
                 setOnLongClickListenerMethod.setAccessible(true);

@@ -101,17 +101,22 @@ public class RtPlayHook {
 
     private void initReflection() {
         try {
-            Class<?> fragmentClass  = loader.loadClass("k8.f");
-            Class<?> advActAClass   = loader.loadClass("com.qtrun.nsg.AdvancedActivity$a");
-            Class<?> workspaceClass = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> attrClass      = loader.loadClass("com.qtrun.sys.a");
-            Class<?> propClass      = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterClass      = loader.loadClass("com.qtrun.sys.Property$Iterator");
-            Class<?> maAClass       = loader.loadClass("ma.a");
-            Class<?> dateClass      = loader.loadClass("java.util.Date");
-            Class<?> inflaterClass  = loader.loadClass("android.view.LayoutInflater");
-            Class<?> viewGroupClass = loader.loadClass("android.view.ViewGroup");
-            Class<?> bundleClass    = loader.loadClass("android.os.Bundle");
+            Class<?> fragmentClass  = ClassMapping.loadClass("k8.f", loader);
+            Class<?> advActAClass   = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity$a", loader);
+            Class<?> workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> attrClass      = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            Class<?> propClass      = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iterClass      = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> maAClass       = ClassMapping.loadClass("ma.a", loader);
+            Class<?> dateClass      = ClassMapping.loadClass("java.util.Date", loader);
+            Class<?> inflaterClass  = ClassMapping.loadClass("android.view.LayoutInflater", loader);
+            Class<?> viewGroupClass = ClassMapping.loadClass("android.view.ViewGroup", loader);
+            Class<?> bundleClass    = ClassMapping.loadClass("android.os.Bundle", loader);
+            if (fragmentClass == null || advActAClass == null || workspaceClass == null
+                    || maAClass == null) {
+                Log.i(TAG, "RtPlayHook: essential class missing, skipping");
+                return;
+            }
 
             // k8.f
             onCreateViewMethod = fragmentClass.getDeclaredMethod(
@@ -187,7 +192,7 @@ public class RtPlayHook {
         // Without this, the old stepRunnable keeps running after J() destroys the view, and
         // the next attachButton() creates a second loop → double playback speed.
         try {
-            Class<?> advActClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            Class<?> advActClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
             Method jMethod = advActClass.getDeclaredMethod("J");
             xposed.hook(jMethod).intercept(new Hooker() {
                 @Override

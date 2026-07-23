@@ -141,8 +141,12 @@ public class ReplayStatusBarHook {
 
     private void initReflection() {
         try {
-            Class<?> hClass  = loader.loadClass("a4.h");
-            Class<?> wsClass = loader.loadClass("com.qtrun.sys.Workspace");
+            Class<?> hClass  = ClassMapping.loadClass("a4.h", loader);
+            Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            if (hClass == null || wsClass == null) {
+                Log.i(TAG, "ReplayStatusBarHook: a4.h or Workspace missing, skipping");
+                return;
+            }
 
             f76a = hClass.getDeclaredField("a"); f76a.setAccessible(true);  // int discriminator
             f77b = hClass.getDeclaredField("b"); f77b.setAccessible(true);  // AdvancedActivity
@@ -152,23 +156,27 @@ public class ReplayStatusBarHook {
             wsDataSource = wsClass.getField("c");
 
             // Prong E reflection
-            Class<?> advActivityClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            Class<?> advActivityClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
             advActivityKField = advActivityClass.getDeclaredField("K");
             advActivityKField.setAccessible(true);
 
-            Class<?> ddClass = loader.loadClass("d.d");
+            Class<?> ddClass = ClassMapping.loadClass("d.d", loader);
             pickerCMethod = ddClass.getDeclaredMethod("c", Object.class);
             pickerCMethod.setAccessible(true);
 
-            Class<?> appClass = loader.loadClass("com.qtrun.sys.Application");
+            Class<?> appClass = ClassMapping.loadClass("com.qtrun.sys.Application", loader);
             appDMethod = appClass.getDeclaredMethod("d");
             // d() is public static synchronized — accessible without setAccessible
 
-            Class<?> drawerClass = loader.loadClass("androidx.drawerlayout.widget.DrawerLayout");
+            Class<?> drawerClass = ClassMapping.loadClass("androidx.drawerlayout.widget.DrawerLayout", loader);
             drawerDMethod = drawerClass.getMethod("d", boolean.class);
 
             // Prong F reflection — t7.e fields (runtime names "a" and "b")
-            Class<?> teClass = loader.loadClass("t7.e");
+            Class<?> teClass = ClassMapping.loadClass("t7.e", loader);
+            if (teClass == null) {
+                Log.i(TAG, "ReplayStatusBarHook: t7.e not available, skipping Prong F");
+                return;
+            }
             teDiscriminator = teClass.getDeclaredField("a"); teDiscriminator.setAccessible(true);
             teActivity      = teClass.getDeclaredField("b"); teActivity.setAccessible(true);
 
@@ -198,7 +206,7 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngA() {
         try {
-            Class<?> hClass  = loader.loadClass("a4.h");
+            Class<?> hClass  = ClassMapping.loadClass("a4.h", loader);
             Method   eMethod = hClass.getMethod("e", Object.class);
 
             xposed.hook(eMethod).intercept(new Hooker() {
@@ -252,7 +260,7 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngB() {
         try {
-            Class<?> activityClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            Class<?> activityClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
             Method   kMethod       = activityClass.getDeclaredMethod("K");
 
             xposed.hook(kMethod).intercept(new Hooker() {
@@ -310,7 +318,11 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngC() {
         try {
-            Class<?> h0Class  = loader.loadClass("t7.g0");
+            Class<?> h0Class  = ClassMapping.loadClass("t7.g0", loader);
+            if (h0Class == null) {
+                Log.i(TAG, "ReplayStatusBarHook: t7.g0 not available, skipping Prong C");
+                return;
+            }
             Method   eMethod  = h0Class.getDeclaredMethod("E");
 
             xposed.hook(eMethod).intercept(new Hooker() {
@@ -340,8 +352,12 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngD() {
         try {
-            Class<?> x0Class   = loader.loadClass("t7.w0");
-            Class<?> actClass  = loader.loadClass("android.app.Activity");
+            Class<?> x0Class   = ClassMapping.loadClass("t7.w0", loader);
+            Class<?> actClass  = ClassMapping.loadClass("android.app.Activity", loader);
+            if (x0Class == null || actClass == null) {
+                Log.i(TAG, "ReplayStatusBarHook: t7.w0 or Activity missing, skipping Prong D");
+                return;
+            }
             Method   cMethod   = x0Class.getDeclaredMethod("c", actClass);
 
             xposed.hook(cMethod).intercept(new Hooker() {
@@ -380,8 +396,12 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngE() {
         try {
-            Class<?> tqClass      = loader.loadClass("t7.p");
-            Class<?> menuItemClass = loader.loadClass("android.view.MenuItem");
+            Class<?> tqClass      = ClassMapping.loadClass("t7.p", loader);
+            Class<?> menuItemClass = ClassMapping.loadClass("android.view.MenuItem", loader);
+            if (tqClass == null || menuItemClass == null) {
+                Log.i(TAG, "ReplayStatusBarHook: t7.p or MenuItem missing, skipping Prong E");
+                return;
+            }
             Method   aMethod       = tqClass.getDeclaredMethod("a", menuItemClass);
             aMethod.setAccessible(true);
 
@@ -426,9 +446,9 @@ public class ReplayStatusBarHook {
                         } else {
                             // Not subscribed — show the upgrade dialog via w0.e(activity)
                             try {
-                                Class<?> w0Class  = loader.loadClass("t7.w0");
+                                Class<?> w0Class  = ClassMapping.loadClass("t7.w0", loader);
                                 Method   eMethod  = w0Class.getDeclaredMethod("e",
-                                        loader.loadClass("com.qtrun.nsg.AdvancedActivity"));
+                                        ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader));
                                 eMethod.setAccessible(true);
                                 eMethod.invoke(null, activity);
                             } catch (Throwable t) {
@@ -479,7 +499,7 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngF() {
         try {
-            Class<?> teClass  = loader.loadClass("t7.e");
+            Class<?> teClass  = ClassMapping.loadClass("t7.e", loader);
             Method   bMethod  = teClass.getDeclaredMethod("b", Object.class);
             bMethod.setAccessible(true);
 
@@ -533,7 +553,7 @@ public class ReplayStatusBarHook {
     // -----------------------------------------------------------------------
     private void installProngG() {
         try {
-            Class<?> advClass = loader.loadClass("com.qtrun.nsg.AdvancedActivity");
+            Class<?> advClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
             Method iMethod = advClass.getDeclaredMethod("I", int.class);
             iMethod.setAccessible(true);
 

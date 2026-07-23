@@ -92,10 +92,10 @@ public class LteCellColorHook {
 
     private void initReflection() {
         try {
-            vgClass = loader.loadClass("v6.g");
-            Class<?> v6aClass  = loader.loadClass("v6.a");
-            Class<?> v6bClass  = loader.loadClass("v6.b");
-            Class<?> k2aClass  = loader.loadClass("k2.a");
+            vgClass = ClassMapping.loadClass("v6.g", loader);
+            Class<?> v6aClass  = ClassMapping.loadClass("v6.a", loader);
+            Class<?> v6bClass  = ClassMapping.loadClass("v6.b", loader);
+            Class<?> k2aClass  = ClassMapping.loadClass("k2.a", loader);
 
             vgBindingsField = vgClass.getDeclaredField("f");
             vgBindingsField.setAccessible(true);
@@ -118,10 +118,9 @@ public class LteCellColorHook {
             v6aRowField = v6aClass.getDeclaredField("b");
             v6aRowField.setAccessible(true);
 
-            try {
-                rankBindingClass = loader.loadClass("d7.i$k");
-            } catch (ClassNotFoundException e2) {
-                Log.w(TAG, "LteCellColorHook: d7.i$k not found, Rank fallback disabled");
+            rankBindingClass = ClassMapping.loadClass("d7.i$k", loader);
+            if (rankBindingClass == null) {
+                Log.w(TAG, "LteCellColorHook: d7.i$k not available, Rank fallback disabled");
             }
 
             ready = true;
@@ -150,8 +149,8 @@ public class LteCellColorHook {
 
     private void installV6bK0Hook() {
         try {
-            Class<?> v6bClass = loader.loadClass("v6.b");
-            Class<?> k2aClass = loader.loadClass("k2.a");
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
 
             Method k0Method = v6bClass.getMethod("k0", k2aClass);
             xposed.hook(k0Method).intercept(new Hooker() {
@@ -199,7 +198,7 @@ public class LteCellColorHook {
 
     private void installV6bIHook() {
         try {
-            Class<?> v6bClass = loader.loadClass("v6.b");
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
 
             Method iMethod = v6bClass.getMethod("I",
                     android.view.LayoutInflater.class,

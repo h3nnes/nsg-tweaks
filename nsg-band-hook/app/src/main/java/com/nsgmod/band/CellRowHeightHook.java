@@ -31,7 +31,11 @@ public class CellRowHeightHook {
     private void installLteHook() {
         try {
             // a8.f$a extends b.AbstractC0008b
-            Class<?> adapterClass = loader.loadClass("a8.f$a");
+            Class<?> adapterClass = ClassMapping.loadClass("a8.f$a", loader);
+            if (adapterClass == null) {
+                Log.i(TAG, "CellRowHeightHook: a8.f$a not available, skipping LTE hook");
+                return;
+            }
             Method getViewMethod = adapterClass.getDeclaredMethod(
                     "getView", int.class, View.class, ViewGroup.class);
             getViewMethod.setAccessible(true);
@@ -57,7 +61,11 @@ public class CellRowHeightHook {
 
     private void installNrNsaHook() {
         try {
-            Class<?> adapterClass = loader.loadClass("a8.h$a");
+            Class<?> adapterClass = ClassMapping.loadClass("a8.h$a", loader);
+            if (adapterClass == null) {
+                Log.i(TAG, "CellRowHeightHook: a8.h$a not available, skipping NR-NSA hook");
+                return;
+            }
             Method getViewMethod = adapterClass.getDeclaredMethod(
                     "getView", int.class, View.class, ViewGroup.class);
             getViewMethod.setAccessible(true);

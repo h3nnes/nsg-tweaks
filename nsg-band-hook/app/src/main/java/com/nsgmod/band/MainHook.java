@@ -21,7 +21,8 @@ public class MainHook extends XposedModule {
     @Override
     public void onPackageReady(@NonNull PackageReadyParam param) {
         if (!TARGET_PACKAGE.equals(param.getPackageName())) return;
-        Log.i(TAG, "hooking " + TARGET_PACKAGE);
+        Log.i(TAG, "hooking " + TARGET_PACKAGE + " (flavor: "
+                + FlavorDetector.detect(param.getClassLoader()) + ")");
         NrNsaBandwidthColumnHook nrNsaBwHook = new NrNsaBandwidthColumnHook(this, param.getClassLoader());
         nrNsaBwHook.install();
         new BandColumnHook(this, param.getClassLoader()).install();

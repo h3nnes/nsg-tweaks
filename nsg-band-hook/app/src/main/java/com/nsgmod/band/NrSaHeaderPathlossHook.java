@@ -128,13 +128,13 @@ public class NrSaHeaderPathlossHook {
 
     private void initReflection() {
         try {
-            headerRFFragmentClass = loader.loadClass("com.qtrun.udv.header.HeaderRFFragment");
+            headerRFFragmentClass = ClassMapping.loadClass("com.qtrun.udv.header.HeaderRFFragment", loader);
 
-            Class<?> k2aClass = loader.loadClass("k2.a");
-            Class<?> veClass = loader.loadClass("v6.e");
-            Class<?> vgClass = loader.loadClass("v6.g");
-            Class<?> vaClass = loader.loadClass("v6.a");
-            v6dClass = loader.loadClass("v6.d");
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            Class<?> veClass = ClassMapping.loadClass("v6.e", loader);
+            Class<?> vgClass = ClassMapping.loadClass("v6.g", loader);
+            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
+            v6dClass = ClassMapping.loadClass("v6.d", loader);
 
             // Find the k2.a field inside HeaderRFFragment by type.
             for (Field field : headerRFFragmentClass.getDeclaredFields()) {
@@ -167,8 +167,8 @@ public class NrSaHeaderPathlossHook {
             vaColField.setAccessible(true);
             vaWidthField.setAccessible(true);
 
-            sysBClass = loader.loadClass("com.qtrun.sys.b");
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAFieldA = sysAClass.getDeclaredField("a");
             sysAFieldB = sysAClass.getDeclaredField("b");
             sysAFieldC = sysAClass.getDeclaredField("c");
@@ -182,7 +182,7 @@ public class NrSaHeaderPathlossHook {
             v6dListField = v6dClass.getDeclaredField("a");
             v6dListField.setAccessible(true);
 
-            workspaceClass = loader.loadClass("com.qtrun.sys.Workspace");
+            workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
             wsSingletonField = workspaceClass.getField("j");
             wsRatField = workspaceClass.getDeclaredField("d");
             wsRatField.setAccessible(true);
@@ -210,9 +210,9 @@ public class NrSaHeaderPathlossHook {
             return;
         }
         try {
-            Class<?> layoutInflaterClass = loader.loadClass("android.view.LayoutInflater");
-            Class<?> viewGroupClass = loader.loadClass("android.view.ViewGroup");
-            Class<?> bundleClass = loader.loadClass("android.os.Bundle");
+            Class<?> layoutInflaterClass = ClassMapping.loadClass("android.view.LayoutInflater", loader);
+            Class<?> viewGroupClass = ClassMapping.loadClass("android.view.ViewGroup", loader);
+            Class<?> bundleClass = ClassMapping.loadClass("android.os.Bundle", loader);
             Method iMethod = headerRFFragmentClass.getMethod("I",
                     layoutInflaterClass, viewGroupClass, bundleClass);
 
@@ -228,7 +228,7 @@ public class NrSaHeaderPathlossHook {
                 }
             });
 
-            Class<?> dataSourceClass = loader.loadClass("com.qtrun.sys.DataSource");
+            Class<?> dataSourceClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
             Method bMethod = headerRFFragmentClass.getMethod("b",
                     dataSourceClass, long.class, short.class, Object.class);
 
@@ -421,7 +421,7 @@ public class NrSaHeaderPathlossHook {
     private Method vaClassCMethod;
     private Method vaClassCMethod() throws Exception {
         if (vaClassCMethod == null) {
-            Class<?> vaClass = loader.loadClass("v6.a");
+            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaClassCMethod = vaClass.getMethod("c", ViewGroup.class);
         }
         return vaClassCMethod;

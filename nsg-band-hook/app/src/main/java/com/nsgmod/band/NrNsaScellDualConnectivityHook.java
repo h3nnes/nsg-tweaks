@@ -156,16 +156,22 @@ public class NrNsaScellDualConnectivityHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = loader.loadClass(K2A_CLASS);
-            Class<?> v6aClass = loader.loadClass(V6_A_CLASS);
-            Class<?> v6dClass = loader.loadClass(V6_D_CLASS);
-            Class<?> v6eClass = loader.loadClass(V6_E_CLASS);
-            Class<?> v6fClass = loader.loadClass(V6_F_CLASS);
-            Class<?> v6gClass = loader.loadClass(V6_G_CLASS);
-            Class<?> attrAClass = loader.loadClass(ATTR_A_CLASS);
-            Class<?> dsClass = loader.loadClass(DATA_SOURCE_CLASS);
-            Class<?> fontTextViewClass = loader.loadClass(FONT_TEXT_VIEW_CLASS);
-            Class<?> progressTextViewClass = loader.loadClass(PROGRESS_TEXT_VIEW_CLASS);
+            Class<?> k2aClass = ClassMapping.loadClass(K2A_CLASS, loader);
+            Class<?> v6aClass = ClassMapping.loadClass(V6_A_CLASS, loader);
+            Class<?> v6dClass = ClassMapping.loadClass(V6_D_CLASS, loader);
+            Class<?> v6eClass = ClassMapping.loadClass(V6_E_CLASS, loader);
+            Class<?> v6fClass = ClassMapping.loadClass(V6_F_CLASS, loader);
+            Class<?> v6gClass = ClassMapping.loadClass(V6_G_CLASS, loader);
+            Class<?> attrAClass = ClassMapping.loadClass(ATTR_A_CLASS, loader);
+            Class<?> dsClass = ClassMapping.loadClass(DATA_SOURCE_CLASS, loader);
+            Class<?> fontTextViewClass = ClassMapping.loadClass(FONT_TEXT_VIEW_CLASS, loader);
+            Class<?> progressTextViewClass = ClassMapping.loadClass(PROGRESS_TEXT_VIEW_CLASS, loader);
+            if (k2aClass == null || v6aClass == null || v6dClass == null || v6eClass == null
+                    || v6fClass == null || v6gClass == null || attrAClass == null || dsClass == null
+                    || fontTextViewClass == null || progressTextViewClass == null) {
+                Log.i(TAG, "NrNsaScellDualConnectivityHook: essential class missing, skipping");
+                return;
+            }
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
             Field unsafeField = unsafeClass.getDeclaredField("theUnsafe");
@@ -294,7 +300,7 @@ public class NrNsaScellDualConnectivityHook {
     // -------------------------------------------------------------------------
     private void hookI() {
         try {
-            Class<?> v6bClass = loader.loadClass(V6_B_CLASS);
+            Class<?> v6bClass = ClassMapping.loadClass(V6_B_CLASS, loader);
             Method iMethod = v6bClass.getDeclaredMethod("I",
                     android.view.LayoutInflater.class,
                     android.view.ViewGroup.class,
@@ -575,8 +581,12 @@ public class NrNsaScellDualConnectivityHook {
     // -------------------------------------------------------------------------
     private void hookB() {
         try {
-            Class<?> g8hClass = loader.loadClass(TARGET_FRAGMENT);
-            Class<?> dsClass = loader.loadClass(DATA_SOURCE_CLASS);
+            Class<?> g8hClass = ClassMapping.loadClass(TARGET_FRAGMENT, loader);
+            Class<?> dsClass = ClassMapping.loadClass(DATA_SOURCE_CLASS, loader);
+            if (g8hClass == null || dsClass == null) {
+                Log.i(TAG, "NrNsaScellDualConnectivityHook: target fragment or DataSource missing, skipping hookB");
+                return;
+            }
             Method bMethod = g8hClass.getMethod("b", dsClass, long.class, short.class, Object.class);
 
             xposed.hook(bMethod).intercept(new Hooker() {
@@ -725,7 +735,7 @@ public class NrNsaScellDualConnectivityHook {
 
     private void hookV6EMethod(String className, final Method cachedRenderMethod) {
         try {
-            Class<?> cls = loader.loadClass(className);
+            Class<?> cls = ClassMapping.loadClass(className, loader);
             Method eMethod = cls.getDeclaredMethod("e");
             eMethod.setAccessible(true);
 
@@ -1099,9 +1109,9 @@ public class NrNsaScellDualConnectivityHook {
     // -------------------------------------------------------------------------
     private boolean isScellPresent(Object dataSource, long sampleKey, short moduleIndex) {
         try {
-            Class<?> dsClass = loader.loadClass(DATA_SOURCE_CLASS);
-            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
+            Class<?> dsClass = ClassMapping.loadClass(DATA_SOURCE_CLASS, loader);
+            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
             Object ds = dataSource;
             Method getProperty = dsClass.getMethod("getProperty", String.class, int.class);
             Method iteratorB = propClass.getMethod("b", long.class);
@@ -1164,7 +1174,7 @@ public class NrNsaScellDualConnectivityHook {
     private Object getFieldValue(Object obj, String className, String fieldName) {
         if (className == null) return null;
         try {
-            Class<?> clazz = loader.loadClass(className);
+            Class<?> clazz = ClassMapping.loadClass(className, loader);
             Field f = clazz.getField(fieldName);
             return f.get(obj);
         } catch (Exception e) {

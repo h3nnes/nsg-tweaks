@@ -93,14 +93,19 @@ public class GranularSeekBarHook {
 
     private void initReflection() {
         try {
-            Class<?> fragmentClass   = loader.loadClass("k8.f");
-            Class<?> advActAClass    = loader.loadClass("com.qtrun.nsg.AdvancedActivity$a");
-            Class<?> workspaceClass  = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> inflaterClass   = loader.loadClass("android.view.LayoutInflater");
-            Class<?> viewGroupClass  = loader.loadClass("android.view.ViewGroup");
-            Class<?> bundleClass     = loader.loadClass("android.os.Bundle");
-            Class<?> maAClass        = loader.loadClass("ma.a");
-            Class<?> dateClass       = loader.loadClass("java.util.Date");
+            Class<?> fragmentClass   = ClassMapping.loadClass("k8.f", loader);
+            Class<?> advActAClass    = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity$a", loader);
+            Class<?> workspaceClass  = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> inflaterClass   = ClassMapping.loadClass("android.view.LayoutInflater", loader);
+            Class<?> viewGroupClass  = ClassMapping.loadClass("android.view.ViewGroup", loader);
+            Class<?> bundleClass     = ClassMapping.loadClass("android.os.Bundle", loader);
+            Class<?> maAClass        = ClassMapping.loadClass("ma.a", loader);
+            Class<?> dateClass       = ClassMapping.loadClass("java.util.Date", loader);
+            if (fragmentClass == null || advActAClass == null || workspaceClass == null
+                    || maAClass == null) {
+                Log.i(TAG, "GranularSeekBarHook: essential class missing, skipping");
+                return;
+            }
 
             // k8.f fields/methods
             fragmentSeekBarField = fragmentClass.getDeclaredField("X");

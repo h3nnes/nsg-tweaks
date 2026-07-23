@@ -80,11 +80,17 @@ public class NrNsaBandwidthColumnHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = loader.loadClass("com.qtrun.sys.Workspace");
-            Class<?> dsClass   = loader.loadClass("com.qtrun.sys.DataSource");
-            Class<?> propClass = loader.loadClass("com.qtrun.sys.Property");
-            Class<?> iterClass = loader.loadClass("com.qtrun.sys.Property$Iterator");
-            Class<?> bbClass   = loader.loadClass("a8.b$b");
+            Class<?> wsClass   = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> dsClass   = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> bbClass   = ClassMapping.loadClass("a8.b$b", loader);
+            Class<?> k8cClass  = ClassMapping.loadClass("k8.c", loader);
+            if (wsClass == null || dsClass == null || propClass == null || iterClass == null
+                    || bbClass == null || k8cClass == null) {
+                Log.i(TAG, "NrNsaBandwidthColumnHook: essential class missing, skipping");
+                return;
+            }
 
             wsSingleton    = wsClass.getField("j");
             wsModuleIndex  = wsClass.getField("a");
@@ -98,7 +104,7 @@ public class NrNsaBandwidthColumnHook {
 
             eField      = bbClass.getField("e");
             hMethod     = bbClass.getMethod("h", int.class);
-            f5509cField = loader.loadClass("k8.c").getField("c");
+            f5509cField = k8cClass.getField("c");
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -209,7 +215,11 @@ public class NrNsaBandwidthColumnHook {
             return;
         }
         try {
-            Class<?> adapterClass  = loader.loadClass("a8.h$a");
+            Class<?> adapterClass  = ClassMapping.loadClass("a8.h$a", loader);
+            if (adapterClass == null) {
+                Log.i(TAG, "NrNsaBandwidthColumnHook: a8.h$a not available, skipping getView hook");
+                return;
+            }
             Method   getViewMethod = adapterClass.getMethod("getView",
                     int.class, View.class, ViewGroup.class);
 
@@ -337,7 +347,11 @@ public class NrNsaBandwidthColumnHook {
     // -----------------------------------------------------------------------
     private void hookOnCreateView() {
         try {
-            Class<?> fragClass = loader.loadClass("a8.h");
+            Class<?> fragClass = ClassMapping.loadClass("a8.h", loader);
+            if (fragClass == null) {
+                Log.i(TAG, "NrNsaBandwidthColumnHook: a8.h not available, skipping onCreateView hook");
+                return;
+            }
             Method   iMethod   = fragClass.getMethod("I",
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 

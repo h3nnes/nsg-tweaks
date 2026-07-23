@@ -88,9 +88,9 @@ public class NrSaRsrpRowHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = loader.loadClass("k2.a");
-            Class<?> veClass  = loader.loadClass("v6.e");
-            Class<?> vfClass  = loader.loadClass("v6.f");
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
+            Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
 
             k2aRMethod = k2aClass.getMethod("r", float.class, float.class, float.class, float.class);
             k2aSMethod = k2aClass.getMethod("s", float.class, float.class, float.class, float.class);
@@ -102,8 +102,8 @@ public class NrSaRsrpRowHook {
             vfF8120g = vfClass.getDeclaredField("g");
             vfF8120g.setAccessible(true);
 
-            sysBClass = loader.loadClass("com.qtrun.sys.b");
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAFieldA = sysAClass.getDeclaredField("a");
             sysAFieldB = sysAClass.getDeclaredField("b");
             sysAFieldC = sysAClass.getDeclaredField("c");
@@ -124,7 +124,7 @@ public class NrSaRsrpRowHook {
 
             k2aListField = k2aClass.getDeclaredField("d");
             k2aListField.setAccessible(true);
-            Class<?> vaClass = loader.loadClass("v6.a");
+            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
@@ -149,8 +149,8 @@ public class NrSaRsrpRowHook {
 
     private void installV6bK0Hook() {
         try {
-            Class<?> v6bClass = loader.loadClass("v6.b");
-            Class<?> k2aClass = loader.loadClass("k2.a");
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
             Method   k0Method = v6bClass.getMethod("k0", k2aClass);
 
             xposed.hook(k0Method).intercept(new Hooker() {

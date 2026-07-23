@@ -89,10 +89,10 @@ public class NrSaPucchTxRowHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = loader.loadClass("k2.a");
-            Class<?> veClass  = loader.loadClass("v6.e");
-            Class<?> vfClass  = loader.loadClass("v6.f");
-            Class<?> v6bClass = loader.loadClass("v6.b");
+            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
+            Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
+            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
 
             k2aRMethod = k2aClass.getMethod("r", float.class, float.class, float.class, float.class);
             k2aSMethod = k2aClass.getMethod("s", float.class, float.class, float.class, float.class);
@@ -111,11 +111,11 @@ public class NrSaPucchTxRowHook {
             vfF8123k.setAccessible(true);
 
             vfFMethod = vfClass.getMethod("f", int.class, float.class);
-            dataSourceClass = loader.loadClass("com.qtrun.sys.DataSource");
+            dataSourceClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
             vfAMethod = vfClass.getMethod("a", long.class, dataSourceClass, short.class);
 
-            sysBClass = loader.loadClass("com.qtrun.sys.b");
-            Class<?> sysAClass = loader.loadClass("com.qtrun.sys.a");
+            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAFieldA = sysAClass.getDeclaredField("a");
             sysAFieldB = sysAClass.getDeclaredField("b");
             sysAFieldC = sysAClass.getDeclaredField("c");
@@ -136,7 +136,7 @@ public class NrSaPucchTxRowHook {
 
             k2aListField = k2aClass.getDeclaredField("d");
             k2aListField.setAccessible(true);
-            Class<?> vaClass = loader.loadClass("v6.a");
+            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
@@ -154,7 +154,11 @@ public class NrSaPucchTxRowHook {
             return;
         }
         try {
-            Class<?> h8cClass = loader.loadClass("h8.c");
+            Class<?> h8cClass = ClassMapping.loadClass("h8.c", loader);
+            if (h8cClass == null) {
+                Log.i(TAG, "NrSaPucchTxRowHook: h8.c not available on this flavor, skipping");
+                return;
+            }
             Method l0Method = h8cClass.getMethod("l0", Context.class);
 
             xposed.hook(l0Method).intercept(new Hooker() {
