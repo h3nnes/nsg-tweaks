@@ -164,7 +164,7 @@ public class EutraRsrpRowHook {
                 Log.i(TAG, "EutraRsrpRowHook: g8.i not available, skipping n0 hook");
                 return;
             }
-            Method   n0Method = g8iClass.getMethod("n0");
+            Method   n0Method = ClassMapping.getMethod(g8iClass, "g8.i", "n0", loader);
 
             xposed.hook(n0Method).intercept(new Hooker() {
                 @Override

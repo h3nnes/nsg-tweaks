@@ -577,9 +577,9 @@ public class NrSaCellColumnsHook {
                 Log.i(TAG, "NrSaCellColumnsHook: h8.b not available, skipping h8.b.Q hook");
                 return;
             }
-            Method   qMeth  = cls.getDeclaredMethod("Q");
+            Method   qMeth  = ClassMapping.getDeclaredMethod(cls, "h8.b", "Q", loader);
             qMeth.setAccessible(true);
-            Method   o0Meth = cls.getDeclaredMethod("o0");
+            Method   o0Meth = ClassMapping.getDeclaredMethod(cls, "h8.b", "o0", loader);
             o0Meth.setAccessible(true);
 
             xposed.hook(qMeth).intercept(new Hooker() {

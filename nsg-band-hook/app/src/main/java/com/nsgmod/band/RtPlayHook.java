@@ -127,7 +127,7 @@ public class RtPlayHook {
                     "I", inflaterClass, viewGroupClass, bundleClass);
             fragmentYField    = fragmentClass.getDeclaredField("Y"); fragmentYField.setAccessible(true);
             fragmentZField    = fragmentClass.getDeclaredField("Z"); fragmentZField.setAccessible(true);
-            fragmentI0Method  = fragmentClass.getDeclaredMethod("i0", float.class);
+            fragmentI0Method  = ClassMapping.getDeclaredMethod(fragmentClass, "k8.f", "i0", loader, float.class);
             fragmentI0Method.setAccessible(true);
 
             // AdvancedActivity.a back-ref to k8.f: runtime "a", JADX mangles to "f3807a"

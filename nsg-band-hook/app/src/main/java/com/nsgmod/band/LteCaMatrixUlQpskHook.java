@@ -168,7 +168,7 @@ public class LteCaMatrixUlQpskHook {
         try {
             Class<?> e8aClass = ClassMapping.loadClass("e8.a", loader);
             Class<?> contextClass = Class.forName("android.content.Context");
-            Method l0Method = e8aClass.getMethod("l0", contextClass);
+            Method l0Method = ClassMapping.getMethod(e8aClass, "e8.a", "l0", loader, contextClass);
 
             xposed.hook(l0Method).intercept(new Hooker() {
                 @Override

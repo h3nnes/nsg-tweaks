@@ -138,7 +138,7 @@ public class NrSaBwpIdHook {
                 Log.i(TAG, "NrSaBwpIdHook: d8.i not available on this flavor, skipping");
                 return;
             }
-            Method l0Method = d8iClass.getMethod("l0", Context.class);
+            Method l0Method = ClassMapping.getMethod(d8iClass, "d8.i", "l0", loader, Context.class);
 
             xposed.hook(l0Method).intercept(new Hooker() {
                 @Override

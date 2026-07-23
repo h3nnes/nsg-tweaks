@@ -114,7 +114,7 @@ public class GranularSeekBarHook {
             fragmentYField.setAccessible(true);
             fragmentZField = fragmentClass.getDeclaredField("Z");
             fragmentZField.setAccessible(true);
-            fragmentI0Method = fragmentClass.getDeclaredMethod("i0", float.class);
+            fragmentI0Method = ClassMapping.getDeclaredMethod(fragmentClass, "k8.f", "i0", loader, float.class);
             fragmentI0Method.setAccessible(true);
             onCreateViewMethod = fragmentClass.getDeclaredMethod(
                     "I", inflaterClass, viewGroupClass, bundleClass);
@@ -131,19 +131,31 @@ public class GranularSeekBarHook {
             advActAField.setAccessible(true);
 
             // Workspace fields/methods
-            wsJ = workspaceClass.getField("j");          // static, public
+            String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsDataSourceName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsJ = workspaceClass.getField(wsSingletonName);          // static, public
             wsH = workspaceClass.getDeclaredField("h");  wsH.setAccessible(true);
             wsG = workspaceClass.getDeclaredField("g");  wsG.setAccessible(true);
             wsI = workspaceClass.getDeclaredField("i");  wsI.setAccessible(true);
-            wsC = workspaceClass.getDeclaredField("c");  wsC.setAccessible(true);
+            wsC = workspaceClass.getDeclaredField(wsDataSourceName);  wsC.setAccessible(true);
             wsGMethod = workspaceClass.getDeclaredMethod("g", long.class, Object.class);
             wsGMethod.setAccessible(true);
             wsIMethod = workspaceClass.getDeclaredMethod("i");
             wsIMethod.setAccessible(true);
 
-            // ma.a.m(Date) → formatted timestamp String
-            maAMMethod = maAClass.getDeclaredMethod("m", dateClass);
-            maAMMethod.setAccessible(true);
+            // Timestamp formatter: qtrun ma.a.m(Date); gplay v8.a.c(Date)
+            try {
+                maAMMethod = maAClass.getDeclaredMethod("m", dateClass);
+                maAMMethod.setAccessible(true);
+            } catch (NoSuchMethodException nsme) {
+                try {
+                    Class<?> fallbackFormatter = Class.forName("v8.a", false, loader);
+                    maAMMethod = fallbackFormatter.getDeclaredMethod("c", dateClass);
+                    maAMMethod.setAccessible(true);
+                } catch (Throwable t) {
+                    Log.w(TAG, "GranularSeekBarHook: timestamp formatter not found, continuing without label sync: " + t);
+                }
+            }
 
             reflectionReady = true;
         } catch (Exception e) {

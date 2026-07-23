@@ -165,7 +165,7 @@ public class NrSaCsiSnrRowHook {
     private void installO0FlagHook() {
         try {
             Class<?> h8bClass = ClassMapping.loadClass("h8.b", loader);
-            Method   o0Method = h8bClass.getMethod("o0");
+            Method   o0Method = ClassMapping.getMethod(h8bClass, "h8.b", "o0", loader);
 
             xposed.hook(o0Method).intercept(new Hooker() {
                 @Override

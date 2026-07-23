@@ -137,8 +137,9 @@ public class NrSaHeaderPathlossHook {
             v6dClass = ClassMapping.loadClass("v6.d", loader);
 
             // Find the k2.a field inside HeaderRFFragment by type.
+            String k2aRuntimeName = ClassMapping.runtimeName("k2.a", loader);
             for (Field field : headerRFFragmentClass.getDeclaredFields()) {
-                if ("k2.a".equals(field.getType().getName())) {
+                if (k2aRuntimeName != null && k2aRuntimeName.equals(field.getType().getName())) {
                     field.setAccessible(true);
                     headerRFFragmentK2aField = field;
                     break;
@@ -187,8 +188,10 @@ public class NrSaHeaderPathlossHook {
             v6dListField.setAccessible(true);
 
             workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            wsSingletonField = workspaceClass.getField("j");
-            wsRatField = workspaceClass.getDeclaredField("d");
+            String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsRatName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "d", loader);
+            wsSingletonField = workspaceClass.getField(wsSingletonName);
+            wsRatField = workspaceClass.getDeclaredField(wsRatName);
             wsRatField.setAccessible(true);
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");

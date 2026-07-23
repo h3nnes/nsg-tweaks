@@ -51,8 +51,8 @@ public class LteCellColorHook {
 
     private static final int HOLO_PURPLE = 0xFFAA66CC;
 
-    private static final String CLASS_LTE_CA_MATRIX = "e8.b";
-    private static final String CLASS_NRNSA_EUTRA_MATRIX = "g8.i";
+    private final String classLteCaMatrix;
+    private final String classNrNsaEutraMatrix;
 
     private static final int[] SCELL_COLORS = {
         0xFFAA66CC, // SCell 1 — holo_purple (unchanged)
@@ -87,6 +87,8 @@ public class LteCellColorHook {
     public LteCellColorHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
         this.loader = loader;
+        this.classLteCaMatrix = ClassMapping.runtimeName("e8.b", loader);
+        this.classNrNsaEutraMatrix = ClassMapping.runtimeName("g8.i", loader);
         initReflection();
     }
 
@@ -183,8 +185,8 @@ public class LteCellColorHook {
         try {
             for (StackTraceElement element : Thread.currentThread().getStackTrace()) {
                 String cls = element.getClassName();
-                if (CLASS_LTE_CA_MATRIX.equals(cls)) return CLASS_LTE_CA_MATRIX;
-                if (CLASS_NRNSA_EUTRA_MATRIX.equals(cls)) return CLASS_NRNSA_EUTRA_MATRIX;
+                if (classLteCaMatrix.equals(cls)) return classLteCaMatrix;
+                if (classNrNsaEutraMatrix.equals(cls)) return classNrNsaEutraMatrix;
             }
         } catch (Exception e) {
             Log.w(TAG, "LteCellColorHook: stack trace inspection failed: " + e);

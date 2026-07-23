@@ -175,7 +175,7 @@ public class LteRsrpRowHook {
     private void installN0FlagHook() {
         try {
             Class<?> e8bClass = ClassMapping.loadClass("e8.b", loader);
-            Method   n0Method = e8bClass.getMethod("n0");
+            Method   n0Method = ClassMapping.getMethod(e8bClass, "e8.b", "n0", loader);
 
             xposed.hook(n0Method).intercept(new Hooker() {
                 @Override

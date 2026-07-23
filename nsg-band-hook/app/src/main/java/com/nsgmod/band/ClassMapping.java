@@ -33,9 +33,6 @@ public final class ClassMapping {
     static {
         Set<String> identity = new HashSet<>();
         // Classes confirmed identical in both qtrun and gplay v4.8.8.
-        identity.add("e8.b");
-        identity.add("e8.a");
-        identity.add("h8.b");
         identity.add("h8.c");
         identity.add("y7.a");
         identity.add("w1.a");
@@ -68,6 +65,12 @@ public final class ClassMapping {
 
         // k2.a grid builder -> b6.e (gplay k2.a is a different interface)
         map.put("k2.a", "b6.e");
+
+        // LTE / NR-SA / NR-NSA matrix fragments moved to n6 / q6 / p6 on gplay.
+        // qtrun e8 package is ACRA on gplay; h8 package is ACRA on gplay.
+        map.put("e8.b", "n6.b");
+        map.put("e8.a", "n6.a");
+        map.put("h8.b", "q6.b");
 
         // k8 adapter/playback family -> t6
         map.put("k8.c", "t6.c");
@@ -118,6 +121,16 @@ public final class ClassMapping {
         methodMap.put("v6.b|k0", "j0");
         // PlaybackControlsFragment seekbar sync: qtrun i0(float) -> gplay h0(float)
         methodMap.put("t6.f|i0", "h0");
+        // LTE CA Matrix DL builder method: qtrun e8.b.n0() -> gplay n6.b.m0()
+        methodMap.put("e8.b|n0", "m0");
+        // NR-NSA EUTRA CA Matrix DL builder method: qtrun g8.i.n0() -> gplay p6.i.m0()
+        methodMap.put("g8.i|n0", "m0");
+        // NR-SA CA Matrix DL builder method: qtrun h8.b.o0() -> gplay q6.b.n0()
+        methodMap.put("h8.b|o0", "n0");
+        // NR-SA KPI fragment builder method: qtrun d8.i.l0(Context) -> gplay m6.i.k0(Context)
+        methodMap.put("d8.i|l0", "k0");
+        // LTE CA Matrix UL builder method: qtrun e8.a.l0(Context) -> gplay n6.a.k0(Context)
+        methodMap.put("e8.a|l0", "k0");
         // Cell-DB WHERE-clause builder: qtrun ma.a.j(...) -> gplay z8.a.h(...)
         methodMap.put("ma.a|j", "h");
         GPLAY_METHOD_OVERRIDES = Collections.unmodifiableMap(methodMap);
@@ -136,10 +149,11 @@ public final class ClassMapping {
         // u7.a synthetic click-listener fields: qtrun a/b -> gplay b/c
         fieldMap.put("u7.a|a", "b");
         fieldMap.put("u7.a|b", "c");
-        // com.qtrun.sys.Workspace static/instance fields: qtrun j/a/c -> gplay k/b/d
+        // com.qtrun.sys.Workspace static/instance fields: qtrun j/a/c/d -> gplay k/b/d/e
         fieldMap.put("com.qtrun.sys.Workspace|j", "k");
         fieldMap.put("com.qtrun.sys.Workspace|a", "b");
         fieldMap.put("com.qtrun.sys.Workspace|c", "d");
+        fieldMap.put("com.qtrun.sys.Workspace|d", "e");
         // a4.h synthetic load-completion fields: qtrun a/b/c -> gplay b/d/c
         fieldMap.put("a4.h|a", "b");
         fieldMap.put("a4.h|b", "d");

@@ -101,10 +101,12 @@ public class NrSaCarrierCountHook {
             sysACField.setAccessible(true);
 
             Class<?> workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            Field wjField = workspaceClass.getDeclaredField("j");
+            String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsTickName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            Field wjField = workspaceClass.getDeclaredField(wsSingletonName);
             wjField.setAccessible(true);
             workspaceInstance = wjField.get(null);
-            workspaceTickField = workspaceClass.getDeclaredField("a");
+            workspaceTickField = workspaceClass.getDeclaredField(wsTickName);
             workspaceTickField.setAccessible(true);
             workspaceHMethod = workspaceClass.getMethod("h", sysAClass, int.class);
 
