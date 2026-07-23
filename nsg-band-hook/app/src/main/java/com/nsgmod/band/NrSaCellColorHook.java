@@ -135,7 +135,7 @@ public class NrSaCellColorHook {
 
             // Hook 1: v6.b.k0(k2.a) — update f8126i on all matching v6.g objects so that
             // any future c() call (e.g. fragment recreation) bakes the right color.
-            Method k0Method = v6bClass.getMethod("k0", k2aClass);
+            Method k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {

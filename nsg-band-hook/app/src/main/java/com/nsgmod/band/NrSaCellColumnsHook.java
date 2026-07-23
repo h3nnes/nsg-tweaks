@@ -96,9 +96,12 @@ public class NrSaCellColumnsHook {
                 return;
             }
 
-            wsSingleton    = wsClass.getField("j");
-            wsModuleIndex  = wsClass.getField("a");
-            wsDataSource   = wsClass.getField("c");
+            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsSingleton    = wsClass.getField(wsJName);
+            wsModuleIndex  = wsClass.getField(wsAName);
+            wsDataSource   = wsClass.getField(wsCName);
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -106,7 +109,8 @@ public class NrSaCellColumnsHook {
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
 
-            sourcesField = dbClass.getField("d");   // a8.d.a[] sources
+            String sourcesFieldName = ClassMapping.runtimeFieldName("a8.d$b", "d", loader);
+            sourcesField = dbClass.getField(sourcesFieldName);   // a8.d.a[] sources
             gMethod      = dbClass.getMethod("g", int.class);
             // NOTE: a8.d.a extends k8.b (not k8.c), so there is no f5509c field.
             // Sample key is captured via hookDataCallback() instead.

@@ -63,8 +63,10 @@ public class NrNsaExtCellsHook {
                 return;
             }
 
-            eField = bbClass.getField("e"); // public final a8.b$a[] f127e
-            dField = kcClass.getField("d"); // public int f5510d
+            String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
+            eField = bbClass.getField(eFieldName); // public final a8.b$a[] f127e
+            String dFieldName = ClassMapping.runtimeFieldName("k8.c", "d", loader);
+            dField = kcClass.getField(dFieldName); // public int f5510d
 
             ready = true;
         } catch (Exception e) {

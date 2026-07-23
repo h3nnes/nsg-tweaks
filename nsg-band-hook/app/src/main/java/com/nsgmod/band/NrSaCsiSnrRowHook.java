@@ -92,8 +92,10 @@ public class NrSaCsiSnrRowHook {
             Class<?> veClass   = ClassMapping.loadClass("v6.e", loader);
             Class<?> vfClass   = ClassMapping.loadClass("v6.f", loader);
 
-            k2aRMethod = k2aClass.getMethod("r", float.class, float.class, float.class, float.class);
-            k2aSMethod = k2aClass.getMethod("s", float.class, float.class, float.class, float.class);
+            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
+                    float.class, float.class, float.class, float.class);
 
             // JADX renames fields to avoid collision with package names, e.g. "f" in package v6.f
             // becomes "f8116f". The actual bytecode field names are the originals: "f", "g", "h".
@@ -195,7 +197,7 @@ public class NrSaCsiSnrRowHook {
         try {
             Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
             Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Method   k0Method = v6bClass.getMethod("k0", k2aClass);
+            Method   k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
 
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override

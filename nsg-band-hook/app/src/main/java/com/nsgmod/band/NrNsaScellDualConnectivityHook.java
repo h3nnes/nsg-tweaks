@@ -228,7 +228,8 @@ public class NrNsaScellDualConnectivityHook {
             v6aXField = v6aClass.getDeclaredField("d");
             v6aXField.setAccessible(true);
 
-            v6dCellsField = v6dClass.getDeclaredField("a");
+            String v6dCellsFieldName = ClassMapping.runtimeFieldName("v6.d", "a", loader);
+            v6dCellsField = v6dClass.getDeclaredField(v6dCellsFieldName);
             v6dCellsField.setAccessible(true);
 
             v6gFormattersField = v6gClass.getDeclaredField("f");

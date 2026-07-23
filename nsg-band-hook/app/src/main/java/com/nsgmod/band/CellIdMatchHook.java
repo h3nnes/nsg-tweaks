@@ -58,7 +58,7 @@ public class CellIdMatchHook {
                 Log.i(TAG, "CellIdMatchHook: ma.a not available on this flavor, skipping");
                 return;
             }
-            Method method = cls.getDeclaredMethod("j",
+            Method method = ClassMapping.getDeclaredMethod(cls, "ma.a", "j", loader,
                     String.class, Integer.class, Integer.class, Double.class, Double.class);
             method.setAccessible(true);
 

@@ -92,9 +92,12 @@ public class NrNsaBandwidthColumnHook {
                 return;
             }
 
-            wsSingleton    = wsClass.getField("j");
-            wsModuleIndex  = wsClass.getField("a");
-            wsDataSource   = wsClass.getField("c");
+            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsSingleton    = wsClass.getField(wsJName);
+            wsModuleIndex  = wsClass.getField(wsAName);
+            wsDataSource   = wsClass.getField(wsCName);
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -102,9 +105,11 @@ public class NrNsaBandwidthColumnHook {
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
 
-            eField      = bbClass.getField("e");
+            String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
+            eField      = bbClass.getField(eFieldName);
             hMethod     = bbClass.getMethod("h", int.class);
-            f5509cField = k8cClass.getField("c");
+            String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
+            f5509cField = k8cClass.getField(sampleKeyFieldName);
 
             reflectionReady = true;
         } catch (Exception e) {

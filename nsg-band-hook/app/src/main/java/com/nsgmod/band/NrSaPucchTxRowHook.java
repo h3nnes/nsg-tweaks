@@ -94,8 +94,10 @@ public class NrSaPucchTxRowHook {
             Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
             Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
 
-            k2aRMethod = k2aClass.getMethod("r", float.class, float.class, float.class, float.class);
-            k2aSMethod = k2aClass.getMethod("s", float.class, float.class, float.class, float.class);
+            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
+                    float.class, float.class, float.class, float.class);
 
             veF = veClass.getField("f");
             veG = veClass.getField("g");

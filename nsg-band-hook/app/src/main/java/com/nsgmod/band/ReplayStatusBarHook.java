@@ -140,6 +140,10 @@ public class ReplayStatusBarHook {
     }
 
     private void initReflection() {
+        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.QTRUN) {
+            Log.i(TAG, "ReplayStatusBarHook: gplay flavor not supported, skipping");
+            return;
+        }
         try {
             Class<?> hClass  = ClassMapping.loadClass("a4.h", loader);
             Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);

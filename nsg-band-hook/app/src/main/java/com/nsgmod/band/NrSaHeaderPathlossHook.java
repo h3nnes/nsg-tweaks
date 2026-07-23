@@ -148,9 +148,12 @@ public class NrSaHeaderPathlossHook {
                 throw new NoSuchFieldException("k2.a field not found in HeaderRFFragment");
             }
 
-            k2aRMethod = k2aClass.getMethod("r", float.class, float.class, float.class, float.class);
-            k2aTMethod = k2aClass.getMethod("t", float.class, float.class, float.class, float.class);
-            k2aJMethod = k2aClass.getMethod("j", android.content.Context.class, int.class);
+            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aJMethod = ClassMapping.getMethod(k2aClass, "k2.a", "j", loader,
+                    android.content.Context.class, int.class);
             k2aListField = k2aClass.getDeclaredField("d");
             k2aListField.setAccessible(true);
 
@@ -179,7 +182,8 @@ public class NrSaHeaderPathlossHook {
             vgGMethod = vgClass.getMethod("g", sysBClass, boolean.class);
             vgJMethod = vgClass.getMethod("j", int.class, int.class);
 
-            v6dListField = v6dClass.getDeclaredField("a");
+            String v6dListFieldName = ClassMapping.runtimeFieldName("v6.d", "a", loader);
+            v6dListField = v6dClass.getDeclaredField(v6dListFieldName);
             v6dListField.setAccessible(true);
 
             workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);

@@ -93,9 +93,11 @@ public class SignalingSearchHook {
                     int.class,
                     long.class);
 
-            u7aFieldA = u7aClass.getDeclaredField("a");
+            String u7aFieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
+            String u7aFieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
+            u7aFieldA = u7aClass.getDeclaredField(u7aFieldAName);
             u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField("b");
+            u7aFieldB = u7aClass.getDeclaredField(u7aFieldBName);
             u7aFieldB.setAccessible(true);
 
             u7fPopupField = findFieldByType(u7fClass, PopupWindow.class);

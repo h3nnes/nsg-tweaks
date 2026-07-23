@@ -52,6 +52,10 @@ public class PageDotJumpHook {
     }
 
     private void initReflection() {
+        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.QTRUN) {
+            Log.i(TAG, "PageDotJumpHook: gplay flavor not supported, skipping");
+            return;
+        }
         try {
             Class<?> indicatorClass = ClassMapping.loadClass(
                     "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", loader);

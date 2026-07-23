@@ -100,6 +100,10 @@ public class RtPlayHook {
     // ── Reflection setup ──────────────────────────────────────────────────────
 
     private void initReflection() {
+        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.QTRUN) {
+            Log.i(TAG, "RtPlayHook: gplay flavor not supported, skipping");
+            return;
+        }
         try {
             Class<?> fragmentClass  = ClassMapping.loadClass("k8.f", loader);
             Class<?> advActAClass   = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity$a", loader);

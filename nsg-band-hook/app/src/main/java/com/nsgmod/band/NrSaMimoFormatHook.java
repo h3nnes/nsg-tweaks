@@ -77,10 +77,14 @@ public class NrSaMimoFormatHook {
             Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
             Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
 
-            wsJ = wsClass.getField("j");
-            wsG = wsClass.getDeclaredField("g"); wsG.setAccessible(true);
-            wsModuleIndex = wsClass.getField("a");
-            wsDataSource = wsClass.getField("c");
+            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            String wsGName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "g", loader);
+            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
+            wsJ = wsClass.getField(wsJName);
+            wsG = wsClass.getDeclaredField(wsGName); wsG.setAccessible(true);
+            wsModuleIndex = wsClass.getField(wsAName);
+            wsDataSource = wsClass.getField(wsCName);
 
             dsGetProperty = dsClass.getMethod("getProperty", String.class, int.class);
             propBMethod = propClass.getMethod("b", long.class);

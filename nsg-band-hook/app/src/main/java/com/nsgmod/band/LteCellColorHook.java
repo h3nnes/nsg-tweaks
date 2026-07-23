@@ -152,7 +152,7 @@ public class LteCellColorHook {
             Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
             Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
 
-            Method k0Method = v6bClass.getMethod("k0", k2aClass);
+            Method k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {

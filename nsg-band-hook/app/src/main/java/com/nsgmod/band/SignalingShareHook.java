@@ -90,10 +90,12 @@ public class SignalingShareHook {
                     int.class,
                     long.class);
 
-            // u7.a fields: dex names are "a" (int) and "b" (u6.a)
-            u7aFieldA = u7aClass.getDeclaredField("a");
+            // u7.a fields: dex names are "a"/"b" on qtrun, "b"/"c" on gplay d6.a
+            String u7aFieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
+            String u7aFieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
+            u7aFieldA = u7aClass.getDeclaredField(u7aFieldAName);
             u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField("b");
+            u7aFieldB = u7aClass.getDeclaredField(u7aFieldBName);
             u7aFieldB.setAccessible(true);
 
             // u7.f PopupWindow field — find by type scan (actual dex name unknown)
