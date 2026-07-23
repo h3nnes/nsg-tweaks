@@ -37,7 +37,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  */
 public class NrNsaScellDualConnectivityHook {
 
-    private static final String TAG = "NSGBandHook";
+    private static final String TAG = "NSGBandHook:Scell";
 
     private static final String TARGET_FRAGMENT = "g8.h";
     private static final String K2A_CLASS = "k2.a";
@@ -159,6 +159,7 @@ public class NrNsaScellDualConnectivityHook {
 
     private void initReflection() {
         try {
+            Log.v(TAG, "initReflection start; flavor=" + FlavorDetector.detect(loader));
             Class<?> k2aClass = ClassMapping.loadClass(K2A_CLASS, loader);
             Class<?> v6aClass = ClassMapping.loadClass(V6_A_CLASS, loader);
             Class<?> v6dClass = ClassMapping.loadClass(V6_D_CLASS, loader);
@@ -169,6 +170,12 @@ public class NrNsaScellDualConnectivityHook {
             Class<?> dsClass = ClassMapping.loadClass(DATA_SOURCE_CLASS, loader);
             Class<?> fontTextViewClass = ClassMapping.loadClass(FONT_TEXT_VIEW_CLASS, loader);
             Class<?> progressTextViewClass = ClassMapping.loadClass(PROGRESS_TEXT_VIEW_CLASS, loader);
+
+            Log.v(TAG, "loaded classes: k2a=" + (k2aClass != null ? k2aClass.getName() : null)
+                    + " v6a=" + (v6aClass != null ? v6aClass.getName() : null)
+                    + " v6d=" + (v6dClass != null ? v6dClass.getName() : null)
+                    + " target=" + ClassMapping.runtimeName(TARGET_FRAGMENT, loader));
+
             if (k2aClass == null || v6aClass == null || v6dClass == null || v6eClass == null
                     || v6fClass == null || v6gClass == null || attrAClass == null || dsClass == null
                     || fontTextViewClass == null || progressTextViewClass == null) {
@@ -177,6 +184,7 @@ public class NrNsaScellDualConnectivityHook {
             }
 
             targetFragmentClass = ClassMapping.loadClass(TARGET_FRAGMENT, loader);
+            Log.v(TAG, "targetFragmentClass=" + targetFragmentClass);
             if (targetFragmentClass == null) {
                 Log.i(TAG, "NrNsaScellDualConnectivityHook: target fragment class missing, skipping");
                 return;
@@ -240,6 +248,7 @@ public class NrNsaScellDualConnectivityHook {
             String v6dCellsFieldName = ClassMapping.runtimeFieldName("v6.d", "a", loader);
             v6dCellsField = v6dClass.getDeclaredField(v6dCellsFieldName);
             v6dCellsField.setAccessible(true);
+            Log.v(TAG, "v6.d cells runtime field name: " + v6dCellsFieldName + " -> " + v6dCellsField);
 
             v6gFormattersField = v6gClass.getDeclaredField("f");
             v6gFormattersField.setAccessible(true);
@@ -289,6 +298,13 @@ public class NrNsaScellDualConnectivityHook {
             Log.e(TAG, "NrNsaScellDualConnectivityHook: install skipped, reflection not ready");
             return;
         }
+        // The gplay path (p6.h + e5.* grid builder family) is not yet safe to modify
+        // without on-device verification. Disabling it on gplay prevents the layout
+        // regression reported while keeping qtrun behavior intact.
+        if (FlavorDetector.isGplay(loader)) {
+            Log.w(TAG, "NrNsaScellDualConnectivityHook: disabled on gplay (p6.h/e5.* not yet safe)");
+            return;
+        }
         try {
             hookI();
             hookB();
@@ -323,7 +339,10 @@ public class NrNsaScellDualConnectivityHook {
                     Object result = chain.proceed();
                     try {
                         Object fragment = chain.getThisObject();
-                        if (fragment != null && fragment.getClass() == targetFragmentClass) {
+                        boolean match = fragment != null && fragment.getClass() == targetFragmentClass;
+                        Log.v(TAG, "v6.b.I hook; fragmentClass=" + (fragment != null ? fragment.getClass().getName() : null)
+                                + " target=" + targetFragmentClass.getName() + " match=" + match);
+                        if (match) {
                             resetAndRebuild(fragment);
                         }
                     } catch (Exception e) {
@@ -338,6 +357,7 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     private void resetAndRebuild(Object fragment) {
+        Log.v(TAG, "resetAndRebuild; currentlyStretched=" + currentlyStretched + " oldBindings=" + rowBindings.size());
         // If the view was recreated while we were stretched, restore normal
         // geometry before we forget what "normal" looks like.
         if (currentlyStretched) {
@@ -362,6 +382,7 @@ public class NrNsaScellDualConnectivityHook {
         currentlyStretched = false;
 
         Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
+        Log.v(TAG, "buildBindings: fragment.Y=" + k2a);
         if (k2a == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: fragment.Y is null");
             return;
@@ -375,8 +396,10 @@ public class NrNsaScellDualConnectivityHook {
             return;
         }
         if (cells == null) {
+            Log.v(TAG, "buildBindings: cells list null");
             return;
         }
+        Log.v(TAG, "buildBindings: total cells=" + cells.size());
 
         // Group cells by row.
         Map<Integer, RowCells> rows = new HashMap<>();
@@ -414,7 +437,9 @@ public class NrNsaScellDualConnectivityHook {
             RowBinding binding = new RowBinding(row, rc.label, rc.lte, rc.nr);
             preparePcellFormatters(binding, rc.nr, row);
             rowBindings.add(binding);
+            Log.v(TAG, "buildBindings: row=" + row + " bound (nrClass=" + rc.nr.getClass().getName() + ")");
         }
+        Log.v(TAG, "buildBindings: bound " + rowBindings.size() + " NR rows");
     }
 
     // -------------------------------------------------------------------------
@@ -429,6 +454,7 @@ public class NrNsaScellDualConnectivityHook {
 
     @SuppressWarnings("unchecked")
     private boolean wrapAllRows(Object fragment) {
+        Log.v(TAG, "wrapAllRows start");
         Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
         if (k2a == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, fragment.Y is null");
@@ -439,6 +465,7 @@ public class NrNsaScellDualConnectivityHook {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, grid is null");
             return false;
         }
+        Log.v(TAG, "wrapAllRows: gridView=" + gridView);
 
         List<Object> gridCells;
         try {
@@ -448,8 +475,10 @@ public class NrNsaScellDualConnectivityHook {
             return false;
         }
         if (gridCells == null) {
+            Log.w(TAG, "wrapAllRows: gridCells null");
             return false;
         }
+        Log.v(TAG, "wrapAllRows: gridCells=" + gridCells.size());
 
         // Validate that every unwrapped NR cell still maps to a TextView child.
         ViewGroup gridGroup = (ViewGroup) gridView;
@@ -465,6 +494,7 @@ public class NrNsaScellDualConnectivityHook {
                 Log.w(TAG, "NrNsaScellDualConnectivityHook: grid child is not a TextView for row " + binding.originalRow);
                 return false;
             }
+            Log.v(TAG, "wrapAllRows: validated row=" + binding.originalRow + " index=" + index);
         }
 
         for (RowBinding binding : rowBindings) {
@@ -518,6 +548,7 @@ public class NrNsaScellDualConnectivityHook {
             binding.scellView = scellView;
             binding.scellCell = createScellCell(binding, scellView);
             binding.wrapped = true;
+            Log.v(TAG, "wrapAllRows: wrapped row=" + binding.originalRow + " scellCell=" + binding.scellCell);
 
             // Now that the SCell is present, make the PCell cell use the
             // PCell-specific formatter keys so PCell and SCell values are fetched
@@ -525,6 +556,7 @@ public class NrNsaScellDualConnectivityHook {
             // display updates immediately.
             applyPcellFormatters(binding, true);
         }
+        Log.v(TAG, "wrapAllRows: complete");
         return true;
     }
 
@@ -598,6 +630,7 @@ public class NrNsaScellDualConnectivityHook {
                 return;
             }
             Method bMethod = g8hClass.getMethod("b", dsClass, long.class, short.class, Object.class);
+            Log.v(TAG, "hookB: g8.h.b(...) -> " + bMethod);
 
             xposed.hook(bMethod).intercept(new Hooker() {
                 @Override
@@ -623,6 +656,9 @@ public class NrNsaScellDualConnectivityHook {
         lastModuleIndex = moduleIndex;
 
         boolean scellPresent = isScellPresent(dataSource, sampleKey, moduleIndex);
+        Log.v(TAG, "onDataUpdate sampleKey=" + sampleKey + " moduleIndex=" + moduleIndex
+                + " scellPresent=" + scellPresent + " bindings=" + rowBindings.size()
+                + " currentlyStretched=" + currentlyStretched);
         boolean layoutNeeded = false;
 
         if (scellPresent) {
@@ -653,6 +689,7 @@ public class NrNsaScellDualConnectivityHook {
     }
 
     private void stretchGrid(boolean stretch) {
+        Log.v(TAG, "stretchGrid stretch=" + stretch + " bindings=" + rowBindings.size());
         for (RowBinding binding : rowBindings) {
             int row = binding.originalRow;
 
