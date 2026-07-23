@@ -127,6 +127,7 @@ public final class ClassMapping {
         methodMap.put("g8.i|n0", "m0");
         // NR-SA CA Matrix DL builder method: qtrun h8.b.o0() -> gplay q6.b.n0()
         methodMap.put("h8.b|o0", "n0");
+        methodMap.put("h8.b|Q", "Q");
         // NR-SA KPI fragment builder method: qtrun d8.i.l0(Context) -> gplay m6.i.k0(Context)
         methodMap.put("d8.i|l0", "k0");
         // LTE CA Matrix UL builder method: qtrun e8.a.l0(Context) -> gplay n6.a.k0(Context)
