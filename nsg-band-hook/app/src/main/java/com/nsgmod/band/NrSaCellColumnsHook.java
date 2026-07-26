@@ -447,7 +447,7 @@ public class NrSaCellColumnsHook {
 
                     // Redistribute weights across all 8 columns:
                     // [Serving, ARFCN, PCI, BW, Beam, RSRP, RSRQ, SINR]
-                    float[] weights = {0.03f, 0.18f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f};
+                    float[] weights = {0.03f, 0.18f, 0.10f, 0.09f, 0.10f, 0.17f, 0.17f, 0.16f};
                     for (int i = 0; i < topRow.getChildCount() && i < weights.length; i++) {
                         LinearLayout.LayoutParams lp =
                                 (LinearLayout.LayoutParams) topRow.getChildAt(i).getLayoutParams();
@@ -529,7 +529,7 @@ public class NrSaCellColumnsHook {
                 ll.addView(tvBwHdr, 3);
 
                 // Redistribute header weights to match row weights
-                float[] weights = {0.03f, 0.18f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f};
+                float[] weights = {0.03f, 0.18f, 0.10f, 0.09f, 0.10f, 0.17f, 0.17f, 0.16f};
                 for (int j = 0; j < ll.getChildCount() && j < weights.length; j++) {
                     LinearLayout.LayoutParams lp =
                             (LinearLayout.LayoutParams) ll.getChildAt(j).getLayoutParams();

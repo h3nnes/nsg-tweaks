@@ -20,7 +20,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * already injected by BandColumnHook.
  *
  * Final column order: [Serving, ARFCN, PCI, BW, Beam, RSRP, RSRQ, SINR]
- * Final weights:      {0.03f,  0.18f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f}
+ * Final weights:      {0.03f,  0.18f, 0.10f, 0.09f, 0.10f, 0.17f, 0.17f, 0.16f}
  *
  * Data is read fresh on every getView() call using the adapter's own sample key (f5509c)
  * as the queryTime anchor. This mirrors NSG's v6/f.java (QtGridValueBar.a()) pattern:
@@ -50,7 +50,7 @@ public class NrNsaBandwidthColumnHook {
 
     // Final 8-column weights: [Serving, ARFCN, PCI, BW, Beam, RSRP, RSRQ, SINR]
     private static final float[] FINAL_WEIGHTS =
-            {0.03f, 0.18f, 0.10f, 0.10f, 0.09f, 0.17f, 0.17f, 0.16f};
+            {0.03f, 0.18f, 0.10f, 0.09f, 0.10f, 0.17f, 0.17f, 0.16f};
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
