@@ -1,5 +1,7 @@
 package com.nsgmod.band;
 
+import android.content.Context;
+import android.util.AttributeSet;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
@@ -9,6 +11,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -16,34 +19,60 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks a8.f$a (LTECellsFragment adapter) to inject a BW column between Band and EARFCN.
+ * Hooks a8.f$a (LTECellsFragment adapter) to inject BOTH a BW column (between
+ * Band and EARFCN) and an SNR (LTE SINR) column (as the last column, after RSRQ)
+ * into the LTE cell table — using a single getView hook and a single onCreateView
+ * hook to avoid the interference caused by two separate hooks.
  *
- * Keys:
+ * <h3>Final 8-column layout</h3>
+ *   [Serving, Band, BW, EARFCN, PCI, RSRP, RSRQ, SNR]
+ *   weights: {0.05, 0.10, 0.09, 0.17, 0.14, 0.15, 0.15, 0.15}
+ *
+ * <h3>BW keys</h3>
  *   LTE::Serving_Cell::LTE_Bandwidth_PCell_DL          (intraRow == 0)
- *   LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell{N}_DL  (intraRow 1–7)
- * Enum: 0=1.4, 1=3, 2=5, 3=10, 4=15, 5=20 (MHz)
+ *   LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell{N}_DL  (intraRow 1-7)
+ *   Enum: 0=1.4, 1=3, 2=5, 3=10, 4=15, 5=20 (MHz)
  *
- * Data is read fresh on every getView() call using the adapter's own sample key (f5509c)
- * as the queryTime anchor. This mirrors NSG's v6/f.java (QtGridValueBar.a()) pattern:
- *   Property.b(queryTime) → iter.value()
- * No persistent cache — avoids any stale-data risk.
+ * <h3>SINR keys</h3>
+ *   LTE::Downlink_Measurements::LTE_SINR_PCell          (intraRow == 0)
+ *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell1     (intraRow == 1)
+ *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell2     (intraRow == 2)
+ *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell3     (intraRow == 3)
+ *   intraRow > 3: "-" (no SCell4+ SINR field)
  *
- * A prev-tick fallback handles partially-written head entries where iter.value() returns null.
+ * <h3>SINR color coding</h3>
+ * The SNR column uses {@code com.qtrun.widget.textview.ProgressTextView} (not a
+ * plain TextView) with {@code com.qtrun.legend.LegendManager} color coding, the
+ * same mechanism NSG uses for RSRP/RSRQ columns (decompiled
+ * {@code a8.b.AbstractC0008b.j}). Each intraRow gets a
+ * {@code com.qtrun.sys.b} attribute descriptor created via Unsafe (the
+ * constructor is stripped by ProGuard on gplay) and cached.
+ *
+ * <p>Data is read fresh on every getView() call using the adapter's own sample
+ * key (f5509c) as the queryTime anchor — same Property.b(queryTime) -> iter.value()
+ * pattern as NSG's v6/f.java. A prev-tick fallback handles partially-written
+ * head entries where iter.value() returns null.
  */
 public class LteBandwidthColumnHook {
 
     private static final String TAG = "NSGBandHook";
-    private static final int MAX_SCELLS = 7;
+
+    private static final float[] WEIGHTS = {
+            0.05f, 0.10f, 0.09f, 0.17f, 0.14f, 0.15f, 0.15f, 0.15f
+    };
 
     // Tag keys on the row LinearLayout.
-    private static final String TAG_BW_INJECTED  = "nsg_ltebw_injected";
-    private static final int    BW_TAG_KEY        = "nsg_ltebw_injected".hashCode();
+    private static final String TAG_HEADER_INJECTED = "nsg_lte_header_injected";
+    private static final int    HEADER_TAG_KEY    = "nsg_lte_header_injected".hashCode();
     private static final int    BW_VIEW_TAG_KEY   = "nsg_ltebw_view".hashCode();
+    private static final int    SNR_VIEW_TAG_KEY  = "nsg_ltesinr_view".hashCode();
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // Workspace / Property reflection.
+    // ------------------------------------------------------------------
+    // Workspace / Property reflection (for reading BW and SINR data)
+    // ------------------------------------------------------------------
     private Field  wsSingleton;
     private Field  wsModuleIndex;
     private Field  wsDataSource;
@@ -53,12 +82,39 @@ public class LteBandwidthColumnHook {
     private Method iterKeyMethod;
     private Method iterValueMethod;
 
-    // Adapter reflection.
+    // ------------------------------------------------------------------
+    // Adapter reflection
+    // ------------------------------------------------------------------
     private Field  eField;       // a8.b$b.e — Object[] sources array
     private Method hMethod;      // a8.b$b.h(int) — returns Pair<source, intraRow>
     private Field  f5509cField;  // k8.c.c — adapter's current data sample key
 
+    // ------------------------------------------------------------------
+    // SINR color-coding reflection
+    // ------------------------------------------------------------------
+    private Class<?>         ptvClass;          // com.qtrun.widget.textview.ProgressTextView
+    private Constructor<?>  ptvCtor;           // (Context, AttributeSet)
+    private Field            ptvFieldJ;        // boolean show-bar flag
+    private Method           ptvMethodH;       // h(int, float)
+    private Method           ptvSetProgress;   // setProgress(float)
+
+    private Class<?>         legendClass;      // com.qtrun.legend.LegendManager
+    private Field            legendSingleton;  // static singleton field
+    private Method           legendMethodC;    // c(com.qtrun.sys.b, double) -> float
+    private Method           legendMethodA;    // a(com.qtrun.sys.b, double) -> Integer
+
+    private Class<?>         sysBClass;        // com.qtrun.sys.b
+    private Field            sysAFieldA;       // com.qtrun.sys.a.a — String key
+    private Field            sysAFieldB;       // com.qtrun.sys.a.b — String format
+    private Field            sysAFieldC;       // com.qtrun.sys.a.c — int index
+    private Method           sysACMethod;      // com.qtrun.sys.a.c(Object) -> String
+
+    private Object           unsafe;
+    private Method           unsafeAllocateInstance;
+    private Object[]         sinrAttrs;        // com.qtrun.sys.b instances for intraRow 0-3
+
     private boolean reflectionReady = false;
+    private boolean sinrColorReady   = false;
 
     public LteBandwidthColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -102,13 +158,112 @@ public class LteBandwidthColumnHook {
             reflectionReady = true;
         } catch (Exception e) {
             Log.e(TAG, "LteBandwidthColumnHook: initReflection failed: " + e);
+            return;
         }
+
+        // --- SINR color-coding reflection (best-effort) ---
+        initSinrColorReflection();
+    }
+
+    private void initSinrColorReflection() {
+        try {
+            // ProgressTextView — stable across flavors (com.qtrun package).
+            ptvClass = ClassMapping.loadClass("com.qtrun.widget.textview.ProgressTextView", loader);
+            if (ptvClass == null) {
+                Log.w(TAG, "LteBandwidthColumnHook: ProgressTextView not available, "
+                        + "SNR will use plain TextView");
+                return;
+            }
+            ptvCtor = ptvClass.getConstructor(Context.class, AttributeSet.class);
+            ptvCtor.setAccessible(true);
+
+            ptvFieldJ = ptvClass.getDeclaredField("j");
+            ptvFieldJ.setAccessible(true);
+
+            ptvMethodH = ptvClass.getDeclaredMethod("h", int.class, float.class);
+            ptvMethodH.setAccessible(true);
+
+            ptvSetProgress = ptvClass.getMethod("setProgress", float.class);
+
+            // LegendManager — stable across flavors (com.qtrun package).
+            legendClass = ClassMapping.loadClass("com.qtrun.legend.LegendManager", loader);
+            if (legendClass == null) {
+                Log.w(TAG, "LteBandwidthColumnHook: LegendManager not available, "
+                        + "SNR will show without color coding");
+                return;
+            }
+            // Singleton field: runtime name is "e" (JADX renames to f3783e but
+            // bytecode is "e"). Try "e" first, then "f3783e" as fallback.
+            try {
+                legendSingleton = legendClass.getDeclaredField("e");
+            } catch (NoSuchFieldException nsfe) {
+                legendSingleton = legendClass.getDeclaredField("f3783e");
+            }
+            legendSingleton.setAccessible(true);
+
+            // com.qtrun.sys.b class and com.qtrun.sys.a fields/method.
+            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
+            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            if (sysBClass == null || sysAClass == null) {
+                Log.w(TAG, "LteBandwidthColumnHook: com.qtrun.sys.b/a not available");
+                return;
+            }
+            sysAFieldA = sysAClass.getDeclaredField("a");
+            sysAFieldB = sysAClass.getDeclaredField("b");
+            sysAFieldC = sysAClass.getDeclaredField("c");
+            sysAFieldA.setAccessible(true);
+            sysAFieldB.setAccessible(true);
+            sysAFieldC.setAccessible(true);
+            sysACMethod = sysAClass.getMethod("c", Object.class);
+
+            // LegendManager methods: c(b, double)->float, a(b, double)->Integer
+            legendMethodC = legendClass.getDeclaredMethod("c", sysBClass, double.class);
+            legendMethodC.setAccessible(true);
+            legendMethodA = legendClass.getDeclaredMethod("a", sysBClass, double.class);
+            legendMethodA.setAccessible(true);
+
+            // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard).
+            Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+            java.lang.reflect.Field unsafeField;
+            try {
+                unsafeField = unsafeClass.getDeclaredField("THE_ONE");   // Android/Dalvik
+            } catch (NoSuchFieldException e2) {
+                unsafeField = unsafeClass.getDeclaredField("theUnsafe"); // OpenJDK fallback
+            }
+            unsafeField.setAccessible(true);
+            unsafe = unsafeField.get(null);
+            unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
+
+            // Create and cache the 4 SINR attribute descriptors.
+            sinrAttrs = new Object[4];
+            sinrAttrs[0] = makeSinrAttr("LTE::Downlink_Measurements::LTE_SINR_PCell", -1, "%.1f");
+            sinrAttrs[1] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell1", -1, "%.1f");
+            sinrAttrs[2] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell2", -1, "%.1f");
+            sinrAttrs[3] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell3", -1, "%.1f");
+
+            sinrColorReady = true;
+            Log.i(TAG, "LteBandwidthColumnHook: SINR color coding ready");
+        } catch (Exception e) {
+            Log.w(TAG, "LteBandwidthColumnHook: SINR color-coding reflection failed "
+                    + "(SNR will show as plain text): " + e);
+            sinrColorReady = false;
+        }
+    }
+
+    /**
+     * Allocate a com.qtrun.sys.b via Unsafe and set key/format/index fields.
+     * The constructor is stripped by ProGuard on gplay, so Unsafe is required.
+     */
+    private Object makeSinrAttr(String key, int index, String format) throws Exception {
+        Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+        sysAFieldA.set(prop, key);
+        sysAFieldB.set(prop, format);
+        sysAFieldC.set(prop, index);
+        return prop;
     }
 
     // -----------------------------------------------------------------------
     // BW reading — fresh on every getView(), no persistent cache.
-    // Pattern: NSG v6/f.java — Property.b(queryTime) → iter.value().
-    // Prev-tick fallback for partially-written head entries.
     // -----------------------------------------------------------------------
 
     /**
@@ -162,6 +317,46 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
+    // SINR reading — fresh on every getView(), returns raw Float for color coding.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Read LTE SINR for the given row fresh from the DataSource.
+     * @return raw Float value (for LegendManager color coding), or null.
+     */
+    private Float readLteSinrRaw(Object ds, int modIdx, long adsk, int intraRow) {
+        if (intraRow > 3) return null;
+        long qt = (adsk > 0) ? adsk : Long.MAX_VALUE;
+        String key = (intraRow == 0)
+                ? "LTE::Downlink_Measurements::LTE_SINR_PCell"
+                : "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell" + intraRow;
+        return readScalarSinrRaw(ds, key, modIdx, qt);
+    }
+
+    private Float readScalarSinrRaw(Object ds, String key, int modIdx, long qt) {
+        try {
+            Object prop = dsGetProperty.invoke(ds, key, modIdx);
+            if (prop == null) return null;
+            Object iter = propIterMethod.invoke(prop, qt);
+            if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
+            long sk = (long) iterKeyMethod.invoke(iter);
+            Object val = iterValueMethod.invoke(iter);
+            if (val == null) {
+                // Prev-tick fallback: head entry not yet fully committed.
+                iter = propIterMethod.invoke(prop, sk - 1);
+                if (iter == null || (boolean) iterEndMethod.invoke(iter)) return null;
+                val = iterValueMethod.invoke(iter);
+            }
+            if (val instanceof Float) return (Float) val;
+            if (val instanceof Number) return ((Number) val).floatValue();
+            return null;
+        } catch (Exception e) {
+            Log.w(TAG, "LteSINR readScalarSinrRaw(" + key + ") failed: " + e);
+            return null;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Public entry point
     // -----------------------------------------------------------------------
 
@@ -171,7 +366,7 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.f$a.getView
+    // Hook: a8.f$a.getView — single merged hook (injects both BW and SNR)
     // -----------------------------------------------------------------------
     private void hookGetView() {
         if (!reflectionReady) {
@@ -198,74 +393,19 @@ public class LteBandwidthColumnHook {
                     LinearLayout row = findHorizontalRow(rowView);
                     if (row == null) return result;
 
-                    // ---- Already-injected fast path ----
-                    Object bvTag = row.getTag(BW_VIEW_TAG_KEY);
-                    if (bvTag instanceof TextView) {
-                        TextView bwView = (TextView) bvTag;
-                        // Re-resolve (isServing, intraRow, adsk) every time — prevents
-                        // stale-tag bug where a recycled row keeps wrong intraRow.
-                        int     position2        = (int) chain.getArg(0);
-                        boolean isServing2       = false;
-                        int     intraRow2        = position2;
-                        long    adapterSampleKey2 = -1;
-                        try {
-                            Object   adapter2 = chain.getThisObject();
-                            Object[] sources2 = (Object[]) eField.get(adapter2);
-                            android.util.Pair<?, ?> pair2 =
-                                    (android.util.Pair<?, ?>) hMethod.invoke(adapter2, position2);
-                            if (pair2 != null && pair2.second != null) {
-                                intraRow2  = (int) pair2.second;
-                                isServing2 = (pair2.first != null && sources2 != null
-                                        && sources2.length > 0 && pair2.first == sources2[0]);
-                            }
-                            if (f5509cField != null && sources2 != null && sources2.length > 0) {
-                                adapterSampleKey2 = f5509cField.getLong(sources2[0]);
-                            }
-                        } catch (Exception ex) {
-                            Log.w(TAG, "LteBWHook: fast-path h(position) failed: " + ex);
-                        }
-                        // Read BW fresh — no persistent cache.
-                        String bwText = null;
-                        if (isServing2 && reflectionReady) {
-                            try {
-                                Object ws = wsSingleton.get(null);
-                                if (ws != null) {
-                                    int modIdx = ((Number) wsModuleIndex.get(ws)).intValue();
-                                    Object ds  = wsDataSource.get(ws);
-                                    if (ds != null) {
-                                        bwText = readLteBwFresh(ds, modIdx,
-                                                adapterSampleKey2, intraRow2);
-                                    }
-                                }
-                            } catch (Exception ex) {
-                                Log.w(TAG, "LteBW fast path: ws read failed: " + ex);
-                            }
-                        }
-                        String display = (bwText != null) ? bwText : "-";
-                        bwView.setText(display);
-                        if (bwText != null) {
-                            bwView.setTextColor(0xFFFFFFFF);
-                        } else {
-                            if (row.getChildCount() > 3 && row.getChildAt(3) instanceof TextView)
-                                bwView.setTextColor(((TextView) row.getChildAt(3)).getTextColors());
-                        }
-                        return result;
-                    }
-
-                    // ---- First injection — must have exactly 6 children ----
-                    if (row.getChildCount() != 6) return result;
-
-                    boolean isServingSource  = true;
-                    int     intraRow         = (int) chain.getArg(0);
+                    // Resolve (isServing, intraRow, adapterSampleKey) from adapter.
+                    int     position         = (int) chain.getArg(0);
+                    boolean isServing        = false;
+                    int     intraRow         = position;
                     long    adapterSampleKey = -1;
                     try {
                         Object   adapter = chain.getThisObject();
                         Object[] sources = (Object[]) eField.get(adapter);
                         android.util.Pair<?, ?> pair =
-                                (android.util.Pair<?, ?>) hMethod.invoke(adapter, intraRow);
+                                (android.util.Pair<?, ?>) hMethod.invoke(adapter, position);
                         if (pair != null && pair.second != null) {
-                            intraRow        = (int) pair.second;
-                            isServingSource = (pair.first != null && sources != null
+                            intraRow  = (int) pair.second;
+                            isServing = (pair.first != null && sources != null
                                     && sources.length > 0 && pair.first == sources[0]);
                         }
                         if (f5509cField != null && sources != null && sources.length > 0) {
@@ -275,68 +415,104 @@ public class LteBandwidthColumnHook {
                         Log.w(TAG, "LteBWHook: h(position) failed: " + e);
                     }
 
-                    // Read BW fresh — no persistent cache.
-                    String bwText = null;
-                    if (isServingSource && reflectionReady) {
+                    // Read BW and SINR fresh — no persistent cache.
+                    String bwText  = null;
+                    Float  sinrRaw = null;
+                    if (isServing && reflectionReady) {
                         try {
                             Object ws = wsSingleton.get(null);
                             if (ws != null) {
                                 int modIdx = ((Number) wsModuleIndex.get(ws)).intValue();
                                 Object ds  = wsDataSource.get(ws);
                                 if (ds != null) {
-                                    bwText = readLteBwFresh(ds, modIdx,
+                                    bwText  = readLteBwFresh(ds, modIdx,
+                                            adapterSampleKey, intraRow);
+                                    sinrRaw = readLteSinrRaw(ds, modIdx,
                                             adapterSampleKey, intraRow);
                                 }
                             }
                         } catch (Exception ex) {
-                            Log.w(TAG, "LteBW first-inject: ws read failed: " + ex);
+                            Log.w(TAG, "LteBW: ws read failed: " + ex);
                         }
                     }
-                    String display = (bwText != null) ? bwText : "-";
 
-                    // Copy style from Band column (child[1]).
+                    // ---- Fast path: both views already injected (tags set) ----
+                    Object bwTag  = row.getTag(BW_VIEW_TAG_KEY);
+                    Object snrTag = row.getTag(SNR_VIEW_TAG_KEY);
+                    if (bwTag instanceof TextView && snrTag instanceof View) {
+                        TextView bwView  = (TextView) bwTag;
+                        View     snrView = (View) snrTag;
+                        String bwDisplay = (bwText != null) ? bwText : "-";
+                        bwView.setText(bwDisplay);
+                        if (bwText != null) {
+                            bwView.setTextColor(0xFFFFFFFF);
+                        } else {
+                            if (row.getChildCount() > 3
+                                    && row.getChildAt(3) instanceof TextView) {
+                                bwView.setTextColor(
+                                        ((TextView) row.getChildAt(3)).getTextColors());
+                            }
+                        }
+                        applySnrColor(snrView, sinrRaw, intraRow);
+                        return result;
+                    }
+
+                    // ---- First injection — must have exactly 6 children ----
+                    if (row.getChildCount() != 6) return result;
+
+                    float density = rowView.getContext().getResources()
+                            .getDisplayMetrics().density;
+
+                    // Inject BW (plain TextView) at index 2.
                     TextView bandView = (TextView) row.getChildAt(1);
                     TextView bwView   = new TextView(rowView.getContext());
-                    bwView.setText(display);
+                    bwView.setText((bwText != null) ? bwText : "-");
                     bwView.setGravity(android.view.Gravity.CENTER);
                     bwView.setMaxLines(1);
-                    bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, bandView.getTextSize());
+                    bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                            bandView.getTextSize());
                     bwView.setTypeface(bandView.getTypeface());
                     if (bwText != null) {
                         bwView.setTextColor(0xFFFFFFFF);
                     } else {
                         bwView.setTextColor(bandView.getTextColors());
                     }
-
-                    float density = rowView.getContext().getResources().getDisplayMetrics().density;
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams bwLp = new LinearLayout.LayoutParams(
                             0, (int) (21 * density));
-                    lp.weight = 0.10f;
-                    bwView.setLayoutParams(lp);
-
+                    bwLp.weight = WEIGHTS[2];
+                    bwView.setLayoutParams(bwLp);
                     row.addView(bwView, 2);
 
-                    float[] weights = {0.05f, 0.11f, 0.10f, 0.18f, 0.14f, 0.21f, 0.21f};
-                    for (int i = 0; i < row.getChildCount() && i < weights.length; i++) {
-                        LinearLayout.LayoutParams clp =
-                                (LinearLayout.LayoutParams) row.getChildAt(i).getLayoutParams();
-                        clp.weight = weights[i];
-                        row.getChildAt(i).setLayoutParams(clp);
-                    }
+                    // Inject SNR (ProgressTextView) at end.
+                    // After BW insertion RSRQ is now at index 6.
+                    TextView rsrqView = (row.getChildCount() > 6
+                            && row.getChildAt(6) instanceof TextView)
+                            ? (TextView) row.getChildAt(6) : null;
+                    View snrView = createSnrView(rowView.getContext(), rsrqView, density);
+                    LinearLayout.LayoutParams snrLp = new LinearLayout.LayoutParams(
+                            0, (int) (21 * density));
+                    snrLp.weight = WEIGHTS[7];
+                    snrView.setLayoutParams(snrLp);
+                    row.addView(snrView);
 
-                    // Cache view reference only — intraRow resolved fresh on every getView.
+                    applyWeights(row);
+
+                    // Cache view references — intraRow resolved fresh on every getView.
                     row.setTag(BW_VIEW_TAG_KEY, bwView);
+                    row.setTag(SNR_VIEW_TAG_KEY, snrView);
+
+                    applySnrColor(snrView, sinrRaw, intraRow);
                     return result;
                 }
             });
-            Log.i(TAG, "LteBandwidthColumnHook: installed");
+            Log.i(TAG, "LteBandwidthColumnHook: installed (merged BW+SNR)");
         } catch (Exception e) {
             Log.e(TAG, "LteBWHook: hookGetView failed: " + e);
         }
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.f.I — inject "BW" header label
+    // Hook: a8.f.I — inject both "BW" and "SNR" header labels
     // -----------------------------------------------------------------------
     private void hookOnCreateView() {
         try {
@@ -357,7 +533,7 @@ public class LteBandwidthColumnHook {
                     if (fragmentView == null) return result;
                     ListView listView = (ListView) fragmentView.findViewById(android.R.id.list);
                     if (listView == null) return result;
-                    listView.post(() -> injectBwHeader(listView));
+                    listView.post(() -> injectHeaders(listView));
                     return result;
                 }
             });
@@ -366,43 +542,166 @@ public class LteBandwidthColumnHook {
         }
     }
 
-    private void injectBwHeader(ListView listView) {
+    private void injectHeaders(ListView listView) {
         try {
             for (int i = 0; i < listView.getChildCount(); i++) {
                 View child = listView.getChildAt(i);
                 if (!(child instanceof LinearLayout)) continue;
                 LinearLayout ll = (LinearLayout) child;
-                if (ll.getOrientation() != LinearLayout.HORIZONTAL || ll.getChildCount() != 6) continue;
-                if (TAG_BW_INJECTED.equals(ll.getTag(BW_TAG_KEY))) return;
+                if (ll.getOrientation() != LinearLayout.HORIZONTAL) continue;
+                if (TAG_HEADER_INJECTED.equals(ll.getTag(HEADER_TAG_KEY))) return;
+                if (ll.getChildCount() != 6) continue;
 
+                // Inject "BW" label at index 2.
                 TextView bwLabel = new TextView(listView.getContext());
                 bwLabel.setText("BW");
                 bwLabel.setGravity(android.view.Gravity.CENTER);
                 bwLabel.setMaxLines(1);
-                bwLabel.setTextColor(resolveColor(listView.getContext(), android.R.attr.textColorTertiary));
-                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                bwLabel.setTextColor(resolveColor(listView.getContext(),
+                        android.R.attr.textColorTertiary));
+                LinearLayout.LayoutParams bwLp = new LinearLayout.LayoutParams(
                         0, ViewGroup.LayoutParams.WRAP_CONTENT);
-                lp.weight = 0.10f;
-                bwLabel.setLayoutParams(lp);
-
+                bwLp.weight = WEIGHTS[2];
+                bwLabel.setLayoutParams(bwLp);
                 ll.addView(bwLabel, 2);
 
-                float[] weights = {0.05f, 0.11f, 0.10f, 0.18f, 0.14f, 0.21f, 0.21f};
-                for (int j = 0; j < ll.getChildCount() && j < weights.length; j++) {
-                    LinearLayout.LayoutParams clp =
-                            (LinearLayout.LayoutParams) ll.getChildAt(j).getLayoutParams();
-                    clp.weight = weights[j];
-                    ll.getChildAt(j).setLayoutParams(clp);
-                }
+                // Inject "SNR" label at end.
+                TextView snrLabel = new TextView(listView.getContext());
+                snrLabel.setText("SNR");
+                snrLabel.setGravity(android.view.Gravity.CENTER);
+                snrLabel.setMaxLines(1);
+                snrLabel.setTextColor(resolveColor(listView.getContext(),
+                        android.R.attr.textColorTertiary));
+                LinearLayout.LayoutParams snrLp = new LinearLayout.LayoutParams(
+                        0, ViewGroup.LayoutParams.WRAP_CONTENT);
+                snrLp.weight = WEIGHTS[7];
+                snrLabel.setLayoutParams(snrLp);
+                ll.addView(snrLabel);
 
-                ll.setTag(BW_TAG_KEY, TAG_BW_INJECTED);
+                applyWeights(ll);
+
+                ll.setTag(HEADER_TAG_KEY, TAG_HEADER_INJECTED);
                 return;
             }
-            Log.w(TAG, "LteBWHook: injectBwHeader: header row not found ("
+            Log.w(TAG, "LteBWHook: injectHeaders: header row not found ("
                     + listView.getChildCount() + " children)");
         } catch (Exception e) {
-            Log.w(TAG, "LteBWHook: injectBwHeader failed: " + e);
+            Log.w(TAG, "LteBWHook: injectHeaders failed: " + e);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // SINR color coding — mirrors NSG's a8.b.AbstractC0008b.j()
+    // -----------------------------------------------------------------------
+
+    /**
+     * Apply LegendManager color coding to the SNR ProgressTextView, or fall
+     * back to plain text if color coding is unavailable.
+     *
+     * @param snrView  the SNR column view (ProgressTextView if available)
+     * @param sinrRaw  raw SINR value (Float), or null if no data
+     * @param intraRow 0=PCell, 1..3=SCell1..3
+     */
+    private void applySnrColor(View snrView, Float sinrRaw, int intraRow) {
+        if (!(snrView instanceof TextView)) return;
+        TextView tv = (TextView) snrView;
+
+        if (sinrRaw == null) {
+            // No data: clear the colored bar and show "-".
+            if (ptvClass != null && ptvClass.isInstance(snrView) && ptvFieldJ != null) {
+                try {
+                    ptvFieldJ.setBoolean(snrView, false);
+                    snrView.invalidate();
+                } catch (Exception ignored) {}
+            }
+            tv.setText("-");
+            return;
+        }
+
+        if (sinrColorReady && sinrAttrs != null && intraRow < sinrAttrs.length
+                && ptvClass != null && ptvClass.isInstance(snrView)) {
+            try {
+                Object bVar     = sinrAttrs[intraRow];
+                double doubleVal = sinrRaw.doubleValue();
+
+                // Clear show-bar flag and invalidate (from decompiled j method).
+                ptvFieldJ.setBoolean(snrView, false);
+                snrView.invalidate();
+
+                // Get legend progress and color.
+                Object legend = legendSingleton.get(null);
+                if (legend != null) {
+                    float    progress = (float) legendMethodC.invoke(legend, bVar, doubleVal);
+                    Integer  color    = (Integer) legendMethodA.invoke(legend, bVar, doubleVal);
+                    if (color != null) {
+                        ptvMethodH.invoke(snrView, color, progress);
+                    } else if (ptvSetProgress != null) {
+                        ptvSetProgress.invoke(snrView, progress);
+                    }
+                }
+
+                // Set formatted text via com.qtrun.sys.a.c(Object).
+                tv.setText(formatSinrValue(bVar, sinrRaw));
+                return;
+            } catch (Exception e) {
+                Log.w(TAG, "LteBWHook: applySnrColor failed, using plain text: " + e);
+            }
+        }
+
+        // Fallback: plain text without color coding.
+        tv.setText(String.format("%.1f", sinrRaw));
+        tv.setTextColor(0xFFFFFFFF);
+    }
+
+    /**
+     * Format a SINR value using com.qtrun.sys.a.c(Object), falling back to
+     * String.format("%.1f") if the reflective call fails.
+     */
+    private String formatSinrValue(Object bVar, Float value) {
+        try {
+            return (String) sysACMethod.invoke(bVar, (Object) value);
+        } catch (Exception e) {
+            return String.format("%.1f", value);
+        }
+    }
+
+    /**
+     * Create the SNR column view — a ProgressTextView if reflection is
+     * available, or a plain TextView as fallback.
+     */
+    private View createSnrView(Context ctx, TextView styleSource, float density) {
+        if (ptvCtor != null) {
+            try {
+                View ptv = (View) ptvCtor.newInstance(ctx, (AttributeSet) null);
+                if (ptv instanceof TextView) {
+                    TextView tv = (TextView) ptv;
+                    tv.setGravity(android.view.Gravity.CENTER);
+                    tv.setMaxLines(1);
+                    if (styleSource != null) {
+                        tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                                styleSource.getTextSize());
+                        tv.setTypeface(styleSource.getTypeface());
+                        tv.setTextColor(styleSource.getTextColors());
+                    }
+                    tv.setText("-");
+                }
+                return ptv;
+            } catch (Exception e) {
+                Log.w(TAG, "LteBWHook: createSnrView: ProgressTextView creation failed: " + e);
+            }
+        }
+        // Fallback: plain TextView.
+        TextView tv = new TextView(ctx);
+        tv.setGravity(android.view.Gravity.CENTER);
+        tv.setMaxLines(1);
+        if (styleSource != null) {
+            tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                    styleSource.getTextSize());
+            tv.setTypeface(styleSource.getTypeface());
+            tv.setTextColor(styleSource.getTextColors());
+        }
+        tv.setText("-");
+        return tv;
     }
 
     // -----------------------------------------------------------------------
@@ -413,16 +712,26 @@ public class LteBandwidthColumnHook {
         if (!(v instanceof LinearLayout)) return null;
         LinearLayout ll = (LinearLayout) v;
         if (ll.getOrientation() == LinearLayout.HORIZONTAL
-                && (ll.getChildCount() == 6 || ll.getChildCount() == 7)) return ll;
+                && (ll.getChildCount() == 6 || ll.getChildCount() == 8)) return ll;
         if (ll.getOrientation() == LinearLayout.VERTICAL && ll.getChildCount() > 0) {
             View first = ll.getChildAt(0);
             if (first instanceof LinearLayout) {
                 LinearLayout inner = (LinearLayout) first;
                 if (inner.getOrientation() == LinearLayout.HORIZONTAL
-                        && (inner.getChildCount() == 6 || inner.getChildCount() == 7)) return inner;
+                        && (inner.getChildCount() == 6 || inner.getChildCount() == 8))
+                    return inner;
             }
         }
         return null;
+    }
+
+    private void applyWeights(LinearLayout row) {
+        for (int i = 0; i < row.getChildCount() && i < WEIGHTS.length; i++) {
+            LinearLayout.LayoutParams clp =
+                    (LinearLayout.LayoutParams) row.getChildAt(i).getLayoutParams();
+            clp.weight = WEIGHTS[i];
+            row.getChildAt(i).setLayoutParams(clp);
+        }
     }
 
     private int resolveColor(android.content.Context ctx, int attr) {
