@@ -177,7 +177,8 @@ public class LteBandwidthColumnHook {
             ptvCtor = ptvClass.getConstructor(Context.class, AttributeSet.class);
             ptvCtor.setAccessible(true);
 
-            ptvFieldJ = ptvClass.getDeclaredField("j");
+            ptvFieldJ = ptvClass.getDeclaredField(
+                    ClassMapping.runtimeFieldName("com.qtrun.widget.textview.ProgressTextView", "j", loader));
             ptvFieldJ.setAccessible(true);
 
             ptvMethodH = ptvClass.getDeclaredMethod("h", int.class, float.class);
@@ -192,10 +193,11 @@ public class LteBandwidthColumnHook {
                         + "SNR will show without color coding");
                 return;
             }
-            // Singleton field: runtime name is "e" (JADX renames to f3783e but
-            // bytecode is "e"). Try "e" first, then "f3783e" as fallback.
+            // Singleton field: qtrun "e" -> gplay "f" (JADX renames to f3839f/f3783e).
+            String legendSingletonName =
+                    ClassMapping.runtimeFieldName("com.qtrun.legend.LegendManager", "e", loader);
             try {
-                legendSingleton = legendClass.getDeclaredField("e");
+                legendSingleton = legendClass.getDeclaredField(legendSingletonName);
             } catch (NoSuchFieldException nsfe) {
                 legendSingleton = legendClass.getDeclaredField("f3783e");
             }
@@ -217,9 +219,14 @@ public class LteBandwidthColumnHook {
             sysACMethod = sysAClass.getMethod("c", Object.class);
 
             // LegendManager methods: c(b, double)->float, a(b, double)->Integer
-            legendMethodC = legendClass.getDeclaredMethod("c", sysBClass, double.class);
+            // On gplay these are renamed to e(...) and d(...).
+            legendMethodC = ClassMapping.getDeclaredMethod(
+                    legendClass, "com.qtrun.legend.LegendManager", "c", loader,
+                    sysBClass, double.class);
             legendMethodC.setAccessible(true);
-            legendMethodA = legendClass.getDeclaredMethod("a", sysBClass, double.class);
+            legendMethodA = ClassMapping.getDeclaredMethod(
+                    legendClass, "com.qtrun.legend.LegendManager", "a", loader,
+                    sysBClass, double.class);
             legendMethodA.setAccessible(true);
 
             // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard).

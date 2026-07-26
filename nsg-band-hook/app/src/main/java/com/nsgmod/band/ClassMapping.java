@@ -149,6 +149,11 @@ public final class ClassMapping {
         methodMap.put("t7.t|i0", "h0");
         // ActivityResultLauncher launch: qtrun d.d.c(Object) -> gplay d.d.a(Object)
         methodMap.put("d.d|c", "a");
+        // LegendManager methods shifted on gplay:
+        // qtrun c(b,double)->float  -> gplay e(b,double)
+        // qtrun a(b,double)->Integer -> gplay d(b,double)
+        methodMap.put("com.qtrun.legend.LegendManager|c", "e");
+        methodMap.put("com.qtrun.legend.LegendManager|a", "d");
         GPLAY_METHOD_OVERRIDES = Collections.unmodifiableMap(methodMap);
 
         Map<String, String> fieldMap = new HashMap<>();
@@ -199,6 +204,11 @@ public final class ClassMapping {
         fieldMap.put("com.qtrun.sys.a|b", "b");
         fieldMap.put("com.qtrun.sys.a|c", "c");
         fieldMap.put("com.qtrun.sys.a|d", "d");
+        // ProgressTextView fields shifted by one on gplay:
+        // qtrun i(float progress), j(boolean showBar) -> gplay j(float), k(boolean)
+        fieldMap.put("com.qtrun.widget.textview.ProgressTextView|j", "k");
+        // LegendManager singleton field: qtrun e -> gplay f
+        fieldMap.put("com.qtrun.legend.LegendManager|e", "f");
         GPLAY_FIELD_OVERRIDES = Collections.unmodifiableMap(fieldMap);
 
         Map<String, Integer> constantMap = new HashMap<>();
