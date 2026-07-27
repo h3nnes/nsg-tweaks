@@ -42,8 +42,10 @@ public class NrSaPucchTxRowHook {
     private static final String HEADROOM_KEY = "NR5G::Uplink_Measurements::NR_Power_Headroom";
     private static final String SRS_TX_KEY = "NR5G::Uplink_Measurements::NR_Power_Tx_SRS";
     private static final String PUCCH_TX_KEY = "NR5G::Uplink_Measurements::NR_Power_Tx_PUCCH";
+    private static final String PUSCH_TX_KEY = "NR5G::Uplink_Measurements::NR_Power_Tx_PUSCH";
 
     private static boolean headroomBarHookInstalled = false;
+    private static boolean srsColorRedirectInstalled = false;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -84,6 +86,12 @@ public class NrSaPucchTxRowHook {
 
     // v6.b.Y field — k2.a instance on the fragment
     private Field v6bYField;
+
+    // LegendManager — for SRS color redirect (SRS key not in attribute2legend_map.xml)
+    private Field  legendSingleton;
+    private Method legendMethodC; // c(b, double) -> float  (progress)
+    private Method legendMethodA; // a(b, double) -> Integer (color)
+    private Object puschLegendBVar; // com.qtrun.sys.b with PUSCH key for legend lookup
 
     private boolean ready = false;
 
@@ -150,6 +158,37 @@ public class NrSaPucchTxRowHook {
 
             v6bYField = v6bClass.getField("Y");
 
+            // LegendManager for SRS color redirect.
+            // NR_Power_Tx_SRS is not in attribute2legend_map.xml, so LegendManager
+            // returns null for color and -1 for progress. We redirect the lookup to
+            // the PUSCH key (which IS mapped to the NR_TxPower legend) so SRS uses
+            // the exact same dynamic color thresholds as PUSCH/PUCCH TX.
+            Class<?> legendClass = ClassMapping.loadClass("com.qtrun.legend.LegendManager", loader);
+            if (legendClass != null) {
+                String singletonName = ClassMapping.runtimeFieldName(
+                        "com.qtrun.legend.LegendManager", "e", loader);
+                try {
+                    legendSingleton = legendClass.getDeclaredField(singletonName);
+                } catch (NoSuchFieldException nsfe) {
+                    legendSingleton = legendClass.getDeclaredField("f3783e");
+                }
+                legendSingleton.setAccessible(true);
+
+                legendMethodC = ClassMapping.getDeclaredMethod(
+                        legendClass, "com.qtrun.legend.LegendManager", "c", loader,
+                        sysBClass, double.class);
+                legendMethodC.setAccessible(true);
+                legendMethodA = ClassMapping.getDeclaredMethod(
+                        legendClass, "com.qtrun.legend.LegendManager", "a", loader,
+                        sysBClass, double.class);
+                legendMethodA.setAccessible(true);
+
+                puschLegendBVar = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+                sysAFieldA.set(puschLegendBVar, PUSCH_TX_KEY);
+                sysAFieldB.set(puschLegendBVar, "%.1f dBm");
+                sysAFieldC.set(puschLegendBVar, -1);
+            }
+
             ready = true;
         } catch (Exception e) {
             Log.e(TAG, "NrSaPucchTxRowHook: initReflection failed: " + e);
@@ -182,6 +221,7 @@ public class NrSaPucchTxRowHook {
             });
 
             installHeadroomBarHook();
+            installSrsColorRedirect();
 
             Log.i(TAG, "NrSaPucchTxRowHook: installed");
         } catch (Exception e) {
@@ -207,6 +247,65 @@ public class NrSaPucchTxRowHook {
                 Log.i(TAG, "NrSaPucchTxRowHook: headroom bar color hook installed");
             } catch (Exception e) {
                 Log.e(TAG, "NrSaPucchTxRowHook: headroom bar color hook failed: " + e);
+            }
+        }
+    }
+
+    /**
+     * Install LegendManager.a() and .c() hooks that redirect SRS key lookups
+     * to the PUSCH key. Since NR_Power_Tx_SRS is not in attribute2legend_map.xml,
+     * LegendManager cannot resolve its color/progress. By redirecting to the
+     * PUSCH key (which IS mapped to the NR_TxPower legend), SRS gets the exact
+     * same dynamic color thresholds as PUSCH/PUCCH TX — no hardcoded values.
+     */
+    private void installSrsColorRedirect() {
+        synchronized (NrSaPucchTxRowHook.class) {
+            if (srsColorRedirectInstalled) {
+                return;
+            }
+            if (legendMethodA == null || legendMethodC == null || puschLegendBVar == null) {
+                Log.w(TAG, "NrSaPucchTxRowHook: SRS color redirect not available, skipping");
+                return;
+            }
+            srsColorRedirectInstalled = true;
+            try {
+                xposed.hook(legendMethodA).intercept(new Hooker() {
+                    @Override
+                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                        Object bVar = chain.getArg(0);
+                        if (bVar != null) {
+                            Object keyObj = sysAFieldA.get(bVar);
+                            if (keyObj != null && SRS_TX_KEY.equals(keyObj.toString())) {
+                                Object legend = legendSingleton.get(null);
+                                if (legend != null) {
+                                    return legendMethodA.invoke(legend, puschLegendBVar, chain.getArg(1));
+                                }
+                            }
+                        }
+                        return chain.proceed();
+                    }
+                });
+
+                xposed.hook(legendMethodC).intercept(new Hooker() {
+                    @Override
+                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                        Object bVar = chain.getArg(0);
+                        if (bVar != null) {
+                            Object keyObj = sysAFieldA.get(bVar);
+                            if (keyObj != null && SRS_TX_KEY.equals(keyObj.toString())) {
+                                Object legend = legendSingleton.get(null);
+                                if (legend != null) {
+                                    return legendMethodC.invoke(legend, puschLegendBVar, chain.getArg(1));
+                                }
+                            }
+                        }
+                        return chain.proceed();
+                    }
+                });
+
+                Log.i(TAG, "NrSaPucchTxRowHook: SRS color redirect installed");
+            } catch (Exception e) {
+                Log.e(TAG, "NrSaPucchTxRowHook: SRS color redirect failed: " + e);
             }
         }
     }
