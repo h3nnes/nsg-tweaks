@@ -6,6 +6,9 @@ import androidx.annotation.NonNull;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.Set;
+import java.util.WeakHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
@@ -62,6 +65,10 @@ public class LteRsrpRowHook {
 
     /** Set by the e8.b.n0() flag hook while n0() executes; null otherwise. */
     static final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
+
+    /** Guards against double-injection into the same k2.a grid builder. */
+    private final Set<Object> injectedGrids =
+            Collections.newSetFromMap(new WeakHashMap<>());
 
     /** NSG R.color.color_deep_blue = #ff1080e0 (ARGB), used for Rank3/Rank4 bars. */
     private static final int DEEP_BLUE = 0xff1080e0;
@@ -282,7 +289,8 @@ public class LteRsrpRowHook {
                     Object  k2aArg   = chain.getArg(0);
                     Integer carriers = carrierCountInN0.get();
                     boolean inN0     = carriers != null;
-                    if (inN0 && k2aArg != null) {
+                    if (inN0 && k2aArg != null && !injectedGrids.contains(k2aArg)) {
+                        injectedGrids.add(k2aArg);
                         injectRsrpRow(k2aArg, carriers);
                     }
                     return chain.proceed();
