@@ -63,6 +63,16 @@ public class LteRsrpRowHook {
     /** Set by the e8.b.n0() flag hook while n0() executes; null otherwise. */
     static final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
 
+    /** NSG R.color.color_deep_blue = #ff1080e0 (ARGB), used for Rank3/Rank4 bars. */
+    private static final int DEEP_BLUE = 0xff1080e0;
+    /** Row at which Rank3/Rank4 usage rows are inserted (after the RSRP shift). */
+    private static final float RANK_ROW = 25.0f;
+    /** Rank3/Rank4 insertion shifts existing rows >= RANK_ROW by this amount
+     *  (two rowspan-2 logical rows = 4 sub-rows). */
+    private static final float RANK_SHIFT_AMOUNT = 4.0f;
+    /** Max value for Rank usage bars (percentage). */
+    private static final float RANK_BAR_MAX = 100.0f;
+
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
@@ -77,6 +87,9 @@ public class LteRsrpRowHook {
 
     // v6.f bar data-binding field
     private Field vfF8120g; // g (JADX: f8120g) — data binding
+
+    // v6.f bar color/max setter: f(int color, float max) enables fixed-color bar mode
+    private Method vfFMethod;
 
     // com.qtrun.sys.b / a — property binding
     private Class<?> sysBClass;
@@ -120,6 +133,12 @@ public class LteRsrpRowHook {
 
             vfF8120g = vfClass.getDeclaredField("g");
             vfF8120g.setAccessible(true);
+
+            // v6.f.f(int color, float max) — sets bar color + max, enables bar mode.
+            // Method name is "f" on both qtrun (v6.f) and gplay (e5.f).
+            vfFMethod = ClassMapping.getDeclaredMethod(vfClass, "v6.f", "f", loader,
+                    int.class, float.class);
+            vfFMethod.setAccessible(true);
 
             sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
             Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
@@ -242,6 +261,9 @@ public class LteRsrpRowHook {
             //   → insert RSRP label h=2 at 13, shift ≥13 by +2
             // Path C: Band/Width rows 11–12 (h=1 each), SINR rows 13–14 (h=1 each)
             //   → insert RSRP label h=2 at 13, shift ≥13 by +2
+            //
+            // Path B/C also inject Rank3/Rank4 usage rows at row 25 (between
+            // Spatial Rank and Thpt Cwd0), shifting rows ≥25 by +4.
 
             float rsrpRow;
             float shiftFrom;
@@ -258,7 +280,7 @@ public class LteRsrpRowHook {
                 shiftAmount = 2.0f;
             }
 
-            // Shift all existing elements at or after insertion point
+            // Shift all existing elements at or after RSRP insertion point
             java.util.ArrayList<?> list =
                     (java.util.ArrayList<?>) k2aListField.get(k2aObj);
             if (list != null) {
@@ -270,12 +292,33 @@ public class LteRsrpRowHook {
                 }
             }
 
+            // Path B/C: shift for Rank3/Rank4 insertion (rows ≥25 by +4).
+            // Runs after the RSRP shift so Thpt Cwd0 (orig 23-24 → 25-26 after
+            // RSRP shift) moves to 29-30, leaving rows 25-28 free for Rank3/Rank4.
+            if (!isPathA && list != null) {
+                for (Object elem : list) {
+                    float elemRow = (float) vaRowField.get(elem);
+                    if (elemRow >= RANK_ROW) {
+                        vaRowField.set(elem, elemRow + RANK_SHIFT_AMOUNT);
+                    }
+                }
+            }
+
+            // Insert RSRP rows
             if (isPathA) {
                 injectRsrpRowPathA(k2aObj, rsrpRow);
             } else if (isPathB) {
                 injectRsrpRowPathB(k2aObj, rsrpRow);
             } else {
                 injectRsrpRowPathC(k2aObj, rsrpRow);
+            }
+
+            // Path B/C: insert Rank3/Rank4 usage rows at row 25 (after both shifts)
+            if (isPathB) {
+                injectRankUsageRowPathB(k2aObj, RANK_ROW);
+            } else if (!isPathA) {
+                // Path C (Z >= 4)
+                injectRankUsageRowPathC(k2aObj, RANK_ROW);
             }
 
         } catch (Exception e) {
@@ -403,6 +446,175 @@ public class LteRsrpRowHook {
     }
 
     // -----------------------------------------------------------------------
+    // Rank3/Rank4 usage row injection (Path B and Path C only)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Path B: Z==3 (2 SCells), double-height rows (label h=2.0, PCell barOffset=+0.3 h=1.4).
+     * SCell bars stack at startRow and startRow+1 in col=65.  Rank4 at startRow+2.
+     *
+     * Rank3 Usage label row=startRow     h=2.0 col=0  w=27
+     * Rank3 PCell bar  row=startRow+0.3  h=1.4 col=30 w=34  key=LTE_Rank3_Usage_PCell
+     * Rank3 SCell1 bar row=startRow      h=1.0 col=65 w=34  key=LTE_Rank3_Usage_SCell1
+     * Rank3 SCell2 bar row=startRow+1    h=1.0 col=65 w=34  key=LTE_Rank3_Usage_SCell2
+     *
+     * Rank4 Usage label row=startRow+2   h=2.0 col=0  w=27
+     * Rank4 PCell bar  row=startRow+2.3  h=1.4 col=30 w=34  key=LTE_Rank4_Usage_PCell
+     * Rank4 SCell1 bar row=startRow+2    h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell1
+     * Rank4 SCell2 bar row=startRow+3    h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell2
+     *
+     * Bars use v6.f.f(DEEP_BLUE, 100.0f) for fixed-color percentage bars.
+     */
+    private void injectRankUsageRowPathB(Object k2aObj, float startRow) throws Exception {
+        final float labelH    = 2.0f;
+        final float pcellBarH = 1.4f;
+        final float pcellOff  = 0.3f;
+        final float scellBarH = 1.0f;
+
+        // Rank3 Usage
+        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) {
+            veF.set(rank3Label, "Rank3 Usage");
+            veG.set(rank3Label, 0);
+            veH.set(rank3Label, 1);
+        }
+        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow + pcellOff, pcellBarH, 30.0f, 34.0f);
+        if (rank3PCell != null) {
+            vfF8120g.set(rank3PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow, scellBarH, 65.0f, 34.0f);
+        if (rank3SCell1 != null) {
+            vfF8120g.set(rank3SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, scellBarH, 65.0f, 34.0f);
+        if (rank3SCell2 != null) {
+            vfF8120g.set(rank3SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+
+        // Rank4 Usage at startRow + 2
+        float rank4Row = startRow + 2.0f;
+        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) {
+            veF.set(rank4Label, "Rank4 Usage");
+            veG.set(rank4Label, 0);
+            veH.set(rank4Label, 1);
+        }
+        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row + pcellOff, pcellBarH, 30.0f, 34.0f);
+        if (rank4PCell != null) {
+            vfF8120g.set(rank4PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row, scellBarH, 65.0f, 34.0f);
+        if (rank4SCell1 != null) {
+            vfF8120g.set(rank4SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, scellBarH, 65.0f, 34.0f);
+        if (rank4SCell2 != null) {
+            vfF8120g.set(rank4SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+    }
+
+    /**
+     * Path C: Z>=4 (3 SCells), single-height rows (h=1.0).
+     * Left panel (col=30): PCell at startRow, SCell1 at startRow+1.
+     * Right panel (col=65): SCell2 at startRow, SCell3 at startRow+1.  Rank4 at startRow+2.
+     *
+     * Rank3 Usage label row=startRow   h=2.0 col=0  w=27
+     * Rank3 PCell bar  row=startRow    h=1.0 col=30 w=34  key=LTE_Rank3_Usage_PCell
+     * Rank3 SCell1 bar row=startRow+1  h=1.0 col=30 w=34  key=LTE_Rank3_Usage_SCell1
+     * Rank3 SCell2 bar row=startRow    h=1.0 col=65 w=34  key=LTE_Rank3_Usage_SCell2
+     * Rank3 SCell3 bar row=startRow+1  h=1.0 col=65 w=34  key=LTE_Rank3_Usage_SCell3
+     *
+     * Rank4 Usage label row=startRow+2 h=2.0 col=0  w=27
+     * Rank4 PCell bar  row=startRow+2  h=1.0 col=30 w=34  key=LTE_Rank4_Usage_PCell
+     * Rank4 SCell1 bar row=startRow+3  h=1.0 col=30 w=34  key=LTE_Rank4_Usage_SCell1
+     * Rank4 SCell2 bar row=startRow+2  h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell2
+     * Rank4 SCell3 bar row=startRow+3  h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell3
+     *
+     * Bars use v6.f.f(DEEP_BLUE, 100.0f) for fixed-color percentage bars.
+     */
+    private void injectRankUsageRowPathC(Object k2aObj, float startRow) throws Exception {
+        final float labelH = 2.0f;
+        final float barH   = 1.0f;
+
+        // Rank3 Usage
+        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) {
+            veF.set(rank3Label, "Rank3 Usage");
+            veG.set(rank3Label, 0);
+            veH.set(rank3Label, 1);
+        }
+        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow, barH, 30.0f, 34.0f);
+        if (rank3PCell != null) {
+            vfF8120g.set(rank3PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 30.0f, 34.0f);
+        if (rank3SCell1 != null) {
+            vfF8120g.set(rank3SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow, barH, 65.0f, 34.0f);
+        if (rank3SCell2 != null) {
+            vfF8120g.set(rank3SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell3 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f);
+        if (rank3SCell3 != null) {
+            vfF8120g.set(rank3SCell3, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL", -1));
+            vfFMethod.invoke(rank3SCell3, DEEP_BLUE, RANK_BAR_MAX);
+        }
+
+        // Rank4 Usage at startRow + 2
+        float rank4Row = startRow + 2.0f;
+        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) {
+            veF.set(rank4Label, "Rank4 Usage");
+            veG.set(rank4Label, 0);
+            veH.set(rank4Label, 1);
+        }
+        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row, barH, 30.0f, 34.0f);
+        if (rank4PCell != null) {
+            vfF8120g.set(rank4PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 30.0f, 34.0f);
+        if (rank4SCell1 != null) {
+            vfF8120g.set(rank4SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row, barH, 65.0f, 34.0f);
+        if (rank4SCell2 != null) {
+            vfF8120g.set(rank4SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell3 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f);
+        if (rank4SCell3 != null) {
+            vfF8120g.set(rank4SCell3, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL", -1));
+            vfFMethod.invoke(rank4SCell3, DEEP_BLUE, RANK_BAR_MAX);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Helper: allocate com.qtrun.sys.b via Unsafe and set key/format/index
     // -----------------------------------------------------------------------
 
@@ -410,6 +622,14 @@ public class LteRsrpRowHook {
         Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
         sysAFieldA.set(prop, key);
         sysAFieldB.set(prop, "%.1f dBm");
+        sysAFieldC.set(prop, index);
+        return prop;
+    }
+
+    private Object makeRankProp(String key, int index) throws Exception {
+        Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+        sysAFieldA.set(prop, key);
+        sysAFieldB.set(prop, "%.1f %%");
         sysAFieldC.set(prop, index);
         return prop;
     }
