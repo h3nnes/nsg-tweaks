@@ -104,6 +104,9 @@ public class LteRsrpRowHook {
     // e8.b carrier count field — actual bytecode name "Z"
     private Field e8bCarrierCountField;
 
+    // g8.i (EUTRA CA Matrix, NR-NSA) carrier count field — same "Z" name
+    private Field g8iCarrierCountField;
+
     // k2.a list + v6.a row field
     private Field k2aListField;
     private Field vaRowField;
@@ -165,6 +168,13 @@ public class LteRsrpRowHook {
             e8bCarrierCountField = e8bClass.getDeclaredField("Z");
             e8bCarrierCountField.setAccessible(true);
 
+            // g8.i.Z = carrier count for EUTRA CA Matrix (NR-NSA RAT mode)
+            Class<?> g8iClass = ClassMapping.loadClass("g8.i", loader);
+            if (g8iClass != null) {
+                g8iCarrierCountField = g8iClass.getDeclaredField("Z");
+                g8iCarrierCountField.setAccessible(true);
+            }
+
             k2aListField = k2aClass.getDeclaredField("d");
             k2aListField.setAccessible(true);
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
@@ -183,6 +193,7 @@ public class LteRsrpRowHook {
             return;
         }
         installN0FlagHook();
+        installG8iN0FlagHook();
         installV6bK0Hook();
         Log.i(TAG, "LteRsrpRowHook: installed");
     }
@@ -215,6 +226,43 @@ public class LteRsrpRowHook {
             });
         } catch (Exception e) {
             Log.e(TAG, "n0 flag hook failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook 1b: g8.i.n0() / p6.i.m0() — same ThreadLocal flag for EUTRA CA
+    //          Matrix (NR-NSA RAT mode). Same v6.b.k0() builder is used, so
+    //          the existing v6.b.k0 hook handles the injection.
+    // -----------------------------------------------------------------------
+
+    private void installG8iN0FlagHook() {
+        try {
+            if (g8iCarrierCountField == null) {
+                Log.i(TAG, "g8.i not available, skipping EUTRA CA Matrix n0 hook");
+                return;
+            }
+            Class<?> g8iClass = ClassMapping.loadClass("g8.i", loader);
+            Method   n0Method = ClassMapping.getMethod(g8iClass, "g8.i", "n0", loader);
+
+            xposed.hook(n0Method).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    int carriers = -1;
+                    try {
+                        carriers = (int) g8iCarrierCountField.get(chain.getThisObject());
+                    } catch (Exception e) {
+                        Log.w(TAG, "could not read g8.i carrier count: " + e);
+                    }
+                    carrierCountInN0.set(carriers);
+                    try {
+                        return chain.proceed();
+                    } finally {
+                        carrierCountInN0.remove();
+                    }
+                }
+            });
+        } catch (Exception e) {
+            Log.e(TAG, "g8.i n0 flag hook failed: " + e);
         }
     }
 
