@@ -12,17 +12,22 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Inserts a "Pwr Headr." row at position 8.0 and a "PUCCH TX" row at position 9.0
- * on the NR-SA CA Matrix UL page (h8.c), shifting the original row 8 (TxPower)
- * and all subsequent rows up by +2.0.
+ * Inserts a "Pwr Headr." row at position 8.0, an "SRS TX" row at position 9.0,
+ * and a "PUCCH TX" row at position 10.0 on the NR-SA CA Matrix UL page (h8.c),
+ * shifting the original row 8 (TxPower) and all subsequent rows up by +3.0.
  *
  * Row geometry:
  *   headroom label: row=8.0, h=1.0, col=0.0, w=27.0, text="Pwr Headr.", align=0, span=1
  *   headroom bar:   row=8.0, h=1.0, col=30.0, w=34.0
  *                   key="NR5G::Uplink_Measurements::NR_Power_Headroom",
  *                   index=-1, format="%.0f dB", color based on live value
- *   PUCCH TX label: row=9.0, h=1.0, col=0.0, w=27.0, text="PUCCH TX", align=0, span=1
- *   PUCCH TX bar:   row=9.0, h=1.0, col=30.0, w=34.0
+ *   SRS TX label:   row=9.0, h=1.0, col=0.0, w=27.0, text="SRS TX", align=0, span=1
+ *   SRS TX bar:     row=9.0, h=1.0, col=30.0, w=34.0
+ *                   key="NR5G::Uplink_Measurements::NR_Power_Tx_SRS",
+ *                   index=-1, format="%.1f dBm", LegendManager auto-coloring
+ *                   (same approach as NSG's own PUSCH TX row in h8.c — no .f() call)
+ *   PUCCH TX label: row=10.0, h=1.0, col=0.0, w=27.0, text="PUCCH TX", align=0, span=1
+ *   PUCCH TX bar:   row=10.0, h=1.0, col=30.0, w=34.0
  *                   key="NR5G::Uplink_Measurements::NR_Power_Tx_PUCCH",
  *                   index=-1, format="%.1f dBm"
  *   SCell column (col=65) intentionally omitted — no SCell data for these in NSG.
@@ -35,6 +40,7 @@ public class NrSaPucchTxRowHook {
     private static final String TAG = "NSGBandHook";
 
     private static final String HEADROOM_KEY = "NR5G::Uplink_Measurements::NR_Power_Headroom";
+    private static final String SRS_TX_KEY = "NR5G::Uplink_Measurements::NR_Power_Tx_SRS";
     private static final String PUCCH_TX_KEY = "NR5G::Uplink_Measurements::NR_Power_Tx_PUCCH";
 
     private static boolean headroomBarHookInstalled = false;
@@ -252,19 +258,20 @@ public class NrSaPucchTxRowHook {
                 return;
             }
 
-            // Step 1: shift all elements at row >= 8.0 by +2.0
+            // Step 1: shift all elements at row >= 8.0 by +3.0
             java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
             if (list != null) {
                 for (Object elem : list) {
                     float elemRow = (float) vaRowField.get(elem);
                     if (elemRow >= 8.0f) {
-                        vaRowField.set(elem, elemRow + 2.0f);
+                        vaRowField.set(elem, elemRow + 3.0f);
                     }
                 }
             }
 
             final float headroomRow = 8.0f;
-            final float pucchRow    = 9.0f;
+            final float srsRow      = 9.0f;
+            final float pucchRow    = 10.0f;
             final float h = 1.0f;
 
             // Step 2: inject "Pwr Headr." label at row=8.0, h=1.0, col=0.0, w=27.0
@@ -287,7 +294,26 @@ public class NrSaPucchTxRowHook {
                 vfFMethod.invoke(headroomBar, 0xFF43A047, 30.0f);
             }
 
-            // Step 4: inject "PUCCH TX" label at row=9.0, h=1.0, col=0.0, w=27.0
+            // Step 4: inject "SRS TX" label at row=9.0, h=1.0, col=0.0, w=27.0
+            Object srsLabel = k2aRMethod.invoke(k2aObj, srsRow, h, 0.0f, 27.0f);
+            if (srsLabel != null) {
+                veF.set(srsLabel, "SRS TX");
+                veG.set(srsLabel, 0);
+                veH.set(srsLabel, 1);
+            }
+
+            // Step 5: inject SRS TX bar at row=9.0, h=1.0, col=30.0, w=34.0 (PCell only)
+            Object srsBar = k2aSMethod.invoke(k2aObj, srsRow, h, 30.0f, 34.0f);
+            if (srsBar != null) {
+                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+                sysAFieldA.set(prop, SRS_TX_KEY);
+                sysAFieldB.set(prop, "%.1f dBm");
+                sysAFieldC.set(prop, -1);
+                vfF8120g.set(srsBar, prop);
+                // No .f(color, max) call — LegendManager auto-coloring, same as NSG's PUSCH TX row
+            }
+
+            // Step 6: inject "PUCCH TX" label at row=10.0, h=1.0, col=0.0, w=27.0
             Object pucchLabel = k2aRMethod.invoke(k2aObj, pucchRow, h, 0.0f, 27.0f);
             if (pucchLabel != null) {
                 veF.set(pucchLabel, "PUCCH TX");
@@ -295,7 +321,7 @@ public class NrSaPucchTxRowHook {
                 veH.set(pucchLabel, 1);
             }
 
-            // Step 5: inject PUCCH TX bar at row=9.0, h=1.0, col=30.0, w=34.0 (PCell only)
+            // Step 7: inject PUCCH TX bar at row=10.0, h=1.0, col=30.0, w=34.0 (PCell only)
             Object pucchBar = k2aSMethod.invoke(k2aObj, pucchRow, h, 30.0f, 34.0f);
             if (pucchBar != null) {
                 Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
