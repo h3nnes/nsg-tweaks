@@ -6,9 +6,6 @@ import androidx.annotation.NonNull;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.Collections;
-import java.util.Set;
-import java.util.WeakHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
@@ -66,10 +63,6 @@ public class LteRsrpRowHook {
     /** Set by the e8.b.n0() flag hook while n0() executes; null otherwise. */
     static final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
 
-    /** Guards against double-injection into the same k2.a grid builder. */
-    private final Set<Object> injectedGrids =
-            Collections.newSetFromMap(new WeakHashMap<>());
-
     /** NSG R.color.color_deep_blue = #ff1080e0 (ARGB), used for Rank3/Rank4 bars. */
     private static final int DEEP_BLUE = 0xff1080e0;
     /** Row at which Rank3/Rank4 usage rows are inserted (after the RSRP shift). */
@@ -110,9 +103,6 @@ public class LteRsrpRowHook {
 
     // e8.b carrier count field — actual bytecode name "Z"
     private Field e8bCarrierCountField;
-
-    // g8.i (EUTRA CA Matrix, NR-NSA) carrier count field — same "Z" name
-    private Field g8iCarrierCountField;
 
     // k2.a list + v6.a row field
     private Field k2aListField;
@@ -175,13 +165,6 @@ public class LteRsrpRowHook {
             e8bCarrierCountField = e8bClass.getDeclaredField("Z");
             e8bCarrierCountField.setAccessible(true);
 
-            // g8.i.Z = carrier count for EUTRA CA Matrix (NR-NSA RAT mode)
-            Class<?> g8iClass = ClassMapping.loadClass("g8.i", loader);
-            if (g8iClass != null) {
-                g8iCarrierCountField = g8iClass.getDeclaredField("Z");
-                g8iCarrierCountField.setAccessible(true);
-            }
-
             k2aListField = k2aClass.getDeclaredField("d");
             k2aListField.setAccessible(true);
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
@@ -200,7 +183,6 @@ public class LteRsrpRowHook {
             return;
         }
         installN0FlagHook();
-        installG8iN0FlagHook();
         installV6bK0Hook();
         Log.i(TAG, "LteRsrpRowHook: installed");
     }
@@ -237,43 +219,6 @@ public class LteRsrpRowHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook 1b: g8.i.n0() / p6.i.m0() — same ThreadLocal flag for EUTRA CA
-    //          Matrix (NR-NSA RAT mode). Same v6.b.k0() builder is used, so
-    //          the existing v6.b.k0 hook handles the injection.
-    // -----------------------------------------------------------------------
-
-    private void installG8iN0FlagHook() {
-        try {
-            if (g8iCarrierCountField == null) {
-                Log.i(TAG, "g8.i not available, skipping EUTRA CA Matrix n0 hook");
-                return;
-            }
-            Class<?> g8iClass = ClassMapping.loadClass("g8.i", loader);
-            Method   n0Method = ClassMapping.getMethod(g8iClass, "g8.i", "n0", loader);
-
-            xposed.hook(n0Method).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    int carriers = -1;
-                    try {
-                        carriers = (int) g8iCarrierCountField.get(chain.getThisObject());
-                    } catch (Exception e) {
-                        Log.w(TAG, "could not read g8.i carrier count: " + e);
-                    }
-                    carrierCountInN0.set(carriers);
-                    try {
-                        return chain.proceed();
-                    } finally {
-                        carrierCountInN0.remove();
-                    }
-                }
-            });
-        } catch (Exception e) {
-            Log.e(TAG, "g8.i n0 flag hook failed: " + e);
-        }
-    }
-
-    // -----------------------------------------------------------------------
     // Hook 2: static v6.b.k0(k2.a) — inject RSRP row when called from e8.b.n0()
     // -----------------------------------------------------------------------
 
@@ -289,8 +234,7 @@ public class LteRsrpRowHook {
                     Object  k2aArg   = chain.getArg(0);
                     Integer carriers = carrierCountInN0.get();
                     boolean inN0     = carriers != null;
-                    if (inN0 && k2aArg != null && !injectedGrids.contains(k2aArg)) {
-                        injectedGrids.add(k2aArg);
+                    if (inN0 && k2aArg != null) {
                         injectRsrpRow(k2aArg, carriers);
                     }
                     return chain.proceed();

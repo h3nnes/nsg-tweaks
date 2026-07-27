@@ -41,6 +41,11 @@ public class EutraRsrpRowHook {
 
     private static final String TAG = "NSGBandHook";
 
+    private static final int   DEEP_BLUE        = 0xff1080e0;
+    private static final float RANK_ROW         = 25.0f;
+    private static final float RANK_SHIFT_AMOUNT = 4.0f;
+    private static final float RANK_BAR_MAX     = 100.0f;
+
     /** Set by the g8.i.n0() flag hook while n0() executes; null otherwise. */
     static final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
 
@@ -58,6 +63,9 @@ public class EutraRsrpRowHook {
 
     // v6.f bar data-binding field
     private Field vfF8120g;
+
+    // v6.f bar color/max setter: f(int color, float max)
+    private Method vfFMethod;
 
     // com.qtrun.sys.b / a — property binding
     private Class<?> sysBClass;
@@ -101,6 +109,10 @@ public class EutraRsrpRowHook {
 
             vfF8120g = vfClass.getDeclaredField("g");
             vfF8120g.setAccessible(true);
+
+            vfFMethod = ClassMapping.getDeclaredMethod(vfClass, "v6.f", "f", loader,
+                    int.class, float.class);
+            vfFMethod.setAccessible(true);
 
             sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
             Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
@@ -251,12 +263,30 @@ public class EutraRsrpRowHook {
                 }
             }
 
+            // Path B/C: shift for Rank3/Rank4 insertion (rows >= 25 by +4).
+            if (!isPathA && list != null) {
+                for (Object elem : list) {
+                    float elemRow = (float) vaRowField.get(elem);
+                    if (elemRow >= RANK_ROW) {
+                        vaRowField.set(elem, elemRow + RANK_SHIFT_AMOUNT);
+                    }
+                }
+            }
+
+            // Insert RSRP rows
             if (isPathA) {
                 injectRsrpRowPathA(k2aObj, rsrpRow);
             } else if (isPathB) {
                 injectRsrpRowPathB(k2aObj, rsrpRow);
             } else {
                 injectRsrpRowPathC(k2aObj, rsrpRow);
+            }
+
+            // Path B/C: insert Rank3/Rank4 usage rows at row 25
+            if (isPathB) {
+                injectRankUsageRowPathB(k2aObj, RANK_ROW);
+            } else if (!isPathA) {
+                injectRankUsageRowPathC(k2aObj, RANK_ROW);
             }
 
         } catch (Exception e) {
@@ -365,5 +395,139 @@ public class EutraRsrpRowHook {
         sysAFieldB.set(prop, "%.1f dBm");
         sysAFieldC.set(prop, index);
         return prop;
+    }
+
+    private Object makeRankProp(String key, int index) throws Exception {
+        Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+        sysAFieldA.set(prop, key);
+        sysAFieldB.set(prop, "%.1f %%");
+        sysAFieldC.set(prop, index);
+        return prop;
+    }
+
+    private void injectRankUsageRowPathB(Object k2aObj, float startRow) throws Exception {
+        final float labelH    = 2.0f;
+        final float pcellBarH = 1.4f;
+        final float pcellOff  = 0.3f;
+        final float scellBarH = 1.0f;
+
+        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) {
+            veF.set(rank3Label, "Rank3 Usage");
+            veG.set(rank3Label, 0);
+            veH.set(rank3Label, 1);
+        }
+        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow + pcellOff, pcellBarH, 30.0f, 34.0f);
+        if (rank3PCell != null) {
+            vfF8120g.set(rank3PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow, scellBarH, 65.0f, 34.0f);
+        if (rank3SCell1 != null) {
+            vfF8120g.set(rank3SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, scellBarH, 65.0f, 34.0f);
+        if (rank3SCell2 != null) {
+            vfF8120g.set(rank3SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+
+        float rank4Row = startRow + 2.0f;
+        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) {
+            veF.set(rank4Label, "Rank4 Usage");
+            veG.set(rank4Label, 0);
+            veH.set(rank4Label, 1);
+        }
+        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row + pcellOff, pcellBarH, 30.0f, 34.0f);
+        if (rank4PCell != null) {
+            vfF8120g.set(rank4PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row, scellBarH, 65.0f, 34.0f);
+        if (rank4SCell1 != null) {
+            vfF8120g.set(rank4SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, scellBarH, 65.0f, 34.0f);
+        if (rank4SCell2 != null) {
+            vfF8120g.set(rank4SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+    }
+
+    private void injectRankUsageRowPathC(Object k2aObj, float startRow) throws Exception {
+        final float labelH = 2.0f;
+        final float barH   = 1.0f;
+
+        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) {
+            veF.set(rank3Label, "Rank3 Usage");
+            veG.set(rank3Label, 0);
+            veH.set(rank3Label, 1);
+        }
+        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow, barH, 30.0f, 34.0f);
+        if (rank3PCell != null) {
+            vfF8120g.set(rank3PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 30.0f, 34.0f);
+        if (rank3SCell1 != null) {
+            vfF8120g.set(rank3SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow, barH, 65.0f, 34.0f);
+        if (rank3SCell2 != null) {
+            vfF8120g.set(rank3SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell3 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f);
+        if (rank3SCell3 != null) {
+            vfF8120g.set(rank3SCell3, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL", -1));
+            vfFMethod.invoke(rank3SCell3, DEEP_BLUE, RANK_BAR_MAX);
+        }
+
+        float rank4Row = startRow + 2.0f;
+        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) {
+            veF.set(rank4Label, "Rank4 Usage");
+            veG.set(rank4Label, 0);
+            veH.set(rank4Label, 1);
+        }
+        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row, barH, 30.0f, 34.0f);
+        if (rank4PCell != null) {
+            vfF8120g.set(rank4PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 30.0f, 34.0f);
+        if (rank4SCell1 != null) {
+            vfF8120g.set(rank4SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row, barH, 65.0f, 34.0f);
+        if (rank4SCell2 != null) {
+            vfF8120g.set(rank4SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell3 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f);
+        if (rank4SCell3 != null) {
+            vfF8120g.set(rank4SCell3, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL", -1));
+            vfFMethod.invoke(rank4SCell3, DEEP_BLUE, RANK_BAR_MAX);
+        }
     }
 }
