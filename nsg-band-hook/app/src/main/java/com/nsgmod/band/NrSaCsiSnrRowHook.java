@@ -38,6 +38,11 @@ public class NrSaCsiSnrRowHook {
 
     private static final String TAG = "NSGBandHook";
 
+    private static final String PDSCH_SINR_KEY =
+            "NR5G::Downlink_Measurements::NR_PDSCH_SINR";
+    private static final String SS_SINR_KEY =
+            "NR5G::Downlink_Measurements::NR_SS_SINR";
+
     static final ThreadLocal<Integer> carrierCountInO0 = new ThreadLocal<>();
 
     /**
@@ -68,6 +73,12 @@ public class NrSaCsiSnrRowHook {
     private Field sysAFieldC; // "c" = index int     (JADX: f3870c)
     private Object unsafe;    // sun.misc.Unsafe instance, held as Object to avoid compile dep
     private java.lang.reflect.Method unsafeAllocateInstance;
+
+    private Field  legendSingleton;
+    private Method legendMethodC;
+    private Method legendMethodA;
+    private Object ssSinrLegendBVar;
+    private static boolean pdschColorRedirectInstalled = false;
 
     // h8.b.f5066a0 = carrier count (2 = PCell only/1SCell, 3 = 2SCells, ...)
     // Actual bytecode field name after JADX rename: "a0"
@@ -142,6 +153,37 @@ public class NrSaCsiSnrRowHook {
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
+            // LegendManager for PDSCH SINR color redirect.
+            // NR_PDSCH_SINR is not in attribute2legend_map.xml, so LegendManager
+            // returns null for color and -1 for progress. We redirect the lookup to
+            // NR_SS_SINR (which IS mapped to the NR SNR legend) so PDSCH SINR uses
+            // the exact same dynamic color thresholds as SS-SNR/CSI-SNR.
+            Class<?> legendClass = ClassMapping.loadClass("com.qtrun.legend.LegendManager", loader);
+            if (legendClass != null) {
+                String singletonName = ClassMapping.runtimeFieldName(
+                        "com.qtrun.legend.LegendManager", "e", loader);
+                try {
+                    legendSingleton = legendClass.getDeclaredField(singletonName);
+                } catch (NoSuchFieldException nsfe) {
+                    legendSingleton = legendClass.getDeclaredField("f3783e");
+                }
+                legendSingleton.setAccessible(true);
+
+                legendMethodC = ClassMapping.getDeclaredMethod(
+                        legendClass, "com.qtrun.legend.LegendManager", "c", loader,
+                        sysBClass, double.class);
+                legendMethodC.setAccessible(true);
+                legendMethodA = ClassMapping.getDeclaredMethod(
+                        legendClass, "com.qtrun.legend.LegendManager", "a", loader,
+                        sysBClass, double.class);
+                legendMethodA.setAccessible(true);
+
+                ssSinrLegendBVar = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+                sysAFieldA.set(ssSinrLegendBVar, SS_SINR_KEY);
+                sysAFieldB.set(ssSinrLegendBVar, "%.1f dB");
+                sysAFieldC.set(ssSinrLegendBVar, -1);
+            }
+
             ready = true;
         } catch (Exception e) {
             Log.e(TAG, "NrSaCsiSnrRowHook: initReflection failed: " + e);
@@ -155,6 +197,7 @@ public class NrSaCsiSnrRowHook {
         }
         installO0FlagHook();
         installV6bK0Hook();
+        installPdschColorRedirect();
         Log.i(TAG, "NrSaCsiSnrRowHook: installed");
     }
 
@@ -231,7 +274,59 @@ public class NrSaCsiSnrRowHook {
     }
 
     // -----------------------------------------------------------------------
-    // Injection: append CSI SNR label + PCell bar to k2.a builder
+    // LegendManager redirect for PDSCH SINR color coding
+    // -----------------------------------------------------------------------
+
+    private void installPdschColorRedirect() {
+        synchronized (NrSaCsiSnrRowHook.class) {
+            if (pdschColorRedirectInstalled) return;
+            if (legendMethodA == null || legendMethodC == null || ssSinrLegendBVar == null) {
+                Log.w(TAG, "NrSaCsiSnrRowHook: PDSCH color redirect not available, skipping");
+                return;
+            }
+            pdschColorRedirectInstalled = true;
+            try {
+                xposed.hook(legendMethodA).intercept(new Hooker() {
+                    @Override
+                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                        Object bVar = chain.getArg(0);
+                        if (bVar != null) {
+                            Object keyObj = sysAFieldA.get(bVar);
+                            if (keyObj != null && PDSCH_SINR_KEY.equals(keyObj.toString())) {
+                                Object legend = legendSingleton.get(null);
+                                if (legend != null) {
+                                    return legendMethodA.invoke(legend, ssSinrLegendBVar, chain.getArg(1));
+                                }
+                            }
+                        }
+                        return chain.proceed();
+                    }
+                });
+
+                xposed.hook(legendMethodC).intercept(new Hooker() {
+                    @Override
+                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                        Object bVar = chain.getArg(0);
+                        if (bVar != null) {
+                            Object keyObj = sysAFieldA.get(bVar);
+                            if (keyObj != null && PDSCH_SINR_KEY.equals(keyObj.toString())) {
+                                Object legend = legendSingleton.get(null);
+                                if (legend != null) {
+                                    return legendMethodC.invoke(legend, ssSinrLegendBVar, chain.getArg(1));
+                                }
+                            }
+                        }
+                        return chain.proceed();
+                    }
+                });
+            } catch (Exception e) {
+                Log.w(TAG, "NrSaCsiSnrRowHook: PDSCH color redirect hook failed: " + e);
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Injection: append CSI SNR + PDSCH SINR rows to k2.a builder
     // -----------------------------------------------------------------------
 
     private void injectCsiSnrRow(Object k2aObj, float row, int carriers) {
@@ -254,7 +349,7 @@ public class NrSaCsiSnrRowHook {
                 }
             }
 
-            // Inject label at insertRow, col 0..27
+            // Inject CSI SNR label at insertRow, col 0..27
             Object labelElem = k2aRMethod.invoke(k2aObj, insertRow, labelHeight, 0.0f, 27.0f);
             if (labelElem != null) {
                 veF8116f.set(labelElem, "CSI SNR");
@@ -262,7 +357,7 @@ public class NrSaCsiSnrRowHook {
                 veH.set(labelElem, 1);
             }
 
-            // Inject PCell bar at same row (+offset), col 30..34
+            // Inject CSI SNR PCell bar at same row (+offset), col 30..34
             Object barElem = k2aSMethod.invoke(k2aObj, insertRow + barRowOffset, barHeight, 30.0f, 34.0f);
             if (barElem != null) {
                 Object propBinding = unsafeAllocateInstance.invoke(unsafe, sysBClass);
@@ -270,6 +365,37 @@ public class NrSaCsiSnrRowHook {
                 sysAFieldB.set(propBinding, "%.1f dB");
                 sysAFieldC.set(propBinding, -1);
                 vfF8120g.set(barElem, propBinding);
+            }
+
+            // ── PDSCH SINR row (below CSI SNR, above RBs) ──────────────────
+            float pdschRow = insertRow + labelHeight;
+
+            // Shift existing rows >= pdschRow by another labelHeight
+            if (list != null) {
+                for (Object elem : list) {
+                    float elemRow = (float) vaRowField.get(elem);
+                    if (elemRow >= pdschRow) {
+                        vaRowField.set(elem, elemRow + labelHeight);
+                    }
+                }
+            }
+
+            // Inject PDSCH SINR label
+            Object pdschLabel = k2aRMethod.invoke(k2aObj, pdschRow, labelHeight, 0.0f, 27.0f);
+            if (pdschLabel != null) {
+                veF8116f.set(pdschLabel, "PDSCH SINR");
+                veF8117g.set(pdschLabel, 0);
+                veH.set(pdschLabel, 1);
+            }
+
+            // Inject PDSCH SINR PCell bar
+            Object pdschBar = k2aSMethod.invoke(k2aObj, pdschRow + barRowOffset, barHeight, 30.0f, 34.0f);
+            if (pdschBar != null) {
+                Object pdschProp = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+                sysAFieldA.set(pdschProp, PDSCH_SINR_KEY);
+                sysAFieldB.set(pdschProp, "%.1f dB");
+                sysAFieldC.set(pdschProp, -1);
+                vfF8120g.set(pdschBar, pdschProp);
             }
 
         } catch (Exception e) {
