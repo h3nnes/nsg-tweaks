@@ -17,13 +17,13 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * (original row 11), shifting the original row 11 and all subsequent rows by +1.0.
  *
  * Row geometry:
- *   label:     row=11.0, h=1.0, col=0.0,  w=27.0, text="Thput/PRB", align=0, span=1
+ *   label:     row=11.0, h=1.0, col=0.0,  w=27.0, text="TP/PRB/TTI", align=0, span=1
  *   PCell text: row=11.0, h=1.0, col=30.0, w=34.0
  *               key="NR5G::Uplink_Measurements::PCell::NR_PCell_Physical_Throughput_per_PRB_UL",
- *               index=-1, format="%.1f"
+ *               index=-1, format="%.1f Bits"
  *   SCell text: row=11.0, h=1.0, col=65.0, w=34.0
  *               key="NR5G::Uplink_Measurements::SCell::NR_SCell_Physical_Throughput_per_PRB_UL",
- *               index=0, format="%.1f"
+ *               index=0, format="%.1f Bits", color=holo_purple (via j(0, color))
  *
  * Text-only display, no bar coloring (no .f(color, max) call).
  *
@@ -57,6 +57,7 @@ public class NrSaThputPerPrbHook {
 
     // v6.g value cell method
     private Method v6gGMethod; // g(com.qtrun.sys.b, boolean) -> data binding
+    private Method v6gJMethod; // j(int index, int color) -> SCell text coloring
 
     // com.qtrun.sys.b / a — property binding
     private Class<?> sysBClass;
@@ -110,6 +111,7 @@ public class NrSaThputPerPrbHook {
             sysAFieldC.setAccessible(true);
 
             v6gGMethod = vgClass.getMethod("g", sysBClass, boolean.class);
+            v6gJMethod = vgClass.getMethod("j", int.class, int.class);
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
             java.lang.reflect.Field unsafeField;
@@ -153,8 +155,9 @@ public class NrSaThputPerPrbHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     Object thiz = chain.getThisObject();
+                    Context ctx = (Context) chain.getArg(0);
                     if (thiz != null) {
-                        injectThputPerPrbRow(thiz);
+                        injectThputPerPrbRow(thiz, ctx);
                     }
                     return result;
                 }
@@ -166,7 +169,7 @@ public class NrSaThputPerPrbHook {
         }
     }
 
-    private void injectThputPerPrbRow(Object thiz) {
+    private void injectThputPerPrbRow(Object thiz, Context ctx) {
         try {
             Object k2aObj = v6bYField.get(thiz);
             if (k2aObj == null) {
@@ -188,10 +191,10 @@ public class NrSaThputPerPrbHook {
             final float row = 11.0f;
             final float h = 1.0f;
 
-            // Step 2: inject "Thput/PRB" label at row=11.0, h=1.0, col=0.0, w=27.0
+            // Step 2: inject "TP/PRB/TTI" label at row=11.0, h=1.0, col=0.0, w=27.0
             Object label = k2aRMethod.invoke(k2aObj, row, h, 0.0f, 27.0f);
             if (label != null) {
-                veF.set(label, "Thput/PRB");
+                veF.set(label, "TP/PRB/TTI");
                 veG.set(label, 0);
                 veH.set(label, 1);
             }
@@ -201,19 +204,25 @@ public class NrSaThputPerPrbHook {
             if (pcellText != null) {
                 Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
                 sysAFieldA.set(prop, PCELL_KEY);
-                sysAFieldB.set(prop, "%.1f");
+                sysAFieldB.set(prop, "%.1f Bits");
                 sysAFieldC.set(prop, -1);
                 v6gGMethod.invoke(pcellText, prop, false);
             }
 
             // Step 4: inject SCell text at row=11.0, h=1.0, col=65.0, w=34.0
+            //         Color-match with holo_purple, same as NSG's own SCell text rows.
             Object scellText = k2aTMethod.invoke(k2aObj, row, h, 65.0f, 34.0f);
             if (scellText != null) {
                 Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
                 sysAFieldA.set(prop, SCELL_KEY);
-                sysAFieldB.set(prop, "%.1f");
+                sysAFieldB.set(prop, "%.1f Bits");
                 sysAFieldC.set(prop, 0);
                 v6gGMethod.invoke(scellText, prop, false);
+                if (v6gJMethod != null && ctx != null) {
+                    int color = ctx.getResources().getColor(
+                            android.R.color.holo_purple, ctx.getTheme());
+                    v6gJMethod.invoke(scellText, 0, color);
+                }
             }
 
         } catch (Exception e) {
