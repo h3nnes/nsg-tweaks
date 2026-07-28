@@ -33,6 +33,7 @@ public class SettingsToggleHook {
     static final String  PREF_KEY_FAST_REFRESH    = "nsgmod.fast_refresh_enabled";
     static final String  PREF_KEY_CELL_ROW_HEIGHT = "nsgmod.cell_row_height_enabled";
     static final String  PREF_KEY_PATHLOSS_COLUMN = "nsgmod.pathloss_column_enabled";
+    static final String  PREF_KEY_NR_PDSCH_SINR  = "nsgmod.nr_pdsch_snr_enabled";
 
     /** Returns true when the cell-table modifications toggle is enabled (default: true). */
     public static boolean cellModsEnabled() {
@@ -159,6 +160,22 @@ public class SettingsToggleHook {
         } catch (Throwable t) {
             android.util.Log.w(TAG, "lteExtCellsEnabled check failed: " + t);
             return true; // fail open
+        }
+    }
+
+    /** Returns true when the NR PDSCH SINR row toggle is enabled (default: false). */
+    public static boolean nrPdschSnrEnabled() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            android.app.Application app =
+                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app == null) return false;
+            SharedPreferences prefs = app.getSharedPreferences(
+                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+            return prefs.getBoolean(PREF_KEY_NR_PDSCH_SINR, false); // default OFF
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "nrPdschSnrEnabled check failed: " + t);
+            return false; // fail closed
         }
     }
 
@@ -435,6 +452,14 @@ public class SettingsToggleHook {
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
                     PREF_KEY_PATHLOSS_COLUMN, "NSGMod: NR-SA Pathloss column",
                     "Show Pathloss column in top RF header bar in NR-SA mode (Qualcomm only)",
+                    false, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_NR_PDSCH_SINR) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_NR_PDSCH_SINR, "NSGMod: Show NR PDSCH SINR",
+                    "Show PDSCH SINR row in NR-SA CA Matrix DL (Qualcomm may not provide data)",
                     false, prefManager, prefScreen, children);
         }
 

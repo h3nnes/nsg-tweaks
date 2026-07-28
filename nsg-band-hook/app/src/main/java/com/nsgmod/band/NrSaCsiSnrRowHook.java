@@ -197,7 +197,9 @@ public class NrSaCsiSnrRowHook {
         }
         installO0FlagHook();
         installV6bK0Hook();
-        installPdschColorRedirect();
+        if (SettingsToggleHook.nrPdschSnrEnabled()) {
+            installPdschColorRedirect();
+        }
         Log.i(TAG, "NrSaCsiSnrRowHook: installed");
     }
 
@@ -263,7 +265,11 @@ public class NrSaCsiSnrRowHook {
                         } else {
                             row = 16.5f;  // Path A: SNR at 14+2=16, insert before RBs at 17
                         }
-                        injectCsiSnrRow(k2aArg, row, carriers != null ? carriers : 2);
+                        boolean pdschEnabled = SettingsToggleHook.nrPdschSnrEnabled();
+                        if (pdschEnabled) {
+                            installPdschColorRedirect();
+                        }
+                        injectCsiSnrRow(k2aArg, row, carriers != null ? carriers : 2, pdschEnabled);
                     }
                     return chain.proceed();
                 }
@@ -329,7 +335,7 @@ public class NrSaCsiSnrRowHook {
     // Injection: append CSI SNR + PDSCH SINR rows to k2.a builder
     // -----------------------------------------------------------------------
 
-    private void injectCsiSnrRow(Object k2aObj, float row, int carriers) {
+    private void injectCsiSnrRow(Object k2aObj, float row, int carriers, boolean pdschEnabled) {
         try {
             float insertRow = (float) Math.ceil(row); // 14.5 → 15, 21.5 → 22
 
@@ -367,7 +373,11 @@ public class NrSaCsiSnrRowHook {
                 vfF8120g.set(barElem, propBinding);
             }
 
-            // ── PDSCH SINR row (below CSI SNR, above RBs) ──────────────────
+            // ── PDSCH SINR row (below CSI SNR, above RBs) — gated by toggle ──
+            if (!pdschEnabled) {
+                return;
+            }
+
             float pdschRow = insertRow + labelHeight;
 
             // Shift existing rows >= pdschRow by another labelHeight
