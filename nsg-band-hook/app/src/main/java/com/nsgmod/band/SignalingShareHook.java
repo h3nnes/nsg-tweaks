@@ -13,6 +13,7 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -233,6 +234,33 @@ public class SignalingShareHook {
                                                 detailTv.setTextIsSelectable(false);
                                                 detailTv.setTextIsSelectable(true);
                                                 detailTv.setEllipsize(null);
+                                                // Remove the ScrollView wrapper so it
+                                                // doesn't intercept touch events that
+                                                // are needed for text selection.
+                                                // ArrowKeyMovementMethod (installed by
+                                                // setTextIsSelectable) extends
+                                                // ScrollingMovementMethod and handles
+                                                // scrolling internally.
+                                                android.view.ViewParent tvParent =
+                                                        detailTv.getParent();
+                                                if (tvParent instanceof ScrollView) {
+                                                    ScrollView sv = (ScrollView) tvParent;
+                                                    ViewGroup svParent =
+                                                            (ViewGroup) sv.getParent();
+                                                    if (svParent != null) {
+                                                        int svIndex =
+                                                                svParent.indexOfChild(sv);
+                                                        detailTv.setLayoutParams(
+                                                                sv.getLayoutParams());
+                                                        sv.removeView(detailTv);
+                                                        svParent.removeView(sv);
+                                                        svParent.addView(
+                                                                detailTv, svIndex);
+                                                        Log.v(TAG,
+                                                                "SignalingShareHook:"
+                                                                + " removed ScrollView wrapper");
+                                                    }
+                                                }
                                                 Log.v(TAG,
                                                         "SignalingShareHook: selection re-applied"
                                                         + " (retries=" + pollRetries[0]
@@ -240,6 +268,7 @@ public class SignalingShareHook {
                                                         + ", mm=" + detailTv.getMovementMethod()
                                                         + ", selectable=" + detailTv.isTextSelectable()
                                                         + ", longClickable=" + detailTv.isLongClickable()
+                                                        + ", parent=" + detailTv.getParent()
                                                         + ")");
                                             } else {
                                                 pollRetries[0]++;
