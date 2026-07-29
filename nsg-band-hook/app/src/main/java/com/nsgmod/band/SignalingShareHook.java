@@ -198,6 +198,30 @@ public class SignalingShareHook {
                             msgTitleRef[0] = t.isEmpty() ? "signaling" : t;
                         }
 
+                        // Enable text selection on the detail TextView BEFORE the
+                        // double-injection guard, so it runs on EVERY popup open.
+                        // The XML has android:ellipsize="end" which is a known Android
+                        // bug that prevents text selection — we clear it.  NSG also
+                        // sets the text asynchronously after onItemClick, so we post
+                        // the call to ensure it runs after the text is updated.
+                        try {
+                            TextView detailTv = contentView.findViewById(ID_DETAIL_TEXT);
+                            if (detailTv != null) {
+                                detailTv.post(() -> {
+                                    try {
+                                        detailTv.setTextIsSelectable(true);
+                                        detailTv.setEllipsize(null);
+                                        detailTv.setFocusable(true);
+                                        detailTv.setFocusableInTouchMode(true);
+                                        detailTv.setLongClickable(true);
+                                    } catch (Exception ignored) {}
+                                });
+                                Log.v(TAG, "SignalingShareHook: text selection enabled on detail TextView");
+                            }
+                        } catch (Exception e) {
+                            Log.w(TAG, "SignalingShareHook: failed to enable text selection: " + e);
+                        }
+
                         // Guard against double-adding the Share button (UI restructure only once)
                         if (SHARE_BTN_TAG.equals(contentView.getTag())) {
                             return result;
@@ -357,18 +381,6 @@ public class SignalingShareHook {
                                 ctx.startActivity(chooser);
                             }
                         });
-
-                        try {
-                            TextView detailTv = contentView.findViewById(ID_DETAIL_TEXT);
-                            if (detailTv != null) {
-                                detailTv.setTextIsSelectable(true);
-                                detailTv.setFocusable(true);
-                                detailTv.setFocusableInTouchMode(true);
-                                Log.v(TAG, "SignalingShareHook: text selection enabled on detail TextView");
-                            }
-                        } catch (Exception e) {
-                            Log.w(TAG, "SignalingShareHook: failed to enable text selection: " + e);
-                        }
 
                     } catch (Exception e) {
                         Log.w(TAG, "hookOnItemClick post-processing failed: " + e);
