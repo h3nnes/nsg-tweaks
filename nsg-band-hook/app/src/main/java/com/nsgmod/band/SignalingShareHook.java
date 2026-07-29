@@ -721,14 +721,16 @@ public class SignalingShareHook {
     }
 
     // -----------------------------------------------------------------------
-    // CoordinateAdjustingCallback — wraps ActionMode.Callback to adjust
-    // onGetContentRect coordinates from TextView space to Activity window space.
+    // CoordinateAdjustingCallback — wraps ActionMode.Callback to compute
+    // selection bounds in Activity window space.
     // The FloatingActionMode is created on the Activity's window (via delegated
-    // startActionMode), but the Editor's SelectionActionModeCallback returns
-    // content rect in TextView coordinates. The FloatingToolbar uses its parent
-    // view's getLocationOnScreen() to convert to screen coords, but the parent
-    // is the decor view, not the TextView. We pre-offset the rect so the
-    // FloatingToolbar positions correctly over the selected text.
+    // startActionMode), so the `view` parameter passed to onGetContentRect is
+    // the decor view, not the TextView. The Editor's SelectionActionModeCallback
+    // expects the TextView to compute selection-specific bounds — with the
+    // decor view, it falls back to returning the full screen bounds, causing
+    // the FloatingToolbar to follow the TextView's top off-screen when scrolled.
+    // We compute the selection bounds ourselves from the captured TextView,
+    // then offset to Activity window (decor view) space.
     // -----------------------------------------------------------------------
 
     private static class CoordinateAdjustingCallback extends ActionMode.Callback2 {
@@ -762,11 +764,46 @@ public class SignalingShareHook {
 
         @Override
         public void onGetContentRect(ActionMode mode, View view, Rect outRect) {
-            if (original instanceof ActionMode.Callback2) {
-                ((ActionMode.Callback2) original).onGetContentRect(mode, view, outRect);
-            } else {
-                super.onGetContentRect(mode, view, outRect);
+            // Compute selection bounds in TextView-local coordinate space.
+            boolean computed = false;
+            if (textView instanceof TextView) {
+                try {
+                    TextView tv = (TextView) textView;
+                    int selStart = tv.getSelectionStart();
+                    int selEnd = tv.getSelectionEnd();
+                    android.text.Layout layout = tv.getLayout();
+                    if (layout != null && selStart >= 0 && selEnd >= 0) {
+                        int minSel = Math.min(selStart, selEnd);
+                        int maxSel = Math.max(selStart, selEnd);
+                        int startLine = layout.getLineForOffset(minSel);
+                        int endLine = layout.getLineForOffset(maxSel);
+                        float hStart = layout.getPrimaryHorizontal(selStart);
+                        float hEnd = layout.getPrimaryHorizontal(selEnd);
+                        int left = (int) Math.min(hStart, hEnd);
+                        int right = (int) Math.max(hStart, hEnd);
+                        int padLeft = tv.getTotalPaddingLeft();
+                        int padTop = tv.getTotalPaddingTop();
+                        int scrollX = tv.getScrollX();
+                        int scrollY = tv.getScrollY();
+                        outRect.set(
+                                left + padLeft - scrollX,
+                                layout.getLineTop(startLine) + padTop - scrollY,
+                                Math.max(right, left + 1) + padLeft - scrollX,
+                                layout.getLineBottom(endLine) + padTop - scrollY);
+                        computed = true;
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "SignalingShareHook: compute selection bounds failed: " + e);
+                }
             }
+            if (!computed) {
+                if (original instanceof ActionMode.Callback2) {
+                    ((ActionMode.Callback2) original).onGetContentRect(mode, view, outRect);
+                } else {
+                    super.onGetContentRect(mode, view, outRect);
+                }
+            }
+            // Offset from TextView space to Activity window (decor view) space
             try {
                 int[] tvScreen = new int[2];
                 textView.getLocationOnScreen(tvScreen);
