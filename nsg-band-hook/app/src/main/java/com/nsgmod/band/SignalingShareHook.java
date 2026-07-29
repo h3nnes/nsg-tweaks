@@ -72,6 +72,11 @@ public class SignalingShareHook {
      *  setMovementMethod internally, which would recurse without this). */
     private static boolean setMMGuard = false;
 
+    /** Max retries for the text-set polling loop. */
+    private static final int POLL_MAX_RETRIES = 20;
+    /** Delay between polling attempts (ms). */
+    private static final long POLL_DELAY_MS = 50;
+
     public SignalingShareHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
         this.loader = loader;
@@ -204,15 +209,49 @@ public class SignalingShareHook {
                         }
 
                         // Enable text selection on the detail TextView.
-                        // NSG's async callback will later set ScrollingMovementMethod which
-                        // would disable selection — the setMovementMethod hook below
-                        // re-applies setTextIsSelectable(true) after that override.
+                        // NSG's async callback clears the text and sets it later,
+                        // then overwrites the movement method with ScrollingMovementMethod.
+                        // We poll until the text appears, then force-toggle
+                        // setTextIsSelectable to re-apply ALL selection flags + movement method.
                         try {
-                            TextView detailTv = (TextView) contentView.findViewById(0x7f0900dc);
+                            final TextView detailTv =
+                                    (TextView) contentView.findViewById(0x7f0900dc);
                             if (detailTv != null) {
                                 detailTv.setTextIsSelectable(true);
                                 detailTv.setEllipsize(null);
-                                Log.v(TAG, "SignalingShareHook: text selection enabled on detail TextView");
+                                final android.os.Handler pollHandler =
+                                        new android.os.Handler(android.os.Looper.getMainLooper());
+                                final int[] pollRetries = {0};
+                                final Runnable pollForText = new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        try {
+                                            boolean textReady =
+                                                    detailTv.getText().length() > 0
+                                                            || pollRetries[0] >= POLL_MAX_RETRIES;
+                                            if (textReady) {
+                                                detailTv.setTextIsSelectable(false);
+                                                detailTv.setTextIsSelectable(true);
+                                                detailTv.setEllipsize(null);
+                                                Log.v(TAG,
+                                                        "SignalingShareHook: selection re-applied"
+                                                        + " (retries=" + pollRetries[0]
+                                                        + ", textLen=" + detailTv.getText().length()
+                                                        + ", mm=" + detailTv.getMovementMethod()
+                                                        + ", selectable=" + detailTv.isTextSelectable()
+                                                        + ", longClickable=" + detailTv.isLongClickable()
+                                                        + ")");
+                                            } else {
+                                                pollRetries[0]++;
+                                                pollHandler.postDelayed(this, POLL_DELAY_MS);
+                                            }
+                                        } catch (Exception e) {
+                                            Log.w(TAG,
+                                                    "SignalingShareHook: poll re-apply failed: " + e);
+                                        }
+                                    }
+                                };
+                                pollHandler.postDelayed(pollForText, POLL_DELAY_MS);
                             }
                         } catch (Exception e) {
                             Log.w(TAG, "SignalingShareHook: enable text selection failed: " + e);
@@ -413,12 +452,14 @@ public class SignalingShareHook {
                         Object thiz = chain.getThisObject();
                         if (thiz instanceof TextView) {
                             TextView tv = (TextView) thiz;
-                            // Check if this is the signaling detail TextView
                             if (tv.getId() == 0x7f0900dc) {
                                 setMMGuard = true;
                                 try {
                                     tv.setMovementMethod(
                                             android.text.method.ArrowKeyMovementMethod.getInstance());
+                                    Log.v(TAG, "SignalingShareHook: setMM hook re-applied"
+                                            + " ArrowKeyMovementMethod on detail TV"
+                                            + " (was=" + chain.getArg(0) + ")");
                                 } finally {
                                     setMMGuard = false;
                                 }
