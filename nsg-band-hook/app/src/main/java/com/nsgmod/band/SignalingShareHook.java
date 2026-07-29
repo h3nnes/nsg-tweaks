@@ -4,14 +4,11 @@ import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.Handler;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewParent;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -70,6 +67,10 @@ public class SignalingShareHook {
     private Field  u7fPopupField;       // u7.f.<PopupWindow field> — found by type scan
 
     private boolean reflectionReady = false;
+
+    /** Re-entry guard for the setMovementMethod hook (setTextIsSelectable calls
+     *  setMovementMethod internally, which would recurse without this). */
+    private static boolean setMMGuard = false;
 
     public SignalingShareHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -135,6 +136,7 @@ public class SignalingShareHook {
 
     public void install() {
         hookOnItemClick();
+        hookSetMovementMethod();
     }
 
     // -----------------------------------------------------------------------
@@ -201,79 +203,19 @@ public class SignalingShareHook {
                             msgTitleRef[0] = t.isEmpty() ? "signaling" : t;
                         }
 
-                        // Enable text selection on the detail TextView BEFORE the
-                        // double-injection guard, so it runs on EVERY popup open.
-                        // The ScrollView intercepts touch events for scrolling, which
-                        // prevents the TextView's long-press selection from starting.
-                        // We use a smart OnTouchListener that only blocks interception
-                        // after a long-press delay (no movement), so normal scrolling
-                        // still works.
+                        // Enable text selection on the detail TextView.
+                        // NSG's async callback will later set ScrollingMovementMethod which
+                        // would disable selection — the setMovementMethod hook below
+                        // re-applies setTextIsSelectable(true) after that override.
                         try {
-                            TextView detailTv = contentView.findViewById(ID_DETAIL_TEXT);
+                            TextView detailTv = (TextView) contentView.findViewById(0x7f0900dc);
                             if (detailTv != null) {
-                                final ViewParent scrollViewParent = detailTv.getParent();
-                                final Handler handler = new Handler();
-                                final Runnable[] longPressAction = {null};
-                                final float[] downX = {0f};
-                                final float[] downY = {0f};
-                                final int touchSlop = android.view.ViewConfiguration
-                                        .get(detailTv.getContext()).getScaledTouchSlop();
-
-                                detailTv.setOnTouchListener(new View.OnTouchListener() {
-                                    @Override
-                                    public boolean onTouch(View v, MotionEvent event) {
-                                        switch (event.getActionMasked()) {
-                                            case MotionEvent.ACTION_DOWN:
-                                                downX[0] = event.getX();
-                                                downY[0] = event.getY();
-                                                longPressAction[0] = () -> {
-                                                    // Long-press detected (no movement for 500ms).
-                                                    // Block ScrollView interception so the
-                                                    // TextView gets the touch sequence for
-                                                    // selection handles.
-                                                    if (scrollViewParent != null) {
-                                                        scrollViewParent.requestDisallowInterceptTouchEvent(true);
-                                                    }
-                                                };
-                                                handler.postDelayed(longPressAction[0], 500);
-                                                break;
-                                            case MotionEvent.ACTION_MOVE:
-                                                // If user moved beyond touch slop, cancel
-                                                // the pending long-press and let ScrollView
-                                                // scroll normally.
-                                                float dx = Math.abs(event.getX() - downX[0]);
-                                                float dy = Math.abs(event.getY() - downY[0]);
-                                                if (dx > touchSlop || dy > touchSlop) {
-                                                    if (longPressAction[0] != null) {
-                                                        handler.removeCallbacks(longPressAction[0]);
-                                                        longPressAction[0] = null;
-                                                    }
-                                                }
-                                                break;
-                                            case MotionEvent.ACTION_UP:
-                                            case MotionEvent.ACTION_CANCEL:
-                                                if (longPressAction[0] != null) {
-                                                    handler.removeCallbacks(longPressAction[0]);
-                                                    longPressAction[0] = null;
-                                                }
-                                                break;
-                                        }
-                                        return false; // let TextView handle the event normally
-                                    }
-                                });
-
-                                detailTv.post(() -> {
-                                    try {
-                                        detailTv.setTextIsSelectable(true);
-                                        detailTv.setEllipsize(null);
-                                        detailTv.setFocusable(true);
-                                        detailTv.setFocusableInTouchMode(true);
-                                        detailTv.setLongClickable(true);
-                                    } catch (Exception ignored) {}
-                                });
+                                detailTv.setTextIsSelectable(true);
+                                detailTv.setEllipsize(null);
+                                Log.v(TAG, "SignalingShareHook: text selection enabled on detail TextView");
                             }
                         } catch (Exception e) {
-                            Log.w(TAG, "SignalingShareHook: failed to enable text selection: " + e);
+                            Log.w(TAG, "SignalingShareHook: enable text selection failed: " + e);
                         }
 
                         // Guard against double-adding the Share button (UI restructure only once)
@@ -446,6 +388,48 @@ public class SignalingShareHook {
             Log.i(TAG, "SignalingShareHook: installed");
         } catch (Exception e) {
             Log.e(TAG, "hookOnItemClick failed: " + e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Hook: TextView.setMovementMethod — after-hook
+    // NSG's async callback (u7.a line 76-78) calls
+    // setMovementMethod(ScrollingMovementMethod) AFTER our hookOnItemClick runs,
+    // overwriting the ArrowKeyMovementMethod that setTextIsSelectable(true)
+    // installs. This hook re-applies setTextIsSelectable(true) whenever
+    // setMovementMethod is called on the signaling detail TextView.
+    // -----------------------------------------------------------------------
+
+    private void hookSetMovementMethod() {
+        try {
+            Method smmMethod = TextView.class.getMethod("setMovementMethod",
+                    android.text.method.MovementMethod.class);
+            xposed.hook(smmMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    if (setMMGuard) return result;
+                    try {
+                        Object thiz = chain.getThisObject();
+                        if (thiz instanceof TextView) {
+                            TextView tv = (TextView) thiz;
+                            // Check if this is the signaling detail TextView
+                            if (tv.getId() == 0x7f0900dc) {
+                                setMMGuard = true;
+                                try {
+                                    tv.setTextIsSelectable(true);
+                                } finally {
+                                    setMMGuard = false;
+                                }
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                    return result;
+                }
+            });
+            Log.i(TAG, "SignalingShareHook: setMovementMethod hook installed");
+        } catch (Exception e) {
+            Log.w(TAG, "SignalingShareHook: hookSetMovementMethod failed: " + e);
         }
     }
 }
