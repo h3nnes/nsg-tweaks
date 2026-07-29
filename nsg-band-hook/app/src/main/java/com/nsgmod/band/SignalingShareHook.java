@@ -4,9 +4,11 @@ import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Handler;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -201,14 +203,65 @@ public class SignalingShareHook {
 
                         // Enable text selection on the detail TextView BEFORE the
                         // double-injection guard, so it runs on EVERY popup open.
-                        // The ScrollView intercepts touch events, preventing text
-                        // selection — we add an OnTouchListener that calls
-                        // requestDisallowInterceptTouchEvent(true) so the TextView
-                        // gets the full touch sequence for selection handles.
+                        // The ScrollView intercepts touch events for scrolling, which
+                        // prevents the TextView's long-press selection from starting.
+                        // We use a smart OnTouchListener that only blocks interception
+                        // after a long-press delay (no movement), so normal scrolling
+                        // still works.
                         try {
                             TextView detailTv = contentView.findViewById(ID_DETAIL_TEXT);
                             if (detailTv != null) {
                                 final ViewParent scrollViewParent = detailTv.getParent();
+                                final Handler handler = new Handler();
+                                final Runnable[] longPressAction = {null};
+                                final float[] downX = {0f};
+                                final float[] downY = {0f};
+                                final int touchSlop = android.view.ViewConfiguration
+                                        .get(detailTv.getContext()).getScaledTouchSlop();
+
+                                detailTv.setOnTouchListener(new View.OnTouchListener() {
+                                    @Override
+                                    public boolean onTouch(View v, MotionEvent event) {
+                                        switch (event.getActionMasked()) {
+                                            case MotionEvent.ACTION_DOWN:
+                                                downX[0] = event.getX();
+                                                downY[0] = event.getY();
+                                                longPressAction[0] = () -> {
+                                                    // Long-press detected (no movement for 500ms).
+                                                    // Block ScrollView interception so the
+                                                    // TextView gets the touch sequence for
+                                                    // selection handles.
+                                                    if (scrollViewParent != null) {
+                                                        scrollViewParent.requestDisallowInterceptTouchEvent(true);
+                                                    }
+                                                };
+                                                handler.postDelayed(longPressAction[0], 500);
+                                                break;
+                                            case MotionEvent.ACTION_MOVE:
+                                                // If user moved beyond touch slop, cancel
+                                                // the pending long-press and let ScrollView
+                                                // scroll normally.
+                                                float dx = Math.abs(event.getX() - downX[0]);
+                                                float dy = Math.abs(event.getY() - downY[0]);
+                                                if (dx > touchSlop || dy > touchSlop) {
+                                                    if (longPressAction[0] != null) {
+                                                        handler.removeCallbacks(longPressAction[0]);
+                                                        longPressAction[0] = null;
+                                                    }
+                                                }
+                                                break;
+                                            case MotionEvent.ACTION_UP:
+                                            case MotionEvent.ACTION_CANCEL:
+                                                if (longPressAction[0] != null) {
+                                                    handler.removeCallbacks(longPressAction[0]);
+                                                    longPressAction[0] = null;
+                                                }
+                                                break;
+                                        }
+                                        return false; // let TextView handle the event normally
+                                    }
+                                });
+
                                 detailTv.post(() -> {
                                     try {
                                         detailTv.setTextIsSelectable(true);
@@ -216,17 +269,7 @@ public class SignalingShareHook {
                                         detailTv.setFocusable(true);
                                         detailTv.setFocusableInTouchMode(true);
                                         detailTv.setLongClickable(true);
-                                        // Prevent ScrollView from intercepting touch events
-                                        // so text selection handles work properly.
-                                        detailTv.setOnTouchListener((v, event) -> {
-                                            if (scrollViewParent != null) {
-                                                scrollViewParent.requestDisallowInterceptTouchEvent(true);
-                                            }
-                                            return false; // let the TextView handle the event
-                                        });
-                                    } catch (Exception ex) {
-                                        Log.w(TAG, "SignalingShareHook: post() enable failed: " + ex);
-                                    }
+                                    } catch (Exception ignored) {}
                                 });
                             }
                         } catch (Exception e) {
