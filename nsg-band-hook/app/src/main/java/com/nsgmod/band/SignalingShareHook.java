@@ -9,6 +9,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -200,13 +201,14 @@ public class SignalingShareHook {
 
                         // Enable text selection on the detail TextView BEFORE the
                         // double-injection guard, so it runs on EVERY popup open.
-                        // The XML has android:ellipsize="end" which is a known Android
-                        // bug that prevents text selection — we clear it.  NSG also
-                        // sets the text asynchronously after onItemClick, so we post
-                        // the call to ensure it runs after the text is updated.
+                        // The ScrollView intercepts touch events, preventing text
+                        // selection — we add an OnTouchListener that calls
+                        // requestDisallowInterceptTouchEvent(true) so the TextView
+                        // gets the full touch sequence for selection handles.
                         try {
                             TextView detailTv = contentView.findViewById(ID_DETAIL_TEXT);
                             if (detailTv != null) {
+                                final ViewParent scrollViewParent = detailTv.getParent();
                                 detailTv.post(() -> {
                                     try {
                                         detailTv.setTextIsSelectable(true);
@@ -214,9 +216,18 @@ public class SignalingShareHook {
                                         detailTv.setFocusable(true);
                                         detailTv.setFocusableInTouchMode(true);
                                         detailTv.setLongClickable(true);
-                                    } catch (Exception ignored) {}
+                                        // Prevent ScrollView from intercepting touch events
+                                        // so text selection handles work properly.
+                                        detailTv.setOnTouchListener((v, event) -> {
+                                            if (scrollViewParent != null) {
+                                                scrollViewParent.requestDisallowInterceptTouchEvent(true);
+                                            }
+                                            return false; // let the TextView handle the event
+                                        });
+                                    } catch (Exception ex) {
+                                        Log.w(TAG, "SignalingShareHook: post() enable failed: " + ex);
+                                    }
                                 });
-                                Log.v(TAG, "SignalingShareHook: text selection enabled on detail TextView");
                             }
                         } catch (Exception e) {
                             Log.w(TAG, "SignalingShareHook: failed to enable text selection: " + e);
