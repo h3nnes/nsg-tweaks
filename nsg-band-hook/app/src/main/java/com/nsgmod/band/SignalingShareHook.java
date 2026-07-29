@@ -417,7 +417,8 @@ public class SignalingShareHook {
                             if (tv.getId() == 0x7f0900dc) {
                                 setMMGuard = true;
                                 try {
-                                    tv.setTextIsSelectable(true);
+                                    tv.setMovementMethod(
+                                            android.text.method.ArrowKeyMovementMethod.getInstance());
                                 } finally {
                                     setMMGuard = false;
                                 }
