@@ -358,6 +358,18 @@ public class SignalingShareHook {
                             }
                         });
 
+                        try {
+                            TextView detailTv = contentView.findViewById(ID_DETAIL_TEXT);
+                            if (detailTv != null) {
+                                detailTv.setTextIsSelectable(true);
+                                detailTv.setFocusable(true);
+                                detailTv.setFocusableInTouchMode(true);
+                                Log.v(TAG, "SignalingShareHook: text selection enabled on detail TextView");
+                            }
+                        } catch (Exception e) {
+                            Log.w(TAG, "SignalingShareHook: failed to enable text selection: " + e);
+                        }
+
                     } catch (Exception e) {
                         Log.w(TAG, "hookOnItemClick post-processing failed: " + e);
                     }
