@@ -1,8 +1,12 @@
 package com.nsgmod.band;
 
+import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.Context;
+import android.content.ContextWrapper;
 import android.content.Intent;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.util.Log;
 import android.util.TypedValue;
@@ -34,21 +38,29 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks NSG 4.8.4 (com.qtrun.QuickTest) to add a "Share" button immediately to
- * the LEFT of the existing "Copy" button on the signaling message detail popup.
+ * Hooks NSG 4.8.4 (com.qtrun.QuickTest) to add "Share" and "Select" buttons
+ * alongside the existing "Copy" button on the signaling message detail popup.
+ *
+ * The Select button opens an AlertDialog with a selectable TextView holding the
+ * full message text — text selection works natively inside an AlertDialog (its
+ * own window) but not inside the focusable PopupWindow, whose nested selection
+ * handles get blocked.
  *
  * Hook: u7.a.onItemClick (after-hook)
  *   - Lets the original run untouched.
- *   - After: removes the Copy button from its original position, places it and
- *     a new Share button (with identical style) side-by-side in a horizontal
- *     LinearLayout anchored to end|top of the popup FrameLayout.
+ *   - After: removes the Copy button from its original position, then places
+ *     Share, Copy and Select buttons (identical style) side-by-side in a
+ *     horizontal LinearLayout anchored to end|top of the popup FrameLayout.
  */
 public class SignalingShareHook {
 
     private static final String TAG = "NSGBandHook";
 
-    /** Tag set on the popup contentView once the Share button has been injected. */
+    /** Tag set on the popup contentView once the button row has been injected. */
     private static final String SHARE_BTN_TAG = "nsg_share_btn_added";
+
+    /** Tag set on the injected Select button so it can be identified later. */
+    private static final String SELECT_BTN_TAG = "nsg_select_btn_added";
 
     /** Resource ID of the copy button inside the signaling detail popup. */
     private static final int ID_DETAIL_COPY = 0x7f0900dd;
@@ -68,15 +80,6 @@ public class SignalingShareHook {
     private Field  u7fPopupField;       // u7.f.<PopupWindow field> — found by type scan
 
     private boolean reflectionReady = false;
-
-    /** Re-entry guard for the setMovementMethod hook (setTextIsSelectable calls
-     *  setMovementMethod internally, which would recurse without this). */
-    private static boolean setMMGuard = false;
-
-    /** Max retries for the text-set polling loop. */
-    private static final int POLL_MAX_RETRIES = 20;
-    /** Delay between polling attempts (ms). */
-    private static final long POLL_DELAY_MS = 50;
 
     public SignalingShareHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -142,13 +145,12 @@ public class SignalingShareHook {
 
     public void install() {
         hookOnItemClick();
-        hookSetMovementMethod();
     }
 
     // -----------------------------------------------------------------------
     // Hook: u7.a.onItemClick — after-hook
-    // Injects Share button to the LEFT of Copy button inside a LinearLayout
-    // anchored to end|top of the popup FrameLayout.
+    // Injects Share, Copy and Select buttons into a LinearLayout anchored to
+    // end|top of the popup FrameLayout.
     // -----------------------------------------------------------------------
 
     private void hookOnItemClick() {
@@ -209,84 +211,7 @@ public class SignalingShareHook {
                             msgTitleRef[0] = t.isEmpty() ? "signaling" : t;
                         }
 
-                        // Enable text selection on the detail TextView.
-                        // NSG's async callback clears the text and sets it later,
-                        // then overwrites the movement method with ScrollingMovementMethod.
-                        // We poll until the text appears, then force-toggle
-                        // setTextIsSelectable to re-apply ALL selection flags + movement method.
-                        try {
-                            final TextView detailTv =
-                                    (TextView) contentView.findViewById(0x7f0900dc);
-                            if (detailTv != null) {
-                                detailTv.setTextIsSelectable(true);
-                                detailTv.setEllipsize(null);
-                                final android.os.Handler pollHandler =
-                                        new android.os.Handler(android.os.Looper.getMainLooper());
-                                final int[] pollRetries = {0};
-                                final Runnable pollForText = new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        try {
-                                            boolean textReady =
-                                                    detailTv.getText().length() > 0
-                                                            || pollRetries[0] >= POLL_MAX_RETRIES;
-                                            if (textReady) {
-                                                detailTv.setTextIsSelectable(false);
-                                                detailTv.setTextIsSelectable(true);
-                                                detailTv.setEllipsize(null);
-                                                // Remove the ScrollView wrapper so it
-                                                // doesn't intercept touch events that
-                                                // are needed for text selection.
-                                                // ArrowKeyMovementMethod (installed by
-                                                // setTextIsSelectable) extends
-                                                // ScrollingMovementMethod and handles
-                                                // scrolling internally.
-                                                android.view.ViewParent tvParent =
-                                                        detailTv.getParent();
-                                                if (tvParent instanceof ScrollView) {
-                                                    ScrollView sv = (ScrollView) tvParent;
-                                                    ViewGroup svParent =
-                                                            (ViewGroup) sv.getParent();
-                                                    if (svParent != null) {
-                                                        int svIndex =
-                                                                svParent.indexOfChild(sv);
-                                                        detailTv.setLayoutParams(
-                                                                sv.getLayoutParams());
-                                                        sv.removeView(detailTv);
-                                                        svParent.removeView(sv);
-                                                        svParent.addView(
-                                                                detailTv, svIndex);
-                                                        Log.v(TAG,
-                                                                "SignalingShareHook:"
-                                                                + " removed ScrollView wrapper");
-                                                    }
-                                                }
-                                                Log.v(TAG,
-                                                        "SignalingShareHook: selection re-applied"
-                                                        + " (retries=" + pollRetries[0]
-                                                        + ", textLen=" + detailTv.getText().length()
-                                                        + ", mm=" + detailTv.getMovementMethod()
-                                                        + ", selectable=" + detailTv.isTextSelectable()
-                                                        + ", longClickable=" + detailTv.isLongClickable()
-                                                        + ", parent=" + detailTv.getParent()
-                                                        + ")");
-                                            } else {
-                                                pollRetries[0]++;
-                                                pollHandler.postDelayed(this, POLL_DELAY_MS);
-                                            }
-                                        } catch (Exception e) {
-                                            Log.w(TAG,
-                                                    "SignalingShareHook: poll re-apply failed: " + e);
-                                        }
-                                    }
-                                };
-                                pollHandler.postDelayed(pollForText, POLL_DELAY_MS);
-                            }
-                        } catch (Exception e) {
-                            Log.w(TAG, "SignalingShareHook: enable text selection failed: " + e);
-                        }
-
-                        // Guard against double-adding the Share button (UI restructure only once)
+                        // Guard against double-adding the button row (UI restructure only once)
                         if (SHARE_BTN_TAG.equals(contentView.getTag())) {
                             return result;
                         }
@@ -309,55 +234,33 @@ public class SignalingShareHook {
                         final ClassLoader cl = loader;
 
                         // Create Share button, copying all visual properties from copyBtn
-                        Button shareBtn = new Button(ctx);
-                        shareBtn.setText("Share");
-                        shareBtn.setTransformationMethod(null);  // disable AllCaps transformation
-                        shareBtn.setTextSize(TypedValue.COMPLEX_UNIT_PX, copyBtn.getTextSize());
-                        shareBtn.setTextColor(copyBtn.getTextColors());
-                        shareBtn.setTypeface(copyBtn.getTypeface());
-                        shareBtn.setPadding(
-                                copyBtn.getPaddingLeft(),
-                                copyBtn.getPaddingTop(),
-                                copyBtn.getPaddingRight(),
-                                copyBtn.getPaddingBottom());
-                        // Mirror MaterialButton insets and minHeight from copyBtn to suppress
-                        // the default 48dp minHeight and 6dp top/bottom insets that inflate the button.
-                        try {
-                            Class<?> mbClass = Class.forName(
-                                    "com.google.android.material.button.MaterialButton");
-                            if (mbClass.isInstance(shareBtn) && mbClass.isInstance(copyBtn)) {
-                                Method getInsetTop    = mbClass.getMethod("getInsetTop");
-                                Method getInsetBottom = mbClass.getMethod("getInsetBottom");
-                                Method getInsetLeft   = mbClass.getMethod("getInsetLeft");
-                                Method getInsetRight  = mbClass.getMethod("getInsetRight");
-                                Method setInsetTop    = mbClass.getMethod("setInsetTop",    int.class);
-                                Method setInsetBottom = mbClass.getMethod("setInsetBottom", int.class);
-                                Method setInsetLeft   = mbClass.getMethod("setInsetLeft",   int.class);
-                                Method setInsetRight  = mbClass.getMethod("setInsetRight",  int.class);
-                                setInsetTop.invoke(shareBtn,    getInsetTop.invoke(copyBtn));
-                                setInsetBottom.invoke(shareBtn, getInsetBottom.invoke(copyBtn));
-                                setInsetLeft.invoke(shareBtn,   getInsetLeft.invoke(copyBtn));
-                                setInsetRight.invoke(shareBtn,  getInsetRight.invoke(copyBtn));
-                            }
-                        } catch (Throwable ignored) { /* non-Material theme — skip */ }
-                        shareBtn.setMinimumHeight(copyBtn.getMinimumHeight());
-                        if (copyBtn.getBackground() != null
-                                && copyBtn.getBackground().getConstantState() != null) {
-                            shareBtn.setBackground(
-                                    copyBtn.getBackground().getConstantState().newDrawable());
-                        }
+                        Button shareBtn = buildStyledButton(ctx, copyBtn, "Share");
 
-                        // Share: wrap width, MATCH_PARENT height so it matches Copy button height
+                        // Shared layout params for the action buttons: wrap width,
+                        // MATCH_PARENT height so each matches the Copy button height.
+                        int gap4dp = Math.round(4 * ctx.getResources().getDisplayMetrics().density);
                         LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
                                 LinearLayout.LayoutParams.WRAP_CONTENT,
                                 LinearLayout.LayoutParams.MATCH_PARENT);
-                        int gap4dp = Math.round(4 * ctx.getResources().getDisplayMetrics().density);
-                        btnLp.setMargins(0, 0, gap4dp, 0);  // right margin = gap between Share and Copy
+                        btnLp.setMargins(0, 0, gap4dp, 0);  // right margin = gap to the next button
                         btnLp.gravity = Gravity.CENTER_VERTICAL;
                         shareBtn.setLayoutParams(btnLp);
+
+                        // Create Select button (opens a dialog with a selectable copy of
+                        // the message text), styled identically to Share via the same helper.
+                        Button selectBtn = buildStyledButton(ctx, copyBtn, "Select");
+                        selectBtn.setTag(SELECT_BTN_TAG);
+                        LinearLayout.LayoutParams selectLp = new LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.WRAP_CONTENT,
+                                LinearLayout.LayoutParams.MATCH_PARENT);
+                        selectLp.setMargins(0, 0, gap4dp, 0);
+                        selectLp.gravity = Gravity.CENTER_VERTICAL;
+                        selectBtn.setLayoutParams(selectLp);
+
                         LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(
                                 LinearLayout.LayoutParams.WRAP_CONTENT,
                                 LinearLayout.LayoutParams.WRAP_CONTENT);
+                        copyLp.setMargins(0, 0, gap4dp, 0);  // gap between Copy and Select
                         copyLp.gravity = Gravity.CENTER_VERTICAL;
                         copyBtn.setLayoutParams(copyLp);
 
@@ -373,9 +276,10 @@ public class SignalingShareHook {
                         containerLp.gravity = Gravity.END | Gravity.TOP;
                         container.setLayoutParams(containerLp);
 
-                        // Share first (left), then Copy (right)
+                        // Order: Share (left), Copy (middle), Select (right)
                         container.addView(shareBtn);
                         container.addView(copyBtn);
+                        container.addView(selectBtn);
 
                         frameLayout.addView(container);
 
@@ -446,6 +350,47 @@ public class SignalingShareHook {
                             }
                         });
 
+                        // Wire up Select button click: open a dialog with a selectable
+                        // copy of the message text. Text selection works natively inside
+                        // an AlertDialog (which has its own window), unlike inside the
+                        // focusable PopupWindow where the selection handles are blocked.
+                        selectBtn.setOnClickListener(new View.OnClickListener() {
+                            @Override
+                            public void onClick(View v) {
+                                try {
+                                    TextView detailTv = frameLayout.findViewById(ID_DETAIL_TEXT);
+                                    String messageText = detailTv != null
+                                            ? detailTv.getText().toString()
+                                            : "";
+
+                                    Activity activity = getActivity(ctx);
+                                    if (activity == null) {
+                                        Log.w(TAG, "Select: no Activity context available");
+                                        return;
+                                    }
+
+                                    // Selectable TextView inside a ScrollView.
+                                    TextView dialogTv = new TextView(activity);
+                                    dialogTv.setTextIsSelectable(true);
+                                    dialogTv.setTypeface(Typeface.MONOSPACE);
+                                    int pad16dp = Math.round(
+                                            16 * activity.getResources().getDisplayMetrics().density);
+                                    dialogTv.setPadding(pad16dp, pad16dp, pad16dp, pad16dp);
+                                    dialogTv.setText(messageText);
+                                    ScrollView scroll = new ScrollView(activity);
+                                    scroll.addView(dialogTv);
+
+                                    new AlertDialog.Builder(activity)
+                                            .setTitle("Signaling Message")
+                                            .setView(scroll)
+                                            .setNegativeButton("Close", null)
+                                            .show();
+                                } catch (Exception e) {
+                                    Log.w(TAG, "Select: failed to show dialog: " + e);
+                                }
+                            }
+                        });
+
                     } catch (Exception e) {
                         Log.w(TAG, "hookOnItemClick post-processing failed: " + e);
                     }
@@ -460,47 +405,69 @@ public class SignalingShareHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: TextView.setMovementMethod — after-hook
-    // NSG's async callback (u7.a line 76-78) calls
-    // setMovementMethod(ScrollingMovementMethod) AFTER our hookOnItemClick runs,
-    // overwriting the ArrowKeyMovementMethod that setTextIsSelectable(true)
-    // installs. This hook re-applies setTextIsSelectable(true) whenever
-    // setMovementMethod is called on the signaling detail TextView.
+    // Helpers
     // -----------------------------------------------------------------------
 
-    private void hookSetMovementMethod() {
+    /**
+     * Builds a new {@link Button} visually identical to {@code copyBtn} (same
+     * text size, color, typeface, padding, background, MaterialButton insets
+     * and minHeight) labelled {@code text}. Used for both the Share and Select
+     * buttons so they stay perfectly consistent.
+     */
+    private static Button buildStyledButton(Context ctx, Button copyBtn, String text) {
+        Button btn = new Button(ctx);
+        btn.setText(text);
+        btn.setTransformationMethod(null);  // disable AllCaps transformation
+        btn.setTextSize(TypedValue.COMPLEX_UNIT_PX, copyBtn.getTextSize());
+        btn.setTextColor(copyBtn.getTextColors());
+        btn.setTypeface(copyBtn.getTypeface());
+        btn.setPadding(
+                copyBtn.getPaddingLeft(),
+                copyBtn.getPaddingTop(),
+                copyBtn.getPaddingRight(),
+                copyBtn.getPaddingBottom());
+        // Mirror MaterialButton insets and minHeight from copyBtn to suppress
+        // the default 48dp minHeight and 6dp top/bottom insets that inflate the button.
         try {
-            Method smmMethod = TextView.class.getMethod("setMovementMethod",
-                    android.text.method.MovementMethod.class);
-            xposed.hook(smmMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result = chain.proceed();
-                    if (setMMGuard) return result;
-                    try {
-                        Object thiz = chain.getThisObject();
-                        if (thiz instanceof TextView) {
-                            TextView tv = (TextView) thiz;
-                            if (tv.getId() == 0x7f0900dc) {
-                                setMMGuard = true;
-                                try {
-                                    tv.setMovementMethod(
-                                            android.text.method.ArrowKeyMovementMethod.getInstance());
-                                    Log.v(TAG, "SignalingShareHook: setMM hook re-applied"
-                                            + " ArrowKeyMovementMethod on detail TV"
-                                            + " (was=" + chain.getArg(0) + ")");
-                                } finally {
-                                    setMMGuard = false;
-                                }
-                            }
-                        }
-                    } catch (Throwable ignored) {}
-                    return result;
-                }
-            });
-            Log.i(TAG, "SignalingShareHook: setMovementMethod hook installed");
-        } catch (Exception e) {
-            Log.w(TAG, "SignalingShareHook: hookSetMovementMethod failed: " + e);
+            Class<?> mbClass = Class.forName(
+                    "com.google.android.material.button.MaterialButton");
+            if (mbClass.isInstance(btn) && mbClass.isInstance(copyBtn)) {
+                Method getInsetTop    = mbClass.getMethod("getInsetTop");
+                Method getInsetBottom = mbClass.getMethod("getInsetBottom");
+                Method getInsetLeft   = mbClass.getMethod("getInsetLeft");
+                Method getInsetRight  = mbClass.getMethod("getInsetRight");
+                Method setInsetTop    = mbClass.getMethod("setInsetTop",    int.class);
+                Method setInsetBottom = mbClass.getMethod("setInsetBottom", int.class);
+                Method setInsetLeft   = mbClass.getMethod("setInsetLeft",   int.class);
+                Method setInsetRight  = mbClass.getMethod("setInsetRight",  int.class);
+                setInsetTop.invoke(btn,    getInsetTop.invoke(copyBtn));
+                setInsetBottom.invoke(btn, getInsetBottom.invoke(copyBtn));
+                setInsetLeft.invoke(btn,   getInsetLeft.invoke(copyBtn));
+                setInsetRight.invoke(btn,  getInsetRight.invoke(copyBtn));
+            }
+        } catch (Throwable ignored) { /* non-Material theme — skip */ }
+        btn.setMinimumHeight(copyBtn.getMinimumHeight());
+        if (copyBtn.getBackground() != null
+                && copyBtn.getBackground().getConstantState() != null) {
+            btn.setBackground(
+                    copyBtn.getBackground().getConstantState().newDrawable());
         }
+        return btn;
+    }
+
+    /**
+     * Unwraps {@link ContextWrapper} chains to find the underlying
+     * {@link Activity}, which is required to show an {@link AlertDialog}.
+     * Returns {@code null} if no Activity is found in the context hierarchy.
+     */
+    private static Activity getActivity(Context ctx) {
+        Context c = ctx;
+        while (c instanceof ContextWrapper) {
+            if (c instanceof Activity) {
+                return (Activity) c;
+            }
+            c = ((ContextWrapper) c).getBaseContext();
+        }
+        return null;
     }
 }
