@@ -21,9 +21,9 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *
  * Row positions (per path, after NrSaRsrpRowHook +2/+4 and NrSaCsiSnrRowHook +1/+2 shifts):
  *   Path A k0()  carriers==2 : 64Q at 23, Phy.Thput at 27 → insert at 27, shift by 2.0f
- *   Path B l0()  carriers>=4 : 64Q at 38, Phy.Thput at 45 → insert at 45, shift by 2.0f
+ *   Path B l0()  carriers>=4 : 64Q at 38, Phy.Thput at 44 (+1 if PDSCH on) → insert at 44/45, shift by 4.0f
  *   Path C inline carriers==3 : 64Q label at 38 h=2.0, bar at 38.3 h=1.4
- *                               → insert at 46 (=38+2+4+2), shift by 4.0f (2 rows × 2.0f)
+ *                               → insert at 46 (+2 if PDSCH on), shift by 4.0f (2 rows × 2.0f)
  *
  * Property keys:
  *   PCell:
@@ -223,15 +223,20 @@ public class NrSaModUsageRowHook {
             //   Path A carriers==2 : 24  — RSRP +2.0, CSI SNR +1.0  → 27
             //   Path B carriers>=4 : 40  — RSRP +3.0, CSI SNR +1.0  → 44
             //   Path C carriers==3 : 40  — RSRP +4.0, CSI SNR +2.0  → 46
+            // When PDSCH SINR toggle is on, NrSaCsiSnrRowHook adds another +labelHeight shift.
+            boolean pdschEnabled = SettingsToggleHook.nrPdschSnrEnabled();
+            float pdschShift = pdschEnabled ? 1.0f : 0.0f;  // CSI SNR labelHeight is 1.0 for carriers!=3, 2.0 for carriers==3
             float insertRow;
             if (isPathA) {
-                insertRow = 27.0f;  // 24 + 1 (CSI SNR) + 2 (SS-RSRP+CSI-RSRP rows)
+                insertRow = 27.0f + pdschShift;  // 24 + 1 (CSI SNR) + 2 (RSRP) + PDSCH
             } else if (isInline3) {
-                insertRow = 46.0f;  // 40 + 2 (CSI SNR) + 4 (SS-RSRP+CSI-RSRP rows)
+                insertRow = 46.0f + (pdschEnabled ? 2.0f : 0.0f);  // inline3 PDSCH shift is labelHeight=2.0
             } else {
-                insertRow = 44.0f;  // 40 + 1 (CSI SNR) + 3 (SS-RSRP+CSI-RSRP rows)
+                insertRow = 44.0f + pdschShift;  // 40 + 1 (CSI SNR) + 3 (RSRP) + PDSCH
             }
-            float labelHeight = isInline3 ? 2.0f : 1.0f;
+            // For carriers>=4, SCell bars span 2 sub-rows (row1 and row1+1.0), so
+            // labelHeight must be 2.0 to prevent QPSK from overlapping 16QAM's 2nd sub-row.
+            float labelHeight = (isInline3 || carriers >= 4) ? 2.0f : 1.0f;
             float barHeight   = isInline3 ? 1.4f : 1.0f;
             float barOffset   = isInline3 ? 0.3f : 0.0f;
 
