@@ -421,9 +421,9 @@ public class SignalingSearchHook {
                                 aaBtn.setTextColor(state.caseSensitive ? Color.YELLOW : Color.WHITE);
                                 // Clear stale results — user must re-search with new sensitivity
                                 if (!state.matches.isEmpty()) {
-                                    if (!state.lastFullText.isEmpty()) {
-                                        msgTextView.setText(state.lastFullText);
-                                    }
+                                if (!state.lastFullText.isEmpty()) {
+                                    reapplyTextSelection(msgTextView, state.lastFullText);
+                                }
                                     state.matches.clear();
                                     state.currentIndex = 0;
                                     state.capped = false;
@@ -532,7 +532,7 @@ public class SignalingSearchHook {
                                                                 m[0], m[1],
                                                                 android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
                                                     }
-                                                    msgTextView.setText(ssb);
+                                                    reapplyTextSelection(msgTextView, ssb);
                                                     String countLabel = "1 / " + state.matches.size()
                                                             + (capped ? " (max)" : "");
                                                     countTv.setText(countLabel);
@@ -619,5 +619,23 @@ public class SignalingSearchHook {
             }
         }
         return null;
+    }
+
+    private static void reapplyTextSelection(TextView tv, CharSequence text) {
+        tv.setText(text, TextView.BufferType.EDITABLE);
+        tv.setTextIsSelectable(true);
+        try {
+            Field editorField = TextView.class.getDeclaredField("mEditor");
+            editorField.setAccessible(true);
+            Object editor = editorField.get(tv);
+            if (editor != null) {
+                Field sceField = editor.getClass()
+                        .getDeclaredField("mSelectionControllerEnabled");
+                sceField.setAccessible(true);
+                sceField.setBoolean(editor, true);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "SignalingSearchHook: force selectionController failed: " + e);
+        }
     }
 }
