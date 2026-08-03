@@ -20,8 +20,9 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   - ARFCN  — inserted at column index 1 (before PCI), per-row value
  *   - BW     — inserted at column index 3 (after PCI, before Beam), serving rows only
  *
- * Also hides the sub-row (child[1] of the outer vertical LinearLayout per row)
- * which previously showed ARFCN/Band combined in tvRowRFID, reclaiming 22dp per row.
+ * Also conditionally hides the sub-row (child[1] of the outer vertical LinearLayout
+ * per row): kept visible when the cell-DB CSV has data for the cell (tvRowCellName/
+ * tvRowCellID non-empty), hidden when empty — reclaiming 22dp per row when no data.
  *
  * Final top-row column order (8 columns):
  *   [0] Serving  [1] ARFCN  [2] PCI  [3] BW  [4] Beam  [5] RSRP  [6] RSRQ  [7] SINR
@@ -299,7 +300,7 @@ public class NrSaCellColumnsHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook 1: a8.i$a.getView — inject ARFCN + BW columns, hide sub-row
+    // Hook 1: a8.i$a.getView — inject ARFCN + BW columns, conditionally hide sub-row
     // -----------------------------------------------------------------------
 
     private void hookGetView() {
@@ -344,9 +345,27 @@ public class NrSaCellColumnsHook {
                         topRow.setLayoutParams(topRowLp);
                     }
 
-                    // Sub-row (child[1]) — hide it always
                     View subRow = outer.getChildAt(1);
-                    if (subRow != null) subRow.setVisibility(View.GONE);
+                    if (subRow instanceof ViewGroup) {
+                        ViewGroup subRowVg = (ViewGroup) subRow;
+                        String pkg = "com.qtrun.QuickTest";
+                        int cellNameId = subRowVg.getResources().getIdentifier("tvRowCellName", "id", pkg);
+                        int cellIdId = subRowVg.getResources().getIdentifier("tvRowCellID", "id", pkg);
+                        boolean hasData = false;
+                        if (cellNameId != 0 && cellIdId != 0) {
+                            View cn = subRowVg.findViewById(cellNameId);
+                            View ci = subRowVg.findViewById(cellIdId);
+                            if (cn instanceof TextView && ci instanceof TextView) {
+                                CharSequence cnText = ((TextView) cn).getText();
+                                CharSequence ciText = ((TextView) ci).getText();
+                                hasData = (cnText != null && cnText.length() > 0)
+                                        || (ciText != null && ciText.length() > 0);
+                            }
+                        }
+                        subRow.setVisibility(hasData ? View.VISIBLE : View.GONE);
+                    } else {
+                        subRow.setVisibility(View.GONE);
+                    }
 
                     // Resolve serving/intraRow
                     boolean isServing = false;

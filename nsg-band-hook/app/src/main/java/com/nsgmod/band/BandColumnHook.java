@@ -17,12 +17,13 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Hooks a8.h$a (NRNSACellsFragment adapter) to inject an ARFCN column (labelled "Band")
- * at index 1 of the main NR cell row, and removes the NSG info sub-row.
+ * at index 1 of the main NR cell row, and conditionally hides the NSG info sub-row.
  *
  * ARFCN is read directly from the DataSource via Workspace/Property reflection —
  * the same pattern as NrNsaBandwidthColumnHook and NrSaCellColumnsHook.
- * This avoids dependence on NSG's sub-row UI, which is not reliably populated
- * during log replay.
+ * This avoids dependence on NSG's sub-row UI for ARFCN, which is not reliably
+ * populated during log replay. The sub-row itself is kept visible when the
+ * cell-DB CSV populates tvRowCellName/tvRowCellID, hidden when empty.
  *
  * Signal paths:
  *   serving  : NR5G::Cell_Measurements::NR_Cells_ARFCN       (Integer[], index=intraRow)
@@ -239,9 +240,29 @@ public class BandColumnHook {
                     LinearLayout mainRow = (LinearLayout) firstChild;
                     if (mainRow.getOrientation() != LinearLayout.HORIZONTAL) return result;
 
-                    // Hide the info sub-row (child[1]) if present — reclaims vertical space.
-                    if (outerVert.getChildCount() >= 2)
-                        outerVert.getChildAt(1).setVisibility(View.GONE);
+                    if (outerVert.getChildCount() >= 2) {
+                        View subRow = outerVert.getChildAt(1);
+                        if (subRow instanceof ViewGroup) {
+                            ViewGroup subRowVg = (ViewGroup) subRow;
+                            String pkg = "com.qtrun.QuickTest";
+                            int cellNameId = subRowVg.getResources().getIdentifier("tvRowCellName", "id", pkg);
+                            int cellIdId = subRowVg.getResources().getIdentifier("tvRowCellID", "id", pkg);
+                            boolean hasData = false;
+                            if (cellNameId != 0 && cellIdId != 0) {
+                                View cn = subRowVg.findViewById(cellNameId);
+                                View ci = subRowVg.findViewById(cellIdId);
+                                if (cn instanceof TextView && ci instanceof TextView) {
+                                    CharSequence cnText = ((TextView) cn).getText();
+                                    CharSequence ciText = ((TextView) ci).getText();
+                                    hasData = (cnText != null && cnText.length() > 0)
+                                            || (ciText != null && ciText.length() > 0);
+                                }
+                            }
+                            subRow.setVisibility(hasData ? View.VISIBLE : View.GONE);
+                        } else {
+                            subRow.setVisibility(View.GONE);
+                        }
+                    }
 
                     // Resolve serving/intraRow via adapter reflection.
                     int     position  = (int) chain.getArg(0);
