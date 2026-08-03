@@ -71,6 +71,8 @@ public class NrSaCellColumnsHook {
     private Method gMethod;      // g(int) → Pair<a8.d.a, Integer>
 
     private boolean ready = false;
+    private static volatile boolean nrCellDbLoaded = false;
+    private static boolean cellDbHookInstalled = false;
     /**
      * Sample key captured from a8.d.b(DataSource, long j10, …) callback.
      * a8.d.a extends k8.b, NOT k8.c, so there is no f5509c field to read.
@@ -131,11 +133,35 @@ public class NrSaCellColumnsHook {
             Log.w(TAG, "NrSaCellColumnsHook: skipping install — reflection not ready");
             return;
         }
+        hookCellDbStatus();
         hookDataCallback();
         hookGetView();
         hookOnCreateView();
         hookH8bQ();
         Log.i(TAG, "NrSaCellColumnsHook: installed");
+    }
+
+    private void hookCellDbStatus() {
+        if (cellDbHookInstalled) return;
+        try {
+            Class<?> cls = ClassMapping.loadClass("f7.b", loader);
+            if (cls == null) return;
+            Method dMethod = cls.getMethod("d", String.class);
+            xposed.hook(dMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    String tech = (String) chain.getArg(0);
+                    if ("NR5G".equals(tech)) {
+                        nrCellDbLoaded = (result != null);
+                    }
+                    return result;
+                }
+            });
+            cellDbHookInstalled = true;
+        } catch (Exception e) {
+            Log.w(TAG, "NrSaCellColumnsHook: hookCellDbStatus failed: " + e);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -348,18 +374,20 @@ public class NrSaCellColumnsHook {
                     View subRow = outer.getChildAt(1);
                     if (subRow instanceof ViewGroup) {
                         ViewGroup subRowVg = (ViewGroup) subRow;
-                        String pkg = "com.qtrun.QuickTest";
-                        int cellNameId = subRowVg.getResources().getIdentifier("tvRowCellName", "id", pkg);
-                        int cellIdId = subRowVg.getResources().getIdentifier("tvRowCellID", "id", pkg);
                         boolean hasData = false;
-                        if (cellNameId != 0 && cellIdId != 0) {
-                            View cn = subRowVg.findViewById(cellNameId);
-                            View ci = subRowVg.findViewById(cellIdId);
-                            if (cn instanceof TextView && ci instanceof TextView) {
-                                CharSequence cnText = ((TextView) cn).getText();
-                                CharSequence ciText = ((TextView) ci).getText();
-                                hasData = (cnText != null && cnText.length() > 0)
-                                        || (ciText != null && ciText.length() > 0);
+                        if (isNrCellDbLoaded()) {
+                            String pkg = "com.qtrun.QuickTest";
+                            int cellNameId = subRowVg.getResources().getIdentifier("tvRowCellName", "id", pkg);
+                            int cellIdId = subRowVg.getResources().getIdentifier("tvRowCellID", "id", pkg);
+                            if (cellNameId != 0 && cellIdId != 0) {
+                                View cn = subRowVg.findViewById(cellNameId);
+                                View ci = subRowVg.findViewById(cellIdId);
+                                if (cn instanceof TextView && ci instanceof TextView) {
+                                    CharSequence cnText = ((TextView) cn).getText();
+                                    CharSequence ciText = ((TextView) ci).getText();
+                                    hasData = (cnText != null && cnText.length() > 0)
+                                            || (ciText != null && ciText.length() > 0);
+                                }
                             }
                         }
                         subRow.setVisibility(hasData ? View.VISIBLE : View.GONE);
@@ -575,6 +603,10 @@ public class NrSaCellColumnsHook {
         lp.weight = weight;
         tv.setLayoutParams(lp);
         return tv;
+    }
+
+    private boolean isNrCellDbLoaded() {
+        return nrCellDbLoaded;
     }
 
     private int resolveColor(android.content.Context ctx, int attr) {

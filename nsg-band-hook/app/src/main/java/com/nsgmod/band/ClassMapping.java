@@ -97,6 +97,7 @@ public final class ClassMapping {
         // misc synthetic / utility renames
         map.put("a4.h", "c6.h");
         map.put("ma.a", "z8.a");
+        map.put("f7.b", "o5.b");
 
         // g8 matrix fragments -> p6 (g8.b intentionally left unmapped per special case).
         map.put("g8.h", "p6.h");

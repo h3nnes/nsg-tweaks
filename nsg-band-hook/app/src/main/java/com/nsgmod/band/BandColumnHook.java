@@ -69,6 +69,11 @@ public class BandColumnHook {
     private Method hMethod;  // a8.b$b.h(int) — returns Pair<source, intraRow>
 
     private boolean reflectionReady = false;
+    private static volatile boolean nrCellDbLoaded = false;
+    private static boolean cellDbHookInstalled = false;
+    private Class<?> f7bClass;
+    private Method  f7bEMethod;
+    private Method  f7bDMethod;
     /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
     private Field  f5509cField;
 
@@ -118,8 +123,32 @@ public class BandColumnHook {
     }
 
     public void install() {
+        hookCellDbStatus();
         hookGetView();
         hookOnCreateView();
+    }
+
+    private void hookCellDbStatus() {
+        if (cellDbHookInstalled) return;
+        try {
+            Class<?> cls = ClassMapping.loadClass("f7.b", loader);
+            if (cls == null) return;
+            Method dMethod = cls.getMethod("d", String.class);
+            xposed.hook(dMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    String tech = (String) chain.getArg(0);
+                    if ("NR5G".equals(tech)) {
+                        nrCellDbLoaded = (result != null);
+                    }
+                    return result;
+                }
+            });
+            cellDbHookInstalled = true;
+        } catch (Exception e) {
+            Log.w(TAG, "BandColumnHook: hookCellDbStatus failed: " + e);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -244,18 +273,20 @@ public class BandColumnHook {
                         View subRow = outerVert.getChildAt(1);
                         if (subRow instanceof ViewGroup) {
                             ViewGroup subRowVg = (ViewGroup) subRow;
-                            String pkg = "com.qtrun.QuickTest";
-                            int cellNameId = subRowVg.getResources().getIdentifier("tvRowCellName", "id", pkg);
-                            int cellIdId = subRowVg.getResources().getIdentifier("tvRowCellID", "id", pkg);
                             boolean hasData = false;
-                            if (cellNameId != 0 && cellIdId != 0) {
-                                View cn = subRowVg.findViewById(cellNameId);
-                                View ci = subRowVg.findViewById(cellIdId);
-                                if (cn instanceof TextView && ci instanceof TextView) {
-                                    CharSequence cnText = ((TextView) cn).getText();
-                                    CharSequence ciText = ((TextView) ci).getText();
-                                    hasData = (cnText != null && cnText.length() > 0)
-                                            || (ciText != null && ciText.length() > 0);
+                            if (isNrCellDbLoaded()) {
+                                String pkg = "com.qtrun.QuickTest";
+                                int cellNameId = subRowVg.getResources().getIdentifier("tvRowCellName", "id", pkg);
+                                int cellIdId = subRowVg.getResources().getIdentifier("tvRowCellID", "id", pkg);
+                                if (cellNameId != 0 && cellIdId != 0) {
+                                    View cn = subRowVg.findViewById(cellNameId);
+                                    View ci = subRowVg.findViewById(cellIdId);
+                                    if (cn instanceof TextView && ci instanceof TextView) {
+                                        CharSequence cnText = ((TextView) cn).getText();
+                                        CharSequence ciText = ((TextView) ci).getText();
+                                        hasData = (cnText != null && cnText.length() > 0)
+                                                || (ciText != null && ciText.length() > 0);
+                                    }
                                 }
                             }
                             subRow.setVisibility(hasData ? View.VISIBLE : View.GONE);
@@ -442,6 +473,10 @@ public class BandColumnHook {
         View v = mainRow.getChildAt(2);
         if (!(v instanceof TextView)) return null;
         return ((TextView) v).getTextColors();
+    }
+
+    private boolean isNrCellDbLoaded() {
+        return nrCellDbLoaded;
     }
 
     private int resolveColor(android.content.Context ctx, int attr) {

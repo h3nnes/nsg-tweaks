@@ -25,8 +25,6 @@ public class CellRowHeightHook {
 
     public void install() {
         installLteHook();
-        installNrNsaHook();
-        installNrSaHook();
     }
 
     private void installLteHook() {
@@ -57,65 +55,6 @@ public class CellRowHeightHook {
             Log.i(TAG, "CellRowHeightHook: installed (LTE)");
         } catch (Exception e) {
             Log.e(TAG, "LTE hook failed: " + e);
-        }
-    }
-
-    private void installNrNsaHook() {
-        try {
-            Class<?> adapterClass = ClassMapping.loadClass("a8.h$a", loader);
-            if (adapterClass == null) {
-                Log.i(TAG, "CellRowHeightHook: a8.h$a not available, skipping NR-NSA hook");
-                return;
-            }
-            Method getViewMethod = adapterClass.getDeclaredMethod(
-                    "getView", int.class, View.class, ViewGroup.class);
-            getViewMethod.setAccessible(true);
-
-            xposed.hook(getViewMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    // Check toggle first
-                    if (!SettingsToggleHook.cellRowHeightEnabled()) {
-                        return chain.proceed();
-                    }
-                    View resultView = (View) chain.proceed();
-                    if (resultView == null) return null;
-                    adjustRowHeight(resultView, "NR-NSA");
-                    return resultView;
-                }
-            });
-            Log.i(TAG, "CellRowHeightHook: installed (NR-NSA)");
-        } catch (Exception e) {
-            Log.e(TAG, "NR-NSA hook failed: " + e);
-        }
-    }
-
-    private void installNrSaHook() {
-        try {
-            Class<?> adapterClass = ClassMapping.loadClass("a8.i$a", loader);
-            if (adapterClass == null) {
-                Log.i(TAG, "CellRowHeightHook: a8.i$a not available, skipping NR-SA hook");
-                return;
-            }
-            Method getViewMethod = adapterClass.getDeclaredMethod(
-                    "getView", int.class, View.class, ViewGroup.class);
-            getViewMethod.setAccessible(true);
-
-            xposed.hook(getViewMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    if (!SettingsToggleHook.cellRowHeightEnabled()) {
-                        return chain.proceed();
-                    }
-                    View resultView = (View) chain.proceed();
-                    if (resultView == null) return null;
-                    adjustRowHeight(resultView, "NR-SA");
-                    return resultView;
-                }
-            });
-            Log.i(TAG, "CellRowHeightHook: installed (NR-SA)");
-        } catch (Exception e) {
-            Log.e(TAG, "NR-SA hook failed: " + e);
         }
     }
 
