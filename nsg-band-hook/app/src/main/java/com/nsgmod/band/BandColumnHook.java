@@ -289,7 +289,16 @@ public class BandColumnHook {
                                     }
                                 }
                             }
-                            subRow.setVisibility(hasData ? View.VISIBLE : View.GONE);
+                            if (hasData) {
+                                subRow.setVisibility(View.VISIBLE);
+                                int rfidId = subRowVg.getResources().getIdentifier("tvRowRFID", "id", "com.qtrun.QuickTest");
+                                if (rfidId != 0) {
+                                    View rfid = subRowVg.findViewById(rfidId);
+                                    if (rfid != null) rfid.setVisibility(View.GONE);
+                                }
+                            } else {
+                                subRow.setVisibility(View.GONE);
+                            }
                         } else {
                             subRow.setVisibility(View.GONE);
                         }
