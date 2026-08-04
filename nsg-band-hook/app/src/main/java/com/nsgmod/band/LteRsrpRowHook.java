@@ -72,6 +72,7 @@ public class LteRsrpRowHook {
     private static final float RANK_SHIFT_AMOUNT = 4.0f;
     /** Max value for Rank usage bars (percentage). */
     private static final float RANK_BAR_MAX = 100.0f;
+    private static final float MCS_BAR_MAX = 32.0f;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -304,6 +305,30 @@ public class LteRsrpRowHook {
                 }
             }
 
+            // MCS Cwd 0/1 insertion: between CQI and Mod.
+            // Path A: CQI at 20 (orig 19 +RSRP+1), Mod at 21 → insert MCS at 21, shift ≥21 by +1
+            // Path B/C: CQI at 35-36, Mod at 37-38 → insert MCS at 37, shift ≥37 by +2
+            float mcsRow;
+            float mcsShiftFrom;
+            float mcsShiftAmount;
+            if (isPathA) {
+                mcsRow        = 21.0f;
+                mcsShiftFrom  = 21.0f;
+                mcsShiftAmount = 1.0f;
+            } else {
+                mcsRow        = 37.0f;
+                mcsShiftFrom  = 37.0f;
+                mcsShiftAmount = 2.0f;
+            }
+            if (list != null) {
+                for (Object elem : list) {
+                    float elemRow = (float) vaRowField.get(elem);
+                    if (elemRow >= mcsShiftFrom) {
+                        vaRowField.set(elem, elemRow + mcsShiftAmount);
+                    }
+                }
+            }
+
             // Insert RSRP rows
             if (isPathA) {
                 injectRsrpRowPathA(k2aObj, rsrpRow);
@@ -319,6 +344,15 @@ public class LteRsrpRowHook {
             } else if (!isPathA) {
                 // Path C (Z >= 4)
                 injectRankUsageRowPathC(k2aObj, RANK_ROW);
+            }
+
+            // Insert MCS Cwd 0/1 rows (after all shifts)
+            if (isPathA) {
+                injectMcsRowPathA(k2aObj, mcsRow);
+            } else if (isPathB) {
+                injectMcsRowPathB(k2aObj, mcsRow);
+            } else {
+                injectMcsRowPathC(k2aObj, mcsRow);
             }
 
         } catch (Exception e) {
@@ -615,6 +649,89 @@ public class LteRsrpRowHook {
     }
 
     // -----------------------------------------------------------------------
+    // MCS Cwd 0/1 row injection — between CQI and Mod
+    // -----------------------------------------------------------------------
+
+    private void injectMcsRowPathA(Object k2aObj, float row) throws Exception {
+        final float h = 1.0f;
+        Object label = k2aRMethod.invoke(k2aObj, row, h, 0.0f, 27.0f);
+        if (label != null) {
+            veF.set(label, "MCS Cwd 0/1");
+            veG.set(label, 0);
+            veH.set(label, 1);
+        }
+        injectMcsBar(k2aObj, row, h, 30.0f, 16.5f,
+                "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
+        injectMcsBar(k2aObj, row, h, 47.0f, 17.0f,
+                "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
+        injectMcsBar(k2aObj, row, h, 65.0f, 16.5f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
+        injectMcsBar(k2aObj, row, h, 82.0f, 17.0f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
+    }
+
+    private void injectMcsRowPathB(Object k2aObj, float row) throws Exception {
+        final float labelH    = 2.0f;
+        final float pcellBarH = 1.4f;
+        final float pcellOff  = 0.3f;
+        final float scellBarH = 1.0f;
+        Object label = k2aRMethod.invoke(k2aObj, row, labelH, 0.0f, 27.0f);
+        if (label != null) {
+            veF.set(label, "MCS Cwd 0/1");
+            veG.set(label, 0);
+            veH.set(label, 1);
+        }
+        injectMcsBar(k2aObj, row + pcellOff, pcellBarH, 30.0f, 16.5f,
+                "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
+        injectMcsBar(k2aObj, row + pcellOff, pcellBarH, 47.0f, 17.0f,
+                "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
+        injectMcsBar(k2aObj, row, scellBarH, 65.0f, 16.5f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
+        injectMcsBar(k2aObj, row, scellBarH, 82.0f, 17.0f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
+        injectMcsBar(k2aObj, row + 1.0f, scellBarH, 65.0f, 16.5f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
+        injectMcsBar(k2aObj, row + 1.0f, scellBarH, 82.0f, 17.0f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
+    }
+
+    private void injectMcsRowPathC(Object k2aObj, float row) throws Exception {
+        final float labelH = 2.0f;
+        final float barH   = 1.0f;
+        Object label = k2aRMethod.invoke(k2aObj, row, labelH, 0.0f, 27.0f);
+        if (label != null) {
+            veF.set(label, "MCS Cwd 0/1");
+            veG.set(label, 0);
+            veH.set(label, 1);
+        }
+        injectMcsBar(k2aObj, row, barH, 30.0f, 16.5f,
+                "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
+        injectMcsBar(k2aObj, row, barH, 47.0f, 17.0f,
+                "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 30.0f, 16.5f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 47.0f, 17.0f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
+        injectMcsBar(k2aObj, row, barH, 65.0f, 16.5f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
+        injectMcsBar(k2aObj, row, barH, 82.0f, 17.0f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 65.0f, 16.5f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell3_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 82.0f, 17.0f,
+                "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell3_DL");
+    }
+
+    private void injectMcsBar(Object k2aObj, float row, float h, float col, float w,
+                              String key) throws Exception {
+        Object bar = k2aSMethod.invoke(k2aObj, row, h, col, w);
+        if (bar != null) {
+            vfF8120g.set(bar, makeMcsProp(key));
+            vfFMethod.invoke(bar, DEEP_BLUE, MCS_BAR_MAX);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Helper: allocate com.qtrun.sys.b via Unsafe and set key/format/index
     // -----------------------------------------------------------------------
 
@@ -631,6 +748,14 @@ public class LteRsrpRowHook {
         sysAFieldA.set(prop, key);
         sysAFieldB.set(prop, "%.1f %%");
         sysAFieldC.set(prop, index);
+        return prop;
+    }
+
+    private Object makeMcsProp(String key) throws Exception {
+        Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+        sysAFieldA.set(prop, key);
+        sysAFieldB.set(prop, "%d");
+        sysAFieldC.set(prop, -1);
         return prop;
     }
 }
