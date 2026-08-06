@@ -19,11 +19,11 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   - h8.b.o0() intercept sets a ThreadLocal with the carrier count
  *   - v6.b.k0(k2.a) intercept injects the new rows into the builder
  *
- * Row positions (per path, after NrSaRsrpRowHook +2/+4 and NrSaCsiSnrRowHook +1/+2 shifts):
- *   Path A k0()  carriers==2 : 64Q at 23, Phy.Thput at 27 → insert at 27, shift by 2.0f
- *   Path B l0()  carriers>=4 : 64Q at 38, Phy.Thput at 44 (+1 if PDSCH on) → insert at 44/45, shift by 4.0f
- *   Path C inline carriers==3 : 64Q label at 38 h=2.0, bar at 38.3 h=1.4
- *                               → insert at 46 (+2 if PDSCH on), shift by 4.0f (2 rows × 2.0f)
+ * Row positions (per path, after SACAMatrixDLHook + per-PRB and NrSaCsiSnrRowHook shifts):
+ *   Path A k0()  carriers==2 : 64Q at 26, Phy.Thput at 28 → insert at 28, shift by 2.0f
+ *   Path B l0()  carriers>=4 : 64Q at 44, Phy.Thput at 46 (+1 if PDSCH on) → insert at 46/47, shift by 4.0f
+ *   Path C inline carriers==3 : 64Q label at 46 h=2.0, bar at 46.3 h=1.4
+ *                               → insert at 48 (+2 if PDSCH on), shift by 4.0f (2 rows × 2.0f)
  *
  * Property keys:
  *   PCell:
@@ -217,22 +217,22 @@ public class NrSaModUsageRowHook {
             boolean isInline3 = (carriers == 3);
             boolean isPathA   = (carriers == 2);
 
-            // insertRow = Phy.Thput row AFTER NrSaRsrpRowHook and NrSaCsiSnrRowHook have already shifted things.
+            // insertRow = Phy.Thput row AFTER SACAMatrixDLHook and NrSaCsiSnrRowHook have already shifted things.
             //
             // Original (pre-hook) Phy.Thput positions:
-            //   Path A carriers==2 : 24  — RSRP +2.0, CSI SNR +1.0  → 27
-            //   Path B carriers>=4 : 40  — RSRP +3.0, CSI SNR +1.0  → 44
-            //   Path C carriers==3 : 40  — RSRP +4.0, CSI SNR +2.0  → 46
+            //   Path A carriers==2 : 24  — RSRP +2.0, per-PRB +1.0, CSI SNR +1.0  → 28
+            //   Path B carriers>=4 : 40  — RSRP +3.0, per-PRB +2.0, CSI SNR +1.0  → 46
+            //   Path C carriers==3 : 40  — RSRP +4.0, per-PRB +2.0, CSI SNR +2.0  → 48
             // When PDSCH SINR toggle is on, NrSaCsiSnrRowHook adds another +labelHeight shift.
             boolean pdschEnabled = SettingsToggleHook.nrPdschSnrEnabled();
             float pdschShift = pdschEnabled ? 1.0f : 0.0f;  // CSI SNR labelHeight is 1.0 for carriers!=3, 2.0 for carriers==3
             float insertRow;
             if (isPathA) {
-                insertRow = 27.0f + pdschShift;  // 24 + 1 (CSI SNR) + 2 (RSRP) + PDSCH
+                insertRow = 28.0f + pdschShift;  // 24 + 2 (RSRP) + 1 (per-PRB) + 1 (CSI SNR) + PDSCH
             } else if (isInline3) {
-                insertRow = 46.0f + (pdschEnabled ? 2.0f : 0.0f);  // inline3 PDSCH shift is labelHeight=2.0
+                insertRow = 48.0f + (pdschEnabled ? 2.0f : 0.0f);  // 40 + 4 (RSRP) + 2 (per-PRB) + 2 (CSI SNR) + PDSCH
             } else {
-                insertRow = 44.0f + pdschShift;  // 40 + 1 (CSI SNR) + 3 (RSRP) + PDSCH
+                insertRow = 46.0f + pdschShift;  // 40 + 3 (RSRP) + 2 (per-PRB) + 1 (CSI SNR) + PDSCH
             }
             // For carriers>=4, SCell bars span 2 sub-rows (row1 and row1+1.0), so
             // labelHeight must be 2.0 to prevent QPSK from overlapping 16QAM's 2nd sub-row.
@@ -268,7 +268,7 @@ public class NrSaModUsageRowHook {
             injectModUsageBar(k2aObj, row1 + barOffset, barHeight, 30.0f,
                     KEY_16QAM_PCELL, -1);
 
-            // --- 16QAM SCell bars (mirror NrSaRsrpRowHook SCell geometry) ---
+            // --- 16QAM SCell bars (mirror SACAMatrixDLHook SCell geometry) ---
             if (isPathA) {
                 // 1 SCell: col 65, same row
                 injectModUsageBar(k2aObj, row1, barHeight, 65.0f,
@@ -301,7 +301,7 @@ public class NrSaModUsageRowHook {
             injectModUsageBar(k2aObj, row2 + barOffset, barHeight, 30.0f,
                     KEY_QPSK_PCELL, -1);
 
-            // --- QPSK SCell bars (mirror NrSaRsrpRowHook SCell geometry) ---
+            // --- QPSK SCell bars (mirror SACAMatrixDLHook SCell geometry) ---
             if (isPathA) {
                 injectModUsageBar(k2aObj, row2, barHeight, 65.0f,
                         KEY_QPSK_SCELL, 0);

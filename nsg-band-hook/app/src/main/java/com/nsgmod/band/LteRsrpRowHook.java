@@ -16,7 +16,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *
  * LTE has a single RSRP value per cell (no SS-RSRP / CSI-RSRP distinction).
  *
- * Architecture mirrors NrSaRsrpRowHook / NrSaCsiSnrRowHook:
+ * Architecture mirrors SACAMatrixDLHook / NrSaCsiSnrRowHook:
  *   e8.b.n0() dispatches to k0(d1.g) [Z==1/2], inline code [Z==3], or l0(d1.g) [Z>=4],
  *   all paths end with v6.b.k0(k2.a).
  *

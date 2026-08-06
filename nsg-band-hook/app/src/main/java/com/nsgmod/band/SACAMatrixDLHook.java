@@ -39,8 +39,21 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   PCell SS-RSRP  : NR5G::Downlink_Measurements::NR_SS_RSRP       index=-1  format="%.1f dBm"
  *   SCell SS-RSRP  : NR5G::Cell_Measurements::NR_Cells_RSRP         index=N   format="%.1f dBm"
  *   CSI-RSRP PCell : NR5G::Downlink_Measurements::NR_CSI_RSRP       index=-1  format="%.1f dBm"
+ *
+ * Also adds a "TP/PRB" text row (Physical Throughput per PRB, DL) between the
+ * RBs row and the CQI row. PCell uses default color; SCells use holo_purple.
+ * The per-PRB shift is applied after the RSRP shift, before NrSaCsiSnrRowHook runs.
+ *   Path A: shift ≥18 by +1.0  (RBs at 17, TP/PRB at 18, CQI at 19)
+ *   Path B: shift ≥28 by +2.0  (RBs at 26, TP/PRB at 28, CQI at 30)
+ *   Path C: shift ≥27 by +2.0  (RBs at 25-26, TP/PRB at 27-28, CQI at 29-30)
+ *
+ * Also appends SSB Beam Index to the existing ARFCN/PCI row cells and renames
+ * the label to "ARFCN/PCI/Beam". No row shift needed — the ARFCN/PCI row is at
+ * row 9 (Path A) or 10 (Path B/C), below all shift thresholds.
+ *   PCell: NR5G::Serving_Cell::NR_SSB_Beam_Index (index=-1)
+ *   SCells: NR5G::Cell_Measurements::NR_Cells_BeamIndex (index=1/2/3, 1-based)
  */
-public class NrSaRsrpRowHook {
+public class SACAMatrixDLHook {
 
     private static final String TAG = "NSGBandHook";
 
@@ -53,14 +66,21 @@ public class NrSaRsrpRowHook {
     // k2.a builder methods
     private Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e  (label)
     private Method k2aSMethod; // s(float row, float h, float col, float w) → v6.f  (bar)
+    private Method k2aTMethod; // t(float row, float h, float col, float w) → v6.g  (text cell)
 
     // v6.e label fields (actual bytecode names)
     private Field veF; // text   (JADX: f8116f)
     private Field veG; // align  (JADX: f8117g)
     private Field veH; // span
+    private Class<?> veClass; // v6.e for isInstance checks
 
     // v6.f bar data-binding field
     private Field vfF8120g; // g (JADX: f8120g) — data binding
+
+    // v6.g value cell methods
+    private Method v6gGMethod; // g(com.qtrun.sys.b, boolean) → data binding (PCell, index set manually)
+    private Method v6gJMethod; // j(int appearance, int color) → text coloring (SCell)
+    private Class<?> vgClass; // v6.g for isInstance checks
 
     // com.qtrun.sys.b / a — property binding
     private Class<?> sysBClass;
@@ -75,10 +95,11 @@ public class NrSaRsrpRowHook {
     // k2.a list + v6.a row field
     private Field k2aListField;
     private Field vaRowField;
+    private Field vaColField; // v6.a field "d" (col)
 
     private boolean ready = false;
 
-    public NrSaRsrpRowHook(XposedInterface xposed, ClassLoader loader,
+    public SACAMatrixDLHook(XposedInterface xposed, ClassLoader loader,
                            ThreadLocal<Integer> carrierCountInO0) {
         this.xposed = xposed;
         this.loader = loader;
@@ -89,12 +110,14 @@ public class NrSaRsrpRowHook {
     private void initReflection() {
         try {
             Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
+            veClass  = ClassMapping.loadClass("v6.e", loader);
             Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
 
             k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
                     float.class, float.class, float.class, float.class);
             k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
                     float.class, float.class, float.class, float.class);
 
             veF = veClass.getField("f");
@@ -113,6 +136,10 @@ public class NrSaRsrpRowHook {
             sysAFieldB.setAccessible(true);
             sysAFieldC.setAccessible(true);
 
+            vgClass = ClassMapping.loadClass("v6.g", loader);
+            v6gGMethod = vgClass.getMethod("g", sysBClass, boolean.class);
+            v6gJMethod = vgClass.getMethod("j", int.class, int.class);
+
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
             java.lang.reflect.Field unsafeField;
             try {
@@ -129,20 +156,22 @@ public class NrSaRsrpRowHook {
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
+            vaColField = vaClass.getDeclaredField("d");
+            vaColField.setAccessible(true);
 
             ready = true;
         } catch (Exception e) {
-            Log.e(TAG, "NrSaRsrpRowHook: initReflection failed: " + e);
+            Log.e(TAG, "SACAMatrixDLHook: initReflection failed: " + e);
         }
     }
 
     public void install() {
         if (!ready) {
-            Log.w(TAG, "NrSaRsrpRowHook: skipping install — reflection not ready");
+            Log.w(TAG, "SACAMatrixDLHook: skipping install — reflection not ready");
             return;
         }
         installV6bK0Hook();
-        Log.i(TAG, "NrSaRsrpRowHook: installed");
+        Log.i(TAG, "SACAMatrixDLHook: installed");
     }
 
     // -----------------------------------------------------------------------
@@ -168,7 +197,7 @@ public class NrSaRsrpRowHook {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "NrSaRsrpRowHook: v6.b.k0 hook failed: " + e);
+            Log.e(TAG, "SACAMatrixDLHook: v6.b.k0 hook failed: " + e);
         }
     }
 
@@ -233,8 +262,94 @@ public class NrSaRsrpRowHook {
                 injectRsrpRowsPathC(k2aObj, ssRsrpRow, csiRsrpRow);
             }
 
+            float perPrbShiftFrom;
+            float perPrbShiftAmount;
+            float perPrbInsertRow;
+
+            if (isPathA) {
+                perPrbShiftFrom   = 18.0f;
+                perPrbShiftAmount = 1.0f;
+                perPrbInsertRow   = 18.0f;
+            } else if (isInline3) {
+                perPrbShiftFrom   = 28.0f;
+                perPrbShiftAmount = 2.0f;
+                perPrbInsertRow   = 28.0f;
+            } else {
+                perPrbShiftFrom   = 27.0f;
+                perPrbShiftAmount = 2.0f;
+                perPrbInsertRow   = 27.0f;
+            }
+
+            java.util.ArrayList<?> list2 = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+            if (list2 != null) {
+                for (Object elem : list2) {
+                    float elemRow = (float) vaRowField.get(elem);
+                    if (elemRow >= perPrbShiftFrom) {
+                        vaRowField.set(elem, elemRow + perPrbShiftAmount);
+                    }
+                }
+            }
+
+            if (isPathA) {
+                injectPerPrbRowsPathA(k2aObj, perPrbInsertRow);
+            } else if (isInline3) {
+                injectPerPrbRowsPathB(k2aObj, perPrbInsertRow);
+            } else {
+                injectPerPrbRowsPathC(k2aObj, perPrbInsertRow);
+            }
+
+            float arfcnRow;
+            if (isPathA) {
+                arfcnRow = 9.0f;
+            } else {
+                arfcnRow = 10.0f;
+            }
+
+            java.util.ArrayList<?> beamList = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+            if (beamList != null) {
+                for (Object elem : beamList) {
+                    try {
+                        float elemRow = (float) vaRowField.get(elem);
+                        float elemCol = (float) vaColField.get(elem);
+                        if (vgClass.isInstance(elem) && (elemRow == arfcnRow || elemRow == arfcnRow + 1.0f)) {
+                            if (elemCol == 30.0f) {
+                                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+                                if (elemRow == arfcnRow) {
+                                    sysAFieldA.set(prop, "NR5G::Serving_Cell::NR_SSB_Beam_Index");
+                                    sysAFieldB.set(prop, "%d");
+                                    sysAFieldC.set(prop, -1);
+                                } else {
+                                    sysAFieldA.set(prop, "NR5G::Cell_Measurements::NR_Cells_BeamIndex");
+                                    sysAFieldB.set(prop, "%d");
+                                    sysAFieldC.set(prop, 1);
+                                }
+                                v6gGMethod.invoke(elem, prop, false);
+                            } else if (elemCol == 65.0f) {
+                                int scellIdx;
+                                if (isPathA) {
+                                    scellIdx = 0;
+                                } else if (isInline3) {
+                                    scellIdx = (int) (elemRow - arfcnRow);
+                                } else {
+                                    scellIdx = (int) (elemRow - arfcnRow) + 1;
+                                }
+                                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+                                sysAFieldA.set(prop, "NR5G::Cell_Measurements::NR_Cells_BeamIndex");
+                                sysAFieldB.set(prop, "%d");
+                                sysAFieldC.set(prop, scellIdx + 1);
+                                v6gGMethod.invoke(elem, prop, false);
+                            }
+                        } else if (elemRow == arfcnRow && veClass.isInstance(elem) && elemCol == 0.0f) {
+                            veF.set(elem, "ARFCN/PCI/Beam");
+                        }
+                    } catch (Exception ce) {
+                        Log.w(TAG, "SACAMatrixDLHook: beam inject failed: " + ce);
+                    }
+                }
+            }
+
         } catch (Exception e) {
-            Log.w(TAG, "NrSaRsrpRowHook: injectRsrpRows failed: " + e);
+            Log.w(TAG, "SACAMatrixDLHook: injectRsrpRows failed: " + e);
         }
     }
 
@@ -463,6 +578,156 @@ public class NrSaRsrpRowHook {
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, -1);
             vfF8120g.set(csiPCellBar, prop);
+        }
+    }
+
+    /**
+     * Path A: carriers==2 (1 SCell), single-height rows (h=1.0).
+     * TP/PRB row at insertRow:
+     *   label col=0 w=27 h=1.0
+     *   PCell text col=30 w=34 h=1.0  key=NR_PCell_Physical_Throughput_per_PRB_DL index=-1
+     *   SCell[0] text col=65 w=34 h=1.0  key=NR_SCell_Physical_Throughput_per_PRB_DL index=0
+     */
+    private void injectPerPrbRowsPathA(Object k2aObj, float insertRow)
+            throws Exception {
+        final float h = 1.0f;
+
+        Object label = k2aRMethod.invoke(k2aObj, insertRow, h, 0.0f, 27.0f);
+        if (label != null) {
+            veF.set(label, "TP/PRB");
+            veG.set(label, 0);
+            veH.set(label, 1);
+        }
+
+        Object pcellText = k2aTMethod.invoke(k2aObj, insertRow, h, 30.0f, 34.0f);
+        if (pcellText != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::PCell::NR_PCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, -1);
+            v6gGMethod.invoke(pcellText, prop, false);
+        }
+
+        Object scellText = k2aTMethod.invoke(k2aObj, insertRow, h, 65.0f, 34.0f);
+        if (scellText != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::SCell::NR_SCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, 0);
+            v6gGMethod.invoke(scellText, prop, false);
+            v6gJMethod.invoke(scellText, 0, 0xFFAA66CC);
+        }
+    }
+
+    /**
+     * Path B: carriers==3 (2 SCells), double-height rows (label h=2.0, PCell text h=2.0, SCell text h=1.0).
+     * TP/PRB row at insertRow:
+     *   label col=0 w=27 h=2.0
+     *   PCell text col=30 w=34 h=2.0  key=NR_PCell_Physical_Throughput_per_PRB_DL index=-1
+     *   SCell[0] text col=65 w=34 h=1.0  key=NR_SCell_Physical_Throughput_per_PRB_DL index=0
+     *   SCell[1] text col=65 w=34 h=1.0 row=insertRow+1  key=NR_SCell_Physical_Throughput_per_PRB_DL index=1
+     */
+    private void injectPerPrbRowsPathB(Object k2aObj, float insertRow)
+            throws Exception {
+        final float labelH = 2.0f;
+        final float pcellH  = 2.0f;
+        final float scellH  = 1.0f;
+
+        Object label = k2aRMethod.invoke(k2aObj, insertRow, labelH, 0.0f, 27.0f);
+        if (label != null) {
+            veF.set(label, "TP/PRB");
+            veG.set(label, 0);
+            veH.set(label, 1);
+        }
+
+        Object pcellText = k2aTMethod.invoke(k2aObj, insertRow, pcellH, 30.0f, 34.0f);
+        if (pcellText != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::PCell::NR_PCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, -1);
+            v6gGMethod.invoke(pcellText, prop, false);
+        }
+
+        Object scell0Text = k2aTMethod.invoke(k2aObj, insertRow, scellH, 65.0f, 34.0f);
+        if (scell0Text != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::SCell::NR_SCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, 0);
+            v6gGMethod.invoke(scell0Text, prop, false);
+            v6gJMethod.invoke(scell0Text, 0, 0xFFAA66CC);
+        }
+
+        Object scell1Text = k2aTMethod.invoke(k2aObj, insertRow + 1.0f, scellH, 65.0f, 34.0f);
+        if (scell1Text != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::SCell::NR_SCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, 1);
+            v6gGMethod.invoke(scell1Text, prop, false);
+            v6gJMethod.invoke(scell1Text, 0, 0xFFAA66CC);
+        }
+    }
+
+    /**
+     * Path C: carriers>=4 (3 SCells), single-height rows (h=1.0, 2 sub-rows per logical row).
+     * col=30 gets PCell (sub-row 0) + SCell[0] (sub-row 1); col=65 gets SCell[1] (sub-row 0) + SCell[2] (sub-row 1).
+     * TP/PRB row at insertRow:
+     *   label col=0 w=27 h=1.0
+     *   PCell text col=30 w=34 h=1.0 row=insertRow      key=NR_PCell_Physical_Throughput_per_PRB_DL index=-1
+     *   SCell[0] text col=30 w=34 h=1.0 row=insertRow+1  key=NR_SCell_Physical_Throughput_per_PRB_DL index=0
+     *   SCell[1] text col=65 w=34 h=1.0 row=insertRow    key=NR_SCell_Physical_Throughput_per_PRB_DL index=1
+     *   SCell[2] text col=65 w=34 h=1.0 row=insertRow+1  key=NR_SCell_Physical_Throughput_per_PRB_DL index=2
+     */
+    private void injectPerPrbRowsPathC(Object k2aObj, float insertRow)
+            throws Exception {
+        final float h = 1.0f;
+
+        Object label = k2aRMethod.invoke(k2aObj, insertRow, h, 0.0f, 27.0f);
+        if (label != null) {
+            veF.set(label, "TP/PRB");
+            veG.set(label, 0);
+            veH.set(label, 1);
+        }
+
+        Object pcellText = k2aTMethod.invoke(k2aObj, insertRow, h, 30.0f, 34.0f);
+        if (pcellText != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::PCell::NR_PCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, -1);
+            v6gGMethod.invoke(pcellText, prop, false);
+        }
+
+        Object scell0Text = k2aTMethod.invoke(k2aObj, insertRow + 1.0f, h, 30.0f, 34.0f);
+        if (scell0Text != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::SCell::NR_SCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, 0);
+            v6gGMethod.invoke(scell0Text, prop, false);
+            v6gJMethod.invoke(scell0Text, 0, 0xFFAA66CC);
+        }
+
+        Object scell1Text = k2aTMethod.invoke(k2aObj, insertRow, h, 65.0f, 34.0f);
+        if (scell1Text != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::SCell::NR_SCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, 1);
+            v6gGMethod.invoke(scell1Text, prop, false);
+            v6gJMethod.invoke(scell1Text, 0, 0xFFAA66CC);
+        }
+
+        Object scell2Text = k2aTMethod.invoke(k2aObj, insertRow + 1.0f, h, 65.0f, 34.0f);
+        if (scell2Text != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, "NR5G::Downlink_Measurements::SCell::NR_SCell_Physical_Throughput_per_PRB_DL");
+            sysAFieldB.set(prop, "%.1f Bits");
+            sysAFieldC.set(prop, 2);
+            v6gGMethod.invoke(scell2Text, prop, false);
+            v6gJMethod.invoke(scell2Text, 0, 0xFFAA66CC);
         }
     }
 }
