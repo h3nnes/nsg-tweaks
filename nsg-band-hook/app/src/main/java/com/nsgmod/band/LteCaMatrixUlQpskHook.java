@@ -13,24 +13,19 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Adds a "QPSK Util." row on the LTE CA Matrix UL page (e8.a),
- * between CQI (row 18) and 16Q Usage (row 19), showing both PCell
- * and SCell QPSK utilization.
+ * Adds "PUCCH TX" and "QPSK Util." rows on the LTE CA Matrix UL page
+ * (e8.a), between Band/Width (row 10) and TxPower (row 11).
  *
- * The existing 16Q/64Q/256Q usage rows show the full set of modulation
- * percentages. QPSK is missing from the CA Matrix but is available on
- * the LTE Dedicated Mode page (e8.i) via:
- *   LTE::Uplink_Measurements::LTE_ModUsage_QPSK_UL
+ * PUCCH TX is inserted at row 11.0, shifting all original rows >= 11.0 by
+ * +1.0. QPSK Util. is then inserted at row 20.0 (the original row 19.0
+ * shifted by +1.0), shifting rows >= 20.0 by +1.0.
+ *
+ * PUCCH TX is PCell-only and uses LegendManager auto-coloring (no
+ * manual .f(color, max) call).
  *
  * Architecture:
  *   e8.a extends v6.b; l0(Context) builds directly on this.Y (k2.a).
  *   Hook is an after-hook on e8.a.l0(Context).
- *
- * Row layout (single-height, h=1.0):
- *   label: row=19.0 h=1.0 col=0.0 w=27.0  text="QPSK Util."
- *   PCell bar: row=19.0 h=1.0 col=30.0 w=34.0  key=QPSK_UL index=-1 format="%.1f %%"
- *   SCell bar: row=19.0 h=1.0 col=65.0 w=34.0  key=QPSK_SCell1_UL index=-1 format="%.1f %%"
- *   bar color: color_deep_blue via v6.f.f(color, 100.0f)
  */
 public class LteCaMatrixUlQpskHook {
 
@@ -39,13 +34,15 @@ public class LteCaMatrixUlQpskHook {
             "LTE::Uplink_Measurements::LTE_ModUsage_QPSK_UL";
     private static final String QPSK_SCELL_KEY =
             "LTE::Uplink_Measurements::SCC::LTE_ModUsage_QPSK_SCell1_UL";
+    private static final String PUCCH_TX_KEY =
+            "LTE::Uplink_Measurements::LTE_Power_Tx_PUCCH";
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
     // k2.a builder methods
-    private Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e (label)
-    private Method k2aSMethod; // s(float row, float h, float col, float w) → v6.f (bar)
+    private Method k2aRMethod; // r(float row, float h, float col, float w) -> v6.e (label)
+    private Method k2aSMethod; // s(float row, float h, float col, float w) -> v6.f (bar)
 
     // v6.e label fields
     private Field veF; // text
@@ -53,7 +50,7 @@ public class LteCaMatrixUlQpskHook {
     private Field veH; // span
 
     // v6.f bar fields + style method
-    private Field vfF8120g; // g — data binding
+    private Field vfF8120g; // g - data binding
     private Method vfFMethod; // void f(int color, float max)
 
     // com.qtrun.sys.b / a
@@ -70,7 +67,7 @@ public class LteCaMatrixUlQpskHook {
     private Field k2aListField;
     private Field vaRowField;
 
-    // v6.b.Y field — k2.a builder on the fragment
+    // v6.b.Y field - k2.a builder on the fragment
     private Field v6bYField;
 
     // Deep blue color (cached from host app resources)
@@ -167,6 +164,10 @@ public class LteCaMatrixUlQpskHook {
         }
         try {
             Class<?> e8aClass = ClassMapping.loadClass("e8.a", loader);
+            if (e8aClass == null) {
+                Log.i(TAG, "LteCaMatrixUlQpskHook: e8.a not available, skipping");
+                return;
+            }
             Class<?> contextClass = Class.forName("android.content.Context");
             Method l0Method = ClassMapping.getMethod(e8aClass, "e8.a", "l0", loader, contextClass);
 
@@ -187,6 +188,17 @@ public class LteCaMatrixUlQpskHook {
         }
     }
 
+    private void injectTxBar(Object k2aObj, float row, String key) throws Exception {
+        Object bar = k2aSMethod.invoke(k2aObj, row, 1.0f, 30.0f, 34.0f);
+        if (bar != null) {
+            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(prop, key);
+            sysAFieldB.set(prop, "%.1f dBm");
+            sysAFieldC.set(prop, -1);
+            vfF8120g.set(bar, prop);
+        }
+    }
+
     private void injectQpskRow(Object thiz) {
         try {
             Object k2aObj = v6bYField.get(thiz);
@@ -195,12 +207,29 @@ public class LteCaMatrixUlQpskHook {
                 return;
             }
 
-            final float insertRow = 19.0f;
-            final float shiftAmount = 1.0f;
             final float h = 1.0f;
 
-            // Step 1: shift all elements at row >= 19.0 by +1.0
             java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+            if (list != null) {
+                for (Object elem : list) {
+                    float elemRow = (float) vaRowField.get(elem);
+                    if (elemRow >= 11.0f) {
+                        vaRowField.set(elem, elemRow + 1.0f);
+                    }
+                }
+            }
+
+            Object pucchLabel = k2aRMethod.invoke(k2aObj, 11.0f, h, 0.0f, 27.0f);
+            if (pucchLabel != null) {
+                veF.set(pucchLabel, "PUCCH TX");
+                veG.set(pucchLabel, 0);
+                veH.set(pucchLabel, 1);
+            }
+            injectTxBar(k2aObj, 11.0f, PUCCH_TX_KEY);
+
+            final float insertRow = 20.0f;
+            final float shiftAmount = 1.0f;
+
             if (list != null) {
                 for (Object elem : list) {
                     float elemRow = (float) vaRowField.get(elem);
@@ -210,7 +239,6 @@ public class LteCaMatrixUlQpskHook {
                 }
             }
 
-            // Step 2: inject QPSK Util. label at row=19.0, col=0, w=27
             Object label = k2aRMethod.invoke(k2aObj, insertRow, h, 0.0f, 27.0f);
             if (label != null) {
                 veF.set(label, "QPSK Util.");
@@ -218,7 +246,6 @@ public class LteCaMatrixUlQpskHook {
                 veH.set(label, 1);
             }
 
-            // Step 3: inject PCell bar at row=19.0, col=30, w=34
             Object bar = k2aSMethod.invoke(k2aObj, insertRow, h, 30.0f, 34.0f);
             if (bar != null) {
                 Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
@@ -229,7 +256,6 @@ public class LteCaMatrixUlQpskHook {
                 vfFMethod.invoke(bar, deepBlueColor, 100.0f);
             }
 
-            // Step 4: inject SCell bar at row=19.0, col=65, w=34
             Object sCellBar = k2aSMethod.invoke(k2aObj, insertRow, h, 65.0f, 34.0f);
             if (sCellBar != null) {
                 Object propSc = unsafeAllocateInstance.invoke(unsafe, sysBClass);
