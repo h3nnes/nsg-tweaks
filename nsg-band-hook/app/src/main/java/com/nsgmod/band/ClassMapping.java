@@ -106,6 +106,7 @@ public final class ClassMapping {
         // NR-NSA / NR-SA CA Matrix UL fragments moved to p6 / q6 on gplay.
         map.put("g8.b", "p6.b");
         map.put("h8.c", "q6.c");
+        map.put("h8.h", "q6.h");
 
         // Experiments settings fragment moved to c6.z on gplay.
         map.put("t7.t", "c6.z");
@@ -135,6 +136,7 @@ public final class ClassMapping {
         // NR-NSA / NR-SA CA Matrix UL builder method: qtrun l0(Context) -> gplay k0(Context)
         methodMap.put("g8.b|l0", "k0");
         methodMap.put("h8.c|l0", "k0");
+        methodMap.put("h8.h|l0", "k0");
         // NR-SA KPI fragment builder method: qtrun d8.i.l0(Context) -> gplay m6.i.k0(Context)
         methodMap.put("d8.i|l0", "k0");
         // LTE CA Matrix UL builder method: qtrun e8.a.l0(Context) -> gplay n6.a.k0(Context)
