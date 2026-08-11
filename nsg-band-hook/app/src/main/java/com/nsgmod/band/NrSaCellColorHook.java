@@ -70,6 +70,8 @@ public class NrSaCellColorHook {
     private Field v6aColField;       // v6.a "d" (f8103d): float column position
     private Field v6aRowField;       // v6.a "b" (f8101b): float row position
     private Class<?> rankBindingClass; // d7.i$k — Rank formatter; its c is always 0 in 3-carrier inline path
+    private Field rankCaseField;      // v00 "e" (int case id) — 27 for Rank, only on v4.8.9
+    private static final int RANK_CASE_ID = 27;
 
     private boolean ready = false;
 
@@ -116,6 +118,12 @@ public class NrSaCellColorHook {
             rankBindingClass = ClassMapping.loadClass("d7.i$k", loader);
             if (rankBindingClass == null) {
                 Log.w(TAG, "NrSaCellColorHook: d7.i$k not available, Rank fallback disabled");
+            } else {
+                try {
+                    rankCaseField = rankBindingClass.getDeclaredField("e");
+                    rankCaseField.setAccessible(true);
+                } catch (NoSuchFieldException ignored) {
+                }
             }
 
             ready = true;
@@ -264,6 +272,12 @@ public class NrSaCellColorHook {
                 if (bindings == null || bindings.isEmpty()) continue;
                 Object b = bindings.get(0);
                 if (b == null || !rankBindingClass.isInstance(b)) continue;
+                if (rankCaseField != null) {
+                    try {
+                        int caseId = (int) rankCaseField.get(b);
+                        if (caseId != RANK_CASE_ID) continue;
+                    } catch (Exception ignored) { continue; }
+                }
                 rankElems.add(elem);
                 rankCols.add((float) v6aColField.get(elem));
                 rankRows.add((float) v6aRowField.get(elem));
