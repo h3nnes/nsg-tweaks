@@ -232,7 +232,9 @@ public final class ClassMapping {
         qtrunClassMap.put("a8.d$b", "b10");
         qtrunClassMap.put("a8.d$a", "cq");
         qtrunClassMap.put("a8.f", "z00");
+        qtrunClassMap.put("a8.f$a", "nc");
         qtrunClassMap.put("a8.h", "pa0");
+        qtrunClassMap.put("a8.h$a", "nc");
         qtrunClassMap.put("a8.i", "hb0");
         qtrunClassMap.put("a8.i$a", "b10");
         qtrunClassMap.put("e8.a", "w00");
@@ -262,6 +264,7 @@ public final class ClassMapping {
         qtrunClassMap.put("k8.f", "se0");
         qtrunClassMap.put("k8.b", "eq");
         qtrunClassMap.put("k8.a", "la");
+        qtrunClassMap.put("k8.j", "u31");
         qtrunClassMap.put("k2.a", "t31");
         qtrunClassMap.put("v6.a", "yg0");
         qtrunClassMap.put("v6.b", "zg0");
