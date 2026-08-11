@@ -299,10 +299,7 @@ public class NrSaCsiSnrRowHook {
                         if (bVar != null) {
                             Object keyObj = sysAFieldA.get(bVar);
                             if (keyObj != null && PDSCH_SINR_KEY.equals(keyObj.toString())) {
-                                Object legend = legendSingleton.get(null);
-                                if (legend != null) {
-                                    return legendMethodA.invoke(legend, ssSinrLegendBVar, chain.getArg(1));
-                                }
+                                return chain.proceed(new Object[]{ssSinrLegendBVar, chain.getArg(1)});
                             }
                         }
                         return chain.proceed();
@@ -316,10 +313,7 @@ public class NrSaCsiSnrRowHook {
                         if (bVar != null) {
                             Object keyObj = sysAFieldA.get(bVar);
                             if (keyObj != null && PDSCH_SINR_KEY.equals(keyObj.toString())) {
-                                Object legend = legendSingleton.get(null);
-                                if (legend != null) {
-                                    return legendMethodC.invoke(legend, ssSinrLegendBVar, chain.getArg(1));
-                                }
+                                return chain.proceed(new Object[]{ssSinrLegendBVar, chain.getArg(1)});
                             }
                         }
                         return chain.proceed();

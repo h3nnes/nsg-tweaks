@@ -276,10 +276,7 @@ public class NrSaPucchTxRowHook {
                         if (bVar != null) {
                             Object keyObj = sysAFieldA.get(bVar);
                             if (keyObj != null && SRS_TX_KEY.equals(keyObj.toString())) {
-                                Object legend = legendSingleton.get(null);
-                                if (legend != null) {
-                                    return legendMethodA.invoke(legend, puschLegendBVar, chain.getArg(1));
-                                }
+                                return chain.proceed(new Object[]{puschLegendBVar, chain.getArg(1)});
                             }
                         }
                         return chain.proceed();
@@ -293,10 +290,7 @@ public class NrSaPucchTxRowHook {
                         if (bVar != null) {
                             Object keyObj = sysAFieldA.get(bVar);
                             if (keyObj != null && SRS_TX_KEY.equals(keyObj.toString())) {
-                                Object legend = legendSingleton.get(null);
-                                if (legend != null) {
-                                    return legendMethodC.invoke(legend, puschLegendBVar, chain.getArg(1));
-                                }
+                                return chain.proceed(new Object[]{puschLegendBVar, chain.getArg(1)});
                             }
                         }
                         return chain.proceed();
