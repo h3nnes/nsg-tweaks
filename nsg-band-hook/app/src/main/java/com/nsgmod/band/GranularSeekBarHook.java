@@ -115,20 +115,20 @@ if (fragmentClass == null || advActAClass == null || workspaceClass == null
             }
 
             // k8.f fields/methods
-            fragmentSeekBarField = fragmentClass.getDeclaredField("X");
+            fragmentSeekBarField = fragmentClass.getDeclaredField(ClassMapping.runtimeFieldName("k8.f", "X", loader));
             fragmentSeekBarField.setAccessible(true);
-            fragmentYField = fragmentClass.getDeclaredField("Y");
+            fragmentYField = fragmentClass.getDeclaredField(ClassMapping.runtimeFieldName("k8.f", "Y", loader));
             fragmentYField.setAccessible(true);
-            fragmentZField = fragmentClass.getDeclaredField("Z");
+            fragmentZField = fragmentClass.getDeclaredField(ClassMapping.runtimeFieldName("k8.f", "Z", loader));
             fragmentZField.setAccessible(true);
             fragmentI0Method = ClassMapping.getDeclaredMethod(fragmentClass, "k8.f", "i0", loader, float.class);
             fragmentI0Method.setAccessible(true);
-            onCreateViewMethod = fragmentClass.getDeclaredMethod(
-                    "I", inflaterClass, viewGroupClass, bundleClass);
+            onCreateViewMethod = ClassMapping.getDeclaredMethod(
+                    fragmentClass, "k8.f", "I", loader, inflaterClass, viewGroupClass, bundleClass);
 // AdvancedActivity.a.f3807a back-reference to k8.f
             // JADX renames it f3807a but runtime name is "a" — check both
             Field f3807aCandidate = null;
-            for (String candidate : new String[]{"a", "f3807a", "f3863a"}) {
+            for (String candidate : new String[]{ClassMapping.runtimeFieldName("com.qtrun.nsg.AdvancedActivity$a", "a", loader), "f3807a", "f3863a"}) {
                 try {
                     f3807aCandidate = advActAClass.getDeclaredField(candidate);
 break;
@@ -151,21 +151,27 @@ wsJ = workspaceClass.getField(wsSingletonName);          // static, public
             wsG = workspaceClass.getDeclaredField(wsCurrentKeyName);  wsG.setAccessible(true);
             wsI = workspaceClass.getDeclaredField(wsDateName);  wsI.setAccessible(true);
             wsC = workspaceClass.getDeclaredField(wsDataSourceName);  wsC.setAccessible(true);
-            wsGMethod = workspaceClass.getDeclaredMethod("g", long.class, Object.class);
+            wsGMethod = ClassMapping.getDeclaredMethod(workspaceClass, "com.qtrun.sys.Workspace", "g", loader, long.class, Object.class);
             wsGMethod.setAccessible(true);
-            wsIMethod = workspaceClass.getDeclaredMethod("i");
+            wsIMethod = ClassMapping.getDeclaredMethod(workspaceClass, "com.qtrun.sys.Workspace", "i", loader);
             wsIMethod.setAccessible(true);
 // Timestamp formatter: qtrun ma.a.m(Date); gplay v8.a.c(Date)
             try {
                 maAMMethod = ClassMapping.getDeclaredMethod(maAClass, "ma.a", "m", loader, dateClass);
                 maAMMethod.setAccessible(true);
-} catch (NoSuchMethodException nsme) {
+            } catch (NoSuchMethodException nsme) {
                 try {
-                    Class<?> fallbackFormatter = Class.forName("v8.a", false, loader);
-                    maAMMethod = fallbackFormatter.getDeclaredMethod("c", dateClass);
+                    Class<?> u31Class = ClassMapping.loadClass("k8.j", loader);
+                    maAMMethod = u31Class.getDeclaredMethod("e", dateClass);
                     maAMMethod.setAccessible(true);
-} catch (Throwable t) {
-                    Log.w(TAG, "GranularSeekBarHook: timestamp formatter not found, continuing without label sync: " + t);
+                } catch (Throwable t2) {
+                    try {
+                        Class<?> fallbackFormatter = Class.forName("v8.a", false, loader);
+                        maAMMethod = fallbackFormatter.getDeclaredMethod("c", dateClass);
+                        maAMMethod.setAccessible(true);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "GranularSeekBarHook: timestamp formatter not found, continuing without label sync: " + t);
+                    }
                 }
             }
 

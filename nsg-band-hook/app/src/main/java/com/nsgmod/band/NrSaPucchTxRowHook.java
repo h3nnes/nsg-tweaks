@@ -121,9 +121,9 @@ public class NrSaPucchTxRowHook {
             vfF8120g.setAccessible(true);
             vfF8119f = vfClass.getDeclaredField("f");
             vfF8119f.setAccessible(true);
-            vfF8122j = vfClass.getDeclaredField("j");
+            vfF8122j = vfClass.getDeclaredField(ClassMapping.runtimeFieldName("v6.f", "j", loader));
             vfF8122j.setAccessible(true);
-            vfF8123k = vfClass.getDeclaredField("k");
+            vfF8123k = vfClass.getDeclaredField(ClassMapping.runtimeFieldName("v6.f", "k", loader));
             vfF8123k.setAccessible(true);
 
             vfFMethod = vfClass.getMethod("f", int.class, float.class);
@@ -150,13 +150,13 @@ public class NrSaPucchTxRowHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
-            v6bYField = v6bClass.getField("Y");
+            v6bYField = v6bClass.getField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
 
             // LegendManager for SRS color redirect.
             // NR_Power_Tx_SRS is not in attribute2legend_map.xml, so LegendManager
@@ -170,7 +170,7 @@ public class NrSaPucchTxRowHook {
                 try {
                     legendSingleton = legendClass.getDeclaredField(singletonName);
                 } catch (NoSuchFieldException nsfe) {
-                    legendSingleton = legendClass.getDeclaredField("f3783e");
+                    legendSingleton = legendClass.getDeclaredField(ClassMapping.runtimeFieldName("com.qtrun.legend.LegendManager", "e", loader));
                 }
                 legendSingleton.setAccessible(true);
 

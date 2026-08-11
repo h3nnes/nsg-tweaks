@@ -141,10 +141,10 @@ public class EutraRsrpRowHook {
                 Log.i(TAG, "EutraRsrpRowHook: g8.i not available on this flavor, skipping");
                 return;
             }
-            g8iCarrierCountField = g8iClass.getDeclaredField("Z");
+            g8iCarrierCountField = g8iClass.getDeclaredField(ClassMapping.runtimeFieldName("g8.i", "Z", loader));
             g8iCarrierCountField.setAccessible(true);
 
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");

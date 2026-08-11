@@ -154,7 +154,7 @@ public class LteBandwidthColumnHook {
 
             String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
             eField      = bbClass.getField(eFieldName);
-            hMethod     = bbClass.getMethod("h", int.class);
+            hMethod     = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
             String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
             f5509cField = k8cClass.getField(sampleKeyFieldName);
 
@@ -202,7 +202,7 @@ public class LteBandwidthColumnHook {
             try {
                 legendSingleton = legendClass.getDeclaredField(legendSingletonName);
             } catch (NoSuchFieldException nsfe) {
-                legendSingleton = legendClass.getDeclaredField("f3783e");
+                legendSingleton = legendClass.getDeclaredField(ClassMapping.runtimeFieldName("com.qtrun.legend.LegendManager", "e", loader));
             }
             legendSingleton.setAccessible(true);
 
@@ -533,7 +533,7 @@ public class LteBandwidthColumnHook {
                 Log.i(TAG, "LteBandwidthColumnHook: a8.f not available, skipping onCreateView hook");
                 return;
             }
-            Method   iMethod   = fragClass.getMethod("I",
+            Method   iMethod   = ClassMapping.getMethod(fragClass, "a8.f", "I", loader,
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
             xposed.hook(iMethod).intercept(new Hooker() {

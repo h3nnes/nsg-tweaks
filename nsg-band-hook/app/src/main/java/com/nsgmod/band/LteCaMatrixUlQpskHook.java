@@ -121,13 +121,13 @@ public class LteCaMatrixUlQpskHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
-            v6bYField = v6bClass.getField("Y");
+            v6bYField = v6bClass.getField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
 
             // Resolve deep blue color from host app resources
             try {

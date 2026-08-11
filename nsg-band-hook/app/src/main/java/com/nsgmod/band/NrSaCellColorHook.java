@@ -101,10 +101,10 @@ public class NrSaCellColorHook {
             sysACIndexField = sysAClass.getDeclaredField("c");
             sysACIndexField.setAccessible(true);
 
-            k2aElementsField = k2aClass.getDeclaredField("d");
+            k2aElementsField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aElementsField.setAccessible(true);
 
-            v6bYField = v6bClass.getDeclaredField("Y");
+            v6bYField = v6bClass.getDeclaredField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
             v6bYField.setAccessible(true);
 
             v6aColField = v6aClass.getDeclaredField("d");
@@ -151,7 +151,7 @@ public class NrSaCellColorHook {
 
             // Hook 2: v6.b.I(LayoutInflater, ViewGroup, Bundle) — after k2.a.j() has run,
             // all TextViews in f8100a are live. Walk this.Y's element list and setTextColor.
-            Method iMethod = v6bClass.getMethod("I",
+            Method iMethod = ClassMapping.getMethod(v6bClass, "v6.b", "I", loader,
                     android.view.LayoutInflater.class,
                     android.view.ViewGroup.class,
                     android.os.Bundle.class);

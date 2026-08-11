@@ -107,7 +107,7 @@ public class NrNsaBandwidthColumnHook {
 
             String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
             eField      = bbClass.getField(eFieldName);
-            hMethod     = bbClass.getMethod("h", int.class);
+            hMethod     = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
             String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
             f5509cField = k8cClass.getField(sampleKeyFieldName);
 
@@ -357,7 +357,7 @@ public class NrNsaBandwidthColumnHook {
                 Log.i(TAG, "NrNsaBandwidthColumnHook: a8.h not available, skipping onCreateView hook");
                 return;
             }
-            Method   iMethod   = fragClass.getMethod("I",
+            Method   iMethod   = ClassMapping.getMethod(fragClass, "a8.h", "I", loader,
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
             xposed.hook(iMethod).intercept(new Hooker() {

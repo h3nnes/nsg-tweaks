@@ -108,10 +108,10 @@ public class LteCellColorHook {
             vgViewField = v6aClass.getDeclaredField("a");
             vgViewField.setAccessible(true);
 
-            k2aElementsField = k2aClass.getDeclaredField("d");
+            k2aElementsField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aElementsField.setAccessible(true);
 
-            v6bYField = v6bClass.getDeclaredField("Y");
+            v6bYField = v6bClass.getDeclaredField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
             v6bYField.setAccessible(true);
 
             v6aColField = v6aClass.getDeclaredField("d");
@@ -202,7 +202,7 @@ public class LteCellColorHook {
         try {
             Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
 
-            Method iMethod = v6bClass.getMethod("I",
+            Method iMethod = ClassMapping.getMethod(v6bClass, "v6.b", "I", loader,
                     android.view.LayoutInflater.class,
                     android.view.ViewGroup.class,
                     android.os.Bundle.class);

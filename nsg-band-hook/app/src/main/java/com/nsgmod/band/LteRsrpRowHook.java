@@ -163,10 +163,10 @@ public class LteRsrpRowHook {
 
             // e8.b.Z = carrier count (int field, bytecode name "Z")
             Class<?> e8bClass = ClassMapping.loadClass("e8.b", loader);
-            e8bCarrierCountField = e8bClass.getDeclaredField("Z");
+            e8bCarrierCountField = e8bClass.getDeclaredField(ClassMapping.runtimeFieldName("e8.b", "Z", loader));
             e8bCarrierCountField.setAccessible(true);
 
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");

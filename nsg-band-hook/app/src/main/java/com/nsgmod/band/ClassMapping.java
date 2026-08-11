@@ -32,6 +32,10 @@ public final class ClassMapping {
     /** Integer-constant overrides for gplay: key = "logicalClass|logicalConstant". */
     private static final Map<String, Integer> GPLAY_CONSTANT_OVERRIDES;
 
+    private static final Map<String, String> QTRUN_CLASS_OVERRIDES;
+    private static final Map<String, String> QTRUN_FIELD_OVERRIDES;
+    private static final Map<String, String> QTRUN_METHOD_OVERRIDES;
+
     static {
         Set<String> identity = new HashSet<>();
         // Classes confirmed identical in both qtrun and gplay v4.8.8.
@@ -219,6 +223,189 @@ public final class ClassMapping {
         // qtrun R8 assigns case 5; gplay R8 assigns case 0.
         constantMap.put("a4.h|LOAD_COMPLETE_CASE", 0);
         GPLAY_CONSTANT_OVERRIDES = Collections.unmodifiableMap(constantMap);
+
+        Map<String, String> qtrunClassMap = new HashMap<>();
+        qtrunClassMap.put("a8.b", "ee");
+        qtrunClassMap.put("a8.b$b", "nc");
+        qtrunClassMap.put("a8.b$a", "de");
+        qtrunClassMap.put("a8.d", "dq");
+        qtrunClassMap.put("a8.d$b", "b10");
+        qtrunClassMap.put("a8.d$a", "cq");
+        qtrunClassMap.put("a8.f", "z00");
+        qtrunClassMap.put("a8.h", "pa0");
+        qtrunClassMap.put("a8.i", "hb0");
+        qtrunClassMap.put("a8.i$a", "b10");
+        qtrunClassMap.put("e8.a", "w00");
+        qtrunClassMap.put("e8.b", "x00");
+        qtrunClassMap.put("h8.b", "eb0");
+        qtrunClassMap.put("h8.c", "fb0");
+        qtrunClassMap.put("h8.h", "lb0");
+        qtrunClassMap.put("g8.b", "na0");
+        qtrunClassMap.put("g8.h", "ua0");
+        qtrunClassMap.put("g8.i", "va0");
+        qtrunClassMap.put("d7.i", "v00");
+        qtrunClassMap.put("d7.i$c", "v00");
+        qtrunClassMap.put("d7.i$k", "v00");
+        qtrunClassMap.put("d8.i", "mb0");
+        qtrunClassMap.put("f7.b", "sd");
+        qtrunClassMap.put("u7.f", "y80");
+        qtrunClassMap.put("u7.a", "sp");
+        qtrunClassMap.put("t7.e", "s2");
+        qtrunClassMap.put("t7.e0", "y30");
+        qtrunClassMap.put("t7.g0", "b40");
+        qtrunClassMap.put("t7.w0", "w31");
+        qtrunClassMap.put("t7.t", "zp");
+        qtrunClassMap.put("t7.p", "t31");
+        qtrunClassMap.put("a4.h", "u2");
+        qtrunClassMap.put("ma.a", "q21");
+        qtrunClassMap.put("k8.c", "r00");
+        qtrunClassMap.put("k8.f", "se0");
+        qtrunClassMap.put("k8.b", "eq");
+        qtrunClassMap.put("k8.a", "la");
+        qtrunClassMap.put("k2.a", "t31");
+        qtrunClassMap.put("v6.a", "yg0");
+        qtrunClassMap.put("v6.b", "zg0");
+        qtrunClassMap.put("v6.d", "bh0");
+        qtrunClassMap.put("v6.e", "ch0");
+        qtrunClassMap.put("v6.f", "dh0");
+        qtrunClassMap.put("v6.g", "eh0");
+        qtrunClassMap.put("w1.a", "ce0");
+        qtrunClassMap.put("x6.b", "j3");
+        qtrunClassMap.put("u6.a", "jd0");
+        qtrunClassMap.put("o7.a", "e20");
+        qtrunClassMap.put("z6.a", "kh");
+        qtrunClassMap.put("d.d", "i2");
+        qtrunClassMap.put("androidx.preference.c", "jf0");
+        qtrunClassMap.put("com.qtrun.sys.a", "l8");
+        qtrunClassMap.put("com.qtrun.sys.b", "m8");
+        qtrunClassMap.put("com.qtrun.nsg.AdvancedActivity$a", "mx");
+        QTRUN_CLASS_OVERRIDES = Collections.unmodifiableMap(qtrunClassMap);
+
+        Map<String, String> qtrunFieldMap = new HashMap<>();
+        qtrunFieldMap.put("k2.a|d", "b");
+        qtrunFieldMap.put("v6.b|Y", "X");
+        qtrunFieldMap.put("v6.b|Z", "Y");
+        qtrunFieldMap.put("v6.f|j", "i");
+        qtrunFieldMap.put("v6.f|k", "j");
+        qtrunFieldMap.put("e8.b|Z", "Y");
+        qtrunFieldMap.put("g8.i|Z", "Y");
+        qtrunFieldMap.put("h8.b|a0", "Z");
+        qtrunFieldMap.put("k8.f|X", "W");
+        qtrunFieldMap.put("k8.f|Y", "X");
+        qtrunFieldMap.put("k8.f|Z", "Y");
+        qtrunFieldMap.put("k8.f|a0", "Z");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity$a|a", "b");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|K", "H");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|I", "F");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|J", "G");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|M", "J");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|E", "B");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|F", "C");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|H", "E");
+        qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|L", "I");
+        QTRUN_FIELD_OVERRIDES = Collections.unmodifiableMap(qtrunFieldMap);
+
+        Map<String, String> qtrunMethodMap = new HashMap<>();
+        qtrunMethodMap.put("com.qtrun.legend.LegendManager|c", "b");
+        qtrunMethodMap.put("k2.a|B", "Z");
+        qtrunMethodMap.put("k2.a|c", "f");
+        qtrunMethodMap.put("k2.a|A", "X");
+        qtrunMethodMap.put("k2.a|e", "j");
+        qtrunMethodMap.put("k2.a|f", "k");
+        qtrunMethodMap.put("k2.a|g", "m");
+        qtrunMethodMap.put("k2.a|i", "n");
+        qtrunMethodMap.put("k2.a|j", "p");
+        qtrunMethodMap.put("k2.a|m", "H");
+        qtrunMethodMap.put("k2.a|o", "J");
+        qtrunMethodMap.put("k2.a|p", "K");
+        qtrunMethodMap.put("k2.a|q", "L");
+        qtrunMethodMap.put("k2.a|r", "M");
+        qtrunMethodMap.put("k2.a|s", "N");
+        qtrunMethodMap.put("k2.a|t", "O");
+        qtrunMethodMap.put("k2.a|x", "V");
+        qtrunMethodMap.put("v6.b|k0", "g0");
+        qtrunMethodMap.put("v6.b|I", "E");
+        qtrunMethodMap.put("v6.b|l0", "h0");
+        qtrunMethodMap.put("v6.b|g", "e");
+        qtrunMethodMap.put("v6.b|h", "g");
+        qtrunMethodMap.put("k8.f|i0", "e0");
+        qtrunMethodMap.put("k8.f|I", "E");
+        qtrunMethodMap.put("e8.b|n0", "j0");
+        qtrunMethodMap.put("e8.b|l0", "h0");
+        qtrunMethodMap.put("e8.b|i0", "e0");
+        qtrunMethodMap.put("e8.b|j0", "f0");
+        qtrunMethodMap.put("e8.b|k0", "g0");
+        qtrunMethodMap.put("e8.b|m0", "i0");
+        qtrunMethodMap.put("e8.b|O", "K");
+        qtrunMethodMap.put("e8.b|I", "E");
+        qtrunMethodMap.put("g8.i|n0", "j0");
+        qtrunMethodMap.put("g8.i|l0", "h0");
+        qtrunMethodMap.put("g8.i|i0", "e0");
+        qtrunMethodMap.put("g8.i|j0", "f0");
+        qtrunMethodMap.put("g8.i|k0", "g0");
+        qtrunMethodMap.put("g8.i|m0", "i0");
+        qtrunMethodMap.put("g8.i|O", "K");
+        qtrunMethodMap.put("g8.i|Q", "M");
+        qtrunMethodMap.put("g8.i|I", "E");
+        qtrunMethodMap.put("h8.b|o0", "k0");
+        qtrunMethodMap.put("h8.b|Q", "M");
+        qtrunMethodMap.put("h8.b|n0", "j0");
+        qtrunMethodMap.put("h8.b|i0", "e0");
+        qtrunMethodMap.put("h8.b|j0", "f0");
+        qtrunMethodMap.put("h8.b|k0", "g0");
+        qtrunMethodMap.put("h8.b|l0", "h0");
+        qtrunMethodMap.put("h8.b|m0", "i0");
+        qtrunMethodMap.put("h8.b|O", "K");
+        qtrunMethodMap.put("h8.b|I", "E");
+        qtrunMethodMap.put("h8.c|l0", "h0");
+        qtrunMethodMap.put("h8.c|i0", "e0");
+        qtrunMethodMap.put("h8.c|j0", "f0");
+        qtrunMethodMap.put("h8.h|l0", "h0");
+        qtrunMethodMap.put("h8.h|i0", "e0");
+        qtrunMethodMap.put("h8.h|j0", "f0");
+        qtrunMethodMap.put("e8.a|l0", "h0");
+        qtrunMethodMap.put("e8.a|i0", "e0");
+        qtrunMethodMap.put("e8.a|j0", "f0");
+        qtrunMethodMap.put("d8.i|l0", "h0");
+        qtrunMethodMap.put("g8.b|l0", "h0");
+        qtrunMethodMap.put("g8.h|l0", "h0");
+        qtrunMethodMap.put("ma.a|j", "f");
+        qtrunMethodMap.put("ma.a|o", "h");
+        qtrunMethodMap.put("ma.a|p", "i");
+        qtrunMethodMap.put("t7.t|i0", "f0");
+        qtrunMethodMap.put("t7.t|j0", "h0");
+        qtrunMethodMap.put("t7.t|d", "e0");
+        qtrunMethodMap.put("d.d|c", "k");
+        qtrunMethodMap.put("t7.p|a", "b");
+        qtrunMethodMap.put("com.qtrun.sys.Workspace|g", "e");
+        qtrunMethodMap.put("com.qtrun.sys.Workspace|h", "f");
+        qtrunMethodMap.put("com.qtrun.sys.Workspace|i", "g");
+        qtrunMethodMap.put("com.qtrun.sys.Workspace|c", "b");
+        qtrunMethodMap.put("com.qtrun.sys.Workspace|f", "c");
+        qtrunMethodMap.put("com.qtrun.sys.Workspace|j", "h");
+        qtrunMethodMap.put("com.qtrun.sys.Workspace|l", "i");
+        qtrunMethodMap.put("com.qtrun.sys.Workspace|n", "j");
+        qtrunMethodMap.put("com.qtrun.nsg.AdvancedActivity|J", "B");
+        qtrunMethodMap.put("com.qtrun.nsg.AdvancedActivity|I", "A");
+        qtrunMethodMap.put("com.qtrun.nsg.AdvancedActivity|K", "C");
+        qtrunMethodMap.put("com.qtrun.nsg.AdvancedActivity|G", "y");
+        qtrunMethodMap.put("com.qtrun.nsg.AdvancedActivity|H", "z");
+        qtrunMethodMap.put("com.qtrun.nsg.AdvancedActivity|L", "D");
+        qtrunMethodMap.put("com.qtrun.nsg.AdvancedActivity|M", "E");
+        qtrunMethodMap.put("com.qtrun.nsg.AdvancedActivity|u", "h");
+        qtrunMethodMap.put("a8.b$b|h", "g");
+        qtrunMethodMap.put("a8.b$b|c", "b");
+        qtrunMethodMap.put("a8.b$b|g", "f");
+        qtrunMethodMap.put("a8.d$b|g", "f");
+        qtrunMethodMap.put("a8.d$b|f", "e");
+        qtrunMethodMap.put("f7.b|d", "e");
+        qtrunMethodMap.put("a8.f|I", "E");
+        qtrunMethodMap.put("a8.h|I", "E");
+        qtrunMethodMap.put("a8.i|I", "E");
+        qtrunMethodMap.put("com.qtrun.udv.header.HeaderRFFragment|I", "E");
+        qtrunMethodMap.put("com.qtrun.udv.header.HeaderRFFragment|h", "g");
+        qtrunMethodMap.put("com.qtrun.udv.header.HeaderRFFragment|k0", "g0");
+        QTRUN_METHOD_OVERRIDES = Collections.unmodifiableMap(qtrunMethodMap);
     }
 
     private ClassMapping() {
@@ -231,6 +418,9 @@ public final class ClassMapping {
     public static String runtimeName(String logicalName, ClassLoader loader) {
         FlavorDetector.Flavor flavor = FlavorDetector.detect(loader);
         if (flavor == FlavorDetector.Flavor.QTRUN) {
+            if (QTRUN_CLASS_OVERRIDES.containsKey(logicalName)) {
+                return QTRUN_CLASS_OVERRIDES.get(logicalName);
+            }
             return logicalName;
         }
         if (flavor != FlavorDetector.Flavor.GPLAY) {
@@ -271,7 +461,15 @@ public final class ClassMapping {
      */
     public static String runtimeMethodName(String logicalClass, String logicalMethod,
                                            ClassLoader loader) {
-        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.GPLAY) {
+        FlavorDetector.Flavor flavor = FlavorDetector.detect(loader);
+        if (flavor == FlavorDetector.Flavor.QTRUN) {
+            String key = logicalClass + "|" + logicalMethod;
+            if (QTRUN_METHOD_OVERRIDES.containsKey(key)) {
+                return QTRUN_METHOD_OVERRIDES.get(key);
+            }
+            return logicalMethod;
+        }
+        if (flavor != FlavorDetector.Flavor.GPLAY) {
             return logicalMethod;
         }
         String key = logicalClass + "|" + logicalMethod;
@@ -287,7 +485,15 @@ public final class ClassMapping {
      */
     public static String runtimeFieldName(String logicalClass, String logicalField,
                                         ClassLoader loader) {
-        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.GPLAY) {
+        FlavorDetector.Flavor flavor = FlavorDetector.detect(loader);
+        if (flavor == FlavorDetector.Flavor.QTRUN) {
+            String key = logicalClass + "|" + logicalField;
+            if (QTRUN_FIELD_OVERRIDES.containsKey(key)) {
+                return QTRUN_FIELD_OVERRIDES.get(key);
+            }
+            return logicalField;
+        }
+        if (flavor != FlavorDetector.Flavor.GPLAY) {
             return logicalField;
         }
         String key = logicalClass + "|" + logicalField;

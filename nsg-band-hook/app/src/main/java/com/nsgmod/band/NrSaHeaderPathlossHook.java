@@ -155,7 +155,7 @@ public class NrSaHeaderPathlossHook {
                     float.class, float.class, float.class, float.class);
             k2aJMethod = ClassMapping.getMethod(k2aClass, "k2.a", "j", loader,
                     android.content.Context.class, int.class);
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
 
             veF = veClass.getField("f");
@@ -220,7 +220,7 @@ public class NrSaHeaderPathlossHook {
             Class<?> layoutInflaterClass = ClassMapping.loadClass("android.view.LayoutInflater", loader);
             Class<?> viewGroupClass = ClassMapping.loadClass("android.view.ViewGroup", loader);
             Class<?> bundleClass = ClassMapping.loadClass("android.os.Bundle", loader);
-            Method iMethod = headerRFFragmentClass.getMethod("I",
+            Method iMethod = ClassMapping.getMethod(headerRFFragmentClass, "com.qtrun.udv.header.HeaderRFFragment", "I", loader,
                     layoutInflaterClass, viewGroupClass, bundleClass);
 
             xposed.hook(iMethod).intercept(new Hooker() {

@@ -8,6 +8,7 @@ import android.util.Log;
  * <p>The detection is based on the obfuscated About-page fragment classes used by each flavor:
  * <ul>
  *   <li>qtrun v4.8.8: {@code t7.t0}</li>
+ *   <li>qtrun v4.8.9: {@code zp}</li>
  *   <li>gplay v4.8.8: {@code c6.e1}</li>
  * </ul>
  *
@@ -47,29 +48,27 @@ public final class FlavorDetector {
     }
 
     private static Flavor doDetect(ClassLoader loader) {
-        // 1. Primary qtrun anchor.
-        if (canLoad(loader, "t7.t0")) {
-            return Flavor.QTRUN;
-        }
-        // 2. Primary gplay anchor.
         if (canLoad(loader, "c6.e1")) {
             return Flavor.GPLAY;
         }
-        // 3. qtrun-specific fallback anchors.
-        String[] qtrunAnchors = {"g8.b", "v6.g", "t7.t"};
-        for (String anchor : qtrunAnchors) {
-            if (canLoad(loader, anchor)) {
-                return Flavor.QTRUN;
-            }
+        if (canLoad(loader, "zp")) {
+            return Flavor.QTRUN;
         }
-        // 4. gplay-specific fallback anchors.
-        String[] gplayAnchors = {"c6.e1", "c6.q0", "c6.h1"};
+        if (canLoad(loader, "t7.t0")) {
+            return Flavor.QTRUN;
+        }
+        String[] gplayAnchors = {"c6.q0", "c6.h1"};
         for (String anchor : gplayAnchors) {
             if (canLoad(loader, anchor)) {
                 return Flavor.GPLAY;
             }
         }
-        // 5. Default.
+        String[] qtrunAnchors = {"ee", "z00", "se0"};
+        for (String anchor : qtrunAnchors) {
+            if (canLoad(loader, anchor)) {
+                return Flavor.QTRUN;
+            }
+        }
         Log.w(TAG, "FlavorDetector: could not determine flavor, defaulting to QTRUN");
         return Flavor.QTRUN;
     }

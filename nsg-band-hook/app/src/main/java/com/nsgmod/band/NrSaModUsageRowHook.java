@@ -134,7 +134,7 @@ public class NrSaModUsageRowHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");

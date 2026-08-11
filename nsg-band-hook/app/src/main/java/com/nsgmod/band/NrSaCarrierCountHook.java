@@ -108,7 +108,7 @@ public class NrSaCarrierCountHook {
             workspaceInstance = wjField.get(null);
             workspaceTickField = workspaceClass.getDeclaredField(wsTickName);
             workspaceTickField.setAccessible(true);
-            workspaceHMethod = workspaceClass.getMethod("h", sysAClass, int.class);
+            workspaceHMethod = ClassMapping.getMethod(workspaceClass, "com.qtrun.sys.Workspace", "h", loader, sysAClass, int.class);
 
             Class<?> propertyClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
             propertyBMethod = propertyClass.getMethod("b", long.class);
@@ -140,7 +140,7 @@ public class NrSaCarrierCountHook {
             sysACField.set(scellPciBinding, -1);
 
             Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
 
             ready = true;

@@ -143,7 +143,7 @@ public class CellIdMatchHook {
 
             // --- 2. Get Workspace singleton (static field "j") ---
             Class<?> wsCls = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            Field wsField = wsCls.getDeclaredField("j");
+            Field wsField = wsCls.getDeclaredField(ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader));
             wsField.setAccessible(true);
             Object workspace = wsField.get(null);
             if (workspace == null) {
@@ -152,7 +152,7 @@ public class CellIdMatchHook {
             }
 
             // h(com.qtrun.sys.a, int) — binds the Property if the signal is live
-            Method hMethod = wsCls.getDeclaredMethod("h", attrCls, int.class);
+            Method hMethod = ClassMapping.getDeclaredMethod(wsCls, "com.qtrun.sys.Workspace", "h", loader, attrCls, int.class);
             hMethod.setAccessible(true);
 
             // Try module indices 0..3

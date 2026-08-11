@@ -143,11 +143,11 @@ public class NrSaCsiSnrRowHook {
 
             // h8.b.f5066a0 = carrier count field; JADX renames it "f5066a0", actual name "a0"
             Class<?> h8bClass = ClassMapping.loadClass("h8.b", loader);
-            h8bCarrierCountField = h8bClass.getDeclaredField("a0");
+            h8bCarrierCountField = h8bClass.getDeclaredField(ClassMapping.runtimeFieldName("h8.b", "a0", loader));
             h8bCarrierCountField.setAccessible(true);
 
             // k2.a ArrayList field "d" (JADX: f5437d); v6.a row float field "b" (JADX: f8101b)
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
@@ -165,7 +165,7 @@ public class NrSaCsiSnrRowHook {
                 try {
                     legendSingleton = legendClass.getDeclaredField(singletonName);
                 } catch (NoSuchFieldException nsfe) {
-                    legendSingleton = legendClass.getDeclaredField("f3783e");
+                    legendSingleton = legendClass.getDeclaredField(ClassMapping.runtimeFieldName("com.qtrun.legend.LegendManager", "e", loader));
                 }
                 legendSingleton.setAccessible(true);
 

@@ -112,7 +112,7 @@ public class BandColumnHook {
 
             String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
             eField  = bbClass.getField(eFieldName);   // Object[] sources array
-            hMethod = bbClass.getMethod("h", int.class);  // Pair<source, intraRow>
+            hMethod = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
             String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
             f5509cField = k8cClass.getField(sampleKeyFieldName); // data sample key (f5509c)
 
@@ -133,7 +133,7 @@ public class BandColumnHook {
         try {
             Class<?> cls = ClassMapping.loadClass("f7.b", loader);
             if (cls == null) return;
-            Method dMethod = cls.getMethod("d", String.class);
+            Method dMethod = ClassMapping.getMethod(cls, "f7.b", "d", loader, String.class);
             xposed.hook(dMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
@@ -405,7 +405,7 @@ public class BandColumnHook {
                 Log.i(TAG, "BandColumnHook: a8.h not available, skipping onCreateView hook");
                 return;
             }
-            Method   iMethod   = fragClass.getMethod("I",
+            Method   iMethod   = ClassMapping.getMethod(fragClass, "a8.h", "I", loader,
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
             xposed.hook(iMethod).intercept(new Hooker() {

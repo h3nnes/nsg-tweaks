@@ -64,9 +64,9 @@ public class RenamePuschTxLabelHook {
             Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
             veClass = ClassMapping.loadClass("v6.e", loader);
 
-            v6bYField = v6bClass.getField("Y");
+            v6bYField = v6bClass.getField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
 
-            k2aListField = k2aClass.getDeclaredField("d");
+            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
 
             veTextField = veClass.getField("f");

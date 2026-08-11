@@ -114,7 +114,7 @@ public class NrSaCellColumnsHook {
 
             String sourcesFieldName = ClassMapping.runtimeFieldName("a8.d$b", "d", loader);
             sourcesField = dbClass.getField(sourcesFieldName);   // a8.d.a[] sources
-            gMethod      = dbClass.getMethod("g", int.class);
+            gMethod      = ClassMapping.getMethod(dbClass, "a8.d$b", "g", loader, int.class);
             // NOTE: a8.d.a extends k8.b (not k8.c), so there is no f5509c field.
             // Sample key is captured via hookDataCallback() instead.
 
@@ -146,7 +146,7 @@ public class NrSaCellColumnsHook {
         try {
             Class<?> cls = ClassMapping.loadClass("f7.b", loader);
             if (cls == null) return;
-            Method dMethod = cls.getMethod("d", String.class);
+            Method dMethod = ClassMapping.getMethod(cls, "f7.b", "d", loader, String.class);
             xposed.hook(dMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
@@ -531,7 +531,7 @@ public class NrSaCellColumnsHook {
                 Log.i(TAG, "NrSaCellColumnsHook: a8.i not available, skipping onCreateView hook");
                 return;
             }
-            Method   iMethod   = fragClass.getMethod("I",
+            Method   iMethod   = ClassMapping.getMethod(fragClass, "a8.i", "I", loader,
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
             xposed.hook(iMethod).intercept(new Hooker() {
