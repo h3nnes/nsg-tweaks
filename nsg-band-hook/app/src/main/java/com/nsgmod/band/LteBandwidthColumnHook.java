@@ -38,7 +38,10 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell1     (intraRow == 1)
  *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell2     (intraRow == 2)
  *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell3     (intraRow == 3)
- *   intraRow > 3: "-" (no SCell4+ SINR field)
+ *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell4     (intraRow == 4)
+ *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell5     (intraRow == 5)
+ *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell6     (intraRow == 6)
+ *   LTE::Downlink_Measurements::SCC::LTE_SINR_SCell7     (intraRow == 7)
  *
  * <h3>SINR color coding</h3>
  * The SNR column uses {@code com.qtrun.widget.textview.ProgressTextView} (not a
@@ -111,7 +114,7 @@ public class LteBandwidthColumnHook {
 
     private Object           unsafe;
     private Method           unsafeAllocateInstance;
-    private Object[]         sinrAttrs;        // com.qtrun.sys.b instances for intraRow 0-3
+    private Object[]         sinrAttrs;
 
     private boolean reflectionReady = false;
     private boolean sinrColorReady   = false;
@@ -241,12 +244,15 @@ public class LteBandwidthColumnHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            // Create and cache the 4 SINR attribute descriptors.
-            sinrAttrs = new Object[4];
+            sinrAttrs = new Object[8];
             sinrAttrs[0] = makeSinrAttr("LTE::Downlink_Measurements::LTE_SINR_PCell", -1, "%.1f");
             sinrAttrs[1] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell1", -1, "%.1f");
             sinrAttrs[2] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell2", -1, "%.1f");
             sinrAttrs[3] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell3", -1, "%.1f");
+            sinrAttrs[4] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell4", -1, "%.1f");
+            sinrAttrs[5] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell5", -1, "%.1f");
+            sinrAttrs[6] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell6", -1, "%.1f");
+            sinrAttrs[7] = makeSinrAttr("LTE::Downlink_Measurements::SCC::LTE_SINR_SCell7", -1, "%.1f");
 
             sinrColorReady = true;
             Log.i(TAG, "LteBandwidthColumnHook: SINR color coding ready");
@@ -332,7 +338,6 @@ public class LteBandwidthColumnHook {
      * @return raw Float value (for LegendManager color coding), or null.
      */
     private Float readLteSinrRaw(Object ds, int modIdx, long adsk, int intraRow) {
-        if (intraRow > 3) return null;
         long qt = (adsk > 0) ? adsk : Long.MAX_VALUE;
         String key = (intraRow == 0)
                 ? "LTE::Downlink_Measurements::LTE_SINR_PCell"
@@ -607,7 +612,7 @@ public class LteBandwidthColumnHook {
      *
      * @param snrView  the SNR column view (ProgressTextView if available)
      * @param sinrRaw  raw SINR value (Float), or null if no data
-     * @param intraRow 0=PCell, 1..3=SCell1..3
+     * @param intraRow 0=PCell, 1..7=SCell1..7
      */
     private void applySnrColor(View snrView, Float sinrRaw, int intraRow) {
         if (!(snrView instanceof TextView)) return;
