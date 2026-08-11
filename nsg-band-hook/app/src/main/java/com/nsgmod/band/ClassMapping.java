@@ -35,6 +35,7 @@ public final class ClassMapping {
     private static final Map<String, String> QTRUN_CLASS_OVERRIDES;
     private static final Map<String, String> QTRUN_FIELD_OVERRIDES;
     private static final Map<String, String> QTRUN_METHOD_OVERRIDES;
+    private static final Map<String, Integer> QTRUN_CONSTANT_OVERRIDES;
 
     static {
         Set<String> identity = new HashSet<>();
@@ -409,7 +410,14 @@ public final class ClassMapping {
         qtrunMethodMap.put("com.qtrun.udv.header.HeaderRFFragment|I", "E");
         qtrunMethodMap.put("com.qtrun.udv.header.HeaderRFFragment|h", "g");
         qtrunMethodMap.put("com.qtrun.udv.header.HeaderRFFragment|k0", "g0");
+        qtrunMethodMap.put("a4.h|e", "f");
+        qtrunMethodMap.put("t7.w0|c", "r");
+        qtrunMethodMap.put("t7.w0|e", "D");
         QTRUN_METHOD_OVERRIDES = Collections.unmodifiableMap(qtrunMethodMap);
+
+        Map<String, Integer> qtrunConstantMap = new HashMap<>();
+        qtrunConstantMap.put("a4.h|LOAD_COMPLETE_CASE", 0);
+        QTRUN_CONSTANT_OVERRIDES = Collections.unmodifiableMap(qtrunConstantMap);
     }
 
     private ClassMapping() {
@@ -513,7 +521,14 @@ public final class ClassMapping {
      */
     public static int runtimeIntConstant(String logicalKey, int qtrunValue,
                                           ClassLoader loader) {
-        if (FlavorDetector.detect(loader) != FlavorDetector.Flavor.GPLAY) {
+        FlavorDetector.Flavor flavor = FlavorDetector.detect(loader);
+        if (flavor == FlavorDetector.Flavor.QTRUN) {
+            if (QTRUN_CONSTANT_OVERRIDES.containsKey(logicalKey)) {
+                return QTRUN_CONSTANT_OVERRIDES.get(logicalKey);
+            }
+            return qtrunValue;
+        }
+        if (flavor != FlavorDetector.Flavor.GPLAY) {
             return qtrunValue;
         }
         if (GPLAY_CONSTANT_OVERRIDES.containsKey(logicalKey)) {

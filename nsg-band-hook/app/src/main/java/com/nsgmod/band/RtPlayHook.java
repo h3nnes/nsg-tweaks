@@ -41,8 +41,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 public class RtPlayHook {
 
     private static final String TAG     = "NSGBandHook:RtPlay";
-    /** Resource ID of the forward (+0.5s) button — smali-confirmed: 0x7f09022c */
-    private static final int    ID_FWD  = 0x7f09022c;
+    private int idFwd = 0x7f09022c;
 
     private final XposedInterface xposed;
     private final ClassLoader     loader;
@@ -243,11 +242,20 @@ if (ctrl != null) {
 if (!SettingsToggleHook.rtPlayEnabled()) {
 return;
         }
-        View forwardBtn = rootView.findViewById(ID_FWD);
-        if (forwardBtn == null) {
-            Log.w(TAG, "playback_forward_500ms (0x7f09022c) not found in view tree");
+        View tempBtn = rootView.findViewById(idFwd);
+        if (tempBtn == null) {
+            int resolved = rootView.getContext().getResources().getIdentifier(
+                    "playback_forward_500ms", "id", "com.qtrun.QuickTest");
+            if (resolved != 0 && resolved != idFwd) {
+                idFwd = resolved;
+                tempBtn = rootView.findViewById(idFwd);
+            }
+        }
+        if (tempBtn == null) {
+            Log.w(TAG, "playback_forward_500ms not found in view tree");
             return;
         }
+        final View forwardBtn = tempBtn;
 ViewGroup parent = (ViewGroup) forwardBtn.getParent();
         if (!(parent instanceof LinearLayout)) {
             Log.w(TAG, "parent is not LinearLayout: " + parent.getClass().getName());
