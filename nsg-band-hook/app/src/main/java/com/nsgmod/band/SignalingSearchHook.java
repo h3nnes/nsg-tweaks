@@ -1,5 +1,6 @@
 package com.nsgmod.band;
 
+import android.content.Context;
 import android.graphics.Color;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -53,6 +54,7 @@ public class SignalingSearchHook {
     private static final String SEARCH_BAR_TAG = "nsg_search_bar_added";
 
     private int idDetailText = 0x7f0900dc;
+    private boolean resIdsResolved = false;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -105,19 +107,6 @@ public class SignalingSearchHook {
             }
             u7fPopupField.setAccessible(true);
 
-            try {
-                Class<?> atCls = Class.forName("android.app.ActivityThread");
-                android.app.Application app =
-                        (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-                if (app != null) {
-                    int text = app.getResources().getIdentifier(
-                            "detail", "id", "com.qtrun.QuickTest");
-                    if (text != 0) idDetailText = text;
-                }
-            } catch (Throwable t) {
-                Log.w(TAG, "SignalingSearchHook: resolveResId failed, using default: " + t);
-            }
-
             reflectionReady = true;
         } catch (Exception e) {
             Log.e(TAG, "SignalingSearchHook: initReflection failed: " + e);
@@ -133,6 +122,18 @@ public class SignalingSearchHook {
             }
         }
         return null;
+    }
+
+    private void ensureResIds(Context ctx) {
+        if (resIdsResolved) return;
+        try {
+            int text = ctx.getResources().getIdentifier(
+                    "detail", "id", "com.qtrun.QuickTest");
+            if (text != 0) idDetailText = text;
+            resIdsResolved = true;
+        } catch (Throwable t) {
+            Log.w(TAG, "SignalingSearchHook: ensureResIds failed: " + t);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -193,6 +194,8 @@ public class SignalingSearchHook {
                         View contentView = popup.getContentView();
                         if (!(contentView instanceof FrameLayout)) return result;
                         final FrameLayout frame = (FrameLayout) contentView;
+
+                        ensureResIds(frame.getContext());
 
                         // Find the ScrollView
                         final ScrollView scrollView = findScrollView(frame);

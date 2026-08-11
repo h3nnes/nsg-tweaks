@@ -75,6 +75,7 @@ public class SignalingShareHook {
 
     private int idDetailCopy = 0x7f0900dd;
     private int idDetailText = 0x7f0900dc;
+    private boolean resIdsResolved = false;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -142,29 +143,24 @@ public class SignalingShareHook {
             }
             u7fPopupField.setAccessible(true);
 
-            resolveResIds();
-
             reflectionReady = true;
         } catch (Exception e) {
             Log.e(TAG, "SignalingShareHook: initReflection failed: " + e);
         }
     }
 
-    private void resolveResIds() {
+    private void ensureResIds(Context ctx) {
+        if (resIdsResolved) return;
         try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app != null) {
-                int copy = app.getResources().getIdentifier(
-                        "detail_copy", "id", "com.qtrun.QuickTest");
-                int text = app.getResources().getIdentifier(
-                        "detail", "id", "com.qtrun.QuickTest");
-                if (copy != 0) idDetailCopy = copy;
-                if (text != 0) idDetailText = text;
-            }
+            int copy = ctx.getResources().getIdentifier(
+                    "detail_copy", "id", "com.qtrun.QuickTest");
+            int text = ctx.getResources().getIdentifier(
+                    "detail", "id", "com.qtrun.QuickTest");
+            if (copy != 0) idDetailCopy = copy;
+            if (text != 0) idDetailText = text;
+            resIdsResolved = true;
         } catch (Throwable t) {
-            Log.w(TAG, "SignalingShareHook: resolveResIds failed, using defaults: " + t);
+            Log.w(TAG, "SignalingShareHook: ensureResIds failed: " + t);
         }
     }
 
@@ -233,6 +229,8 @@ public class SignalingShareHook {
                         View contentView = popup.getContentView();
                         if (!(contentView instanceof FrameLayout)) return result;
                         FrameLayout frameLayout = (FrameLayout) contentView;
+
+                        ensureResIds(contentView.getContext());
 
                         // Extract message title from the tapped list row view.
                         // Use a String[] holder so the OnClickListener always reads the
