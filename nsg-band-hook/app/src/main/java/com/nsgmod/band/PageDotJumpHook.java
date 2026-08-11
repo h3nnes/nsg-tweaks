@@ -319,9 +319,7 @@ public class PageDotJumpHook {
                                 return originalListener.onLongClick(v);
                             }
                         };
-                        // Call the real method with our wrapped listener instead of proceeding
-                        setOnLongClickListenerMethod.invoke(view, wrappedListener);
-                        return null;
+                        return chain.proceed(new Object[]{wrappedListener});
                     }
                 });
             } catch (Exception e) {
