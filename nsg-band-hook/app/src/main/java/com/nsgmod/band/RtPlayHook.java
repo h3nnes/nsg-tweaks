@@ -175,9 +175,13 @@ wsJ      = workspaceClass.getField(wsSingletonName);
                     maAMMethod = u31Class.getDeclaredMethod("e", dateClass);
                     maAMMethod.setAccessible(true);
                 } catch (Throwable t2) {
-                    Class<?> v8aClass = Class.forName("v8.a", false, loader);
-                    maAMMethod = ClassMapping.getDeclaredMethod(v8aClass, "ma.a", "m", loader, dateClass);
-                    maAMMethod.setAccessible(true);
+                    try {
+                        Class<?> v8aClass = Class.forName("v8.a", false, loader);
+                        maAMMethod = ClassMapping.getDeclaredMethod(v8aClass, "ma.a", "m", loader, dateClass);
+                        maAMMethod.setAccessible(true);
+                    } catch (Throwable t3) {
+                        Log.w(TAG, "RtPlayHook: timestamp formatter not found, continuing without label sync: " + t3);
+                    }
                 }
             }
 

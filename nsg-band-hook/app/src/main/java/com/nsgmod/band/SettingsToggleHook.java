@@ -224,7 +224,7 @@ public class SettingsToggleHook {
         // fragment.Y  →  PreferenceManager (androidx.preference.f)
         // prefManager.<field of type PreferenceScreen>  →  PreferenceScreen
         Class<?> baseCls = ClassMapping.loadClass("androidx.preference.c", loader);
-        Field yField = baseCls.getField("Y");
+        Field yField = baseCls.getField(ClassMapping.runtimeFieldName("androidx.preference.c", "Y", loader));
         Object prefManager = yField.get(fragment);
         if (prefManager == null) {
             Log.w(TAG, "PreferenceManager (Y) is null — aborting");

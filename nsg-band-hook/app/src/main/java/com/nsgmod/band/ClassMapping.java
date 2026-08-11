@@ -306,6 +306,7 @@ public final class ClassMapping {
         qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|F", "C");
         qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|H", "E");
         qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|L", "I");
+        qtrunFieldMap.put("androidx.preference.c|Y", "X");
         QTRUN_FIELD_OVERRIDES = Collections.unmodifiableMap(qtrunFieldMap);
 
         Map<String, String> qtrunMethodMap = new HashMap<>();
