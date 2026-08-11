@@ -52,8 +52,7 @@ public class SignalingSearchHook {
     private static final String TAG = "NSGBandHook";
     private static final String SEARCH_BAR_TAG = "nsg_search_bar_added";
 
-    /** Resource ID of the message TextView inside the signaling detail popup. */
-    private static final int ID_DETAIL_TEXT = 0x7f0900dc;
+    private int idDetailText = 0x7f0900dc;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -105,6 +104,19 @@ public class SignalingSearchHook {
                 throw new NoSuchFieldException("No PopupWindow field found in u7.f");
             }
             u7fPopupField.setAccessible(true);
+
+            try {
+                Class<?> atCls = Class.forName("android.app.ActivityThread");
+                android.app.Application app =
+                        (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+                if (app != null) {
+                    int text = app.getResources().getIdentifier(
+                            "detail", "id", "com.qtrun.QuickTest");
+                    if (text != 0) idDetailText = text;
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "SignalingSearchHook: resolveResId failed, using default: " + t);
+            }
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -219,7 +231,7 @@ public class SignalingSearchHook {
                         final float density = ctx.getResources().getDisplayMetrics().density;
 
                         // Find the message TextView
-                        final TextView msgTextView = frame.findViewById(ID_DETAIL_TEXT);
+                        final TextView msgTextView = frame.findViewById(idDetailText);
                         if (msgTextView == null) {
                             Log.w(TAG, "SignalingSearchHook: message TextView not found");
                             return result;
