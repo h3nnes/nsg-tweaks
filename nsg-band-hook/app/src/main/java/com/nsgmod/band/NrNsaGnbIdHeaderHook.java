@@ -4,6 +4,9 @@ import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.util.Log;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -332,6 +335,7 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 44.0f);
         colField.setFloat(ecellIdValue, 55.0f);
         widthField.setFloat(ecellIdValue, 44.0f);
+        forceRelayout(fragment);
     }
 
     private void restoreGeometry(Object fragment) throws Throwable {
@@ -340,21 +344,56 @@ public class NrNsaGnbIdHeaderHook {
         Object tacValue = tacValueField.get(fragment);
         Object ecellIdLabel = ecellIdLabelField.get(fragment);
         Object ecellIdValue = ecellIdValueField.get(fragment);
+        boolean changed = false;
         if (tacLabel != null) {
+            float c = colField.getFloat(tacLabel), w = widthField.getFloat(tacLabel);
             colField.setFloat(tacLabel, origTacCol);
             widthField.setFloat(tacLabel, origTacWidth);
+            if (c != origTacCol || w != origTacWidth) changed = true;
         }
         if (tacValue != null) {
+            float c = colField.getFloat(tacValue), w = widthField.getFloat(tacValue);
             colField.setFloat(tacValue, origTacCol);
             widthField.setFloat(tacValue, origTacWidth);
+            if (c != origTacCol || w != origTacWidth) changed = true;
         }
         if (ecellIdLabel != null) {
+            float c = colField.getFloat(ecellIdLabel), w = widthField.getFloat(ecellIdLabel);
             colField.setFloat(ecellIdLabel, origEcellCol);
             widthField.setFloat(ecellIdLabel, origEcellWidth);
+            if (c != origEcellCol || w != origEcellWidth) changed = true;
         }
         if (ecellIdValue != null) {
+            float c = colField.getFloat(ecellIdValue), w = widthField.getFloat(ecellIdValue);
             colField.setFloat(ecellIdValue, origEcellCol);
             widthField.setFloat(ecellIdValue, origEcellWidth);
+            if (c != origEcellCol || w != origEcellWidth) changed = true;
+        }
+        if (changed) forceRelayout(fragment);
+    }
+
+    private void forceRelayout(Object fragment) {
+        try {
+            Method getView = fragment.getClass().getMethod("getView");
+            View rootView = (View) getView.invoke(fragment);
+            if (rootView instanceof ScrollView && ((ScrollView) rootView).getChildCount() > 0) {
+                ViewGroup layout = (ViewGroup) ((ScrollView) rootView).getChildAt(0);
+                layout.requestLayout();
+                layout.post(() -> {
+                    try {
+                        if (layout.getWidth() > 0 && layout.getHeight() > 0) {
+                            Method onLayout = ViewGroup.class.getDeclaredMethod(
+                                    "onLayout", boolean.class, int.class, int.class, int.class, int.class);
+                            onLayout.setAccessible(true);
+                            onLayout.invoke(layout, true,
+                                    layout.getLeft(), layout.getTop(),
+                                    layout.getRight(), layout.getBottom());
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                });
+            }
+        } catch (Throwable ignored) {
         }
     }
 
