@@ -81,6 +81,7 @@ public final class ClassMapping {
         // k8 adapter/playback family -> t6
         map.put("k8.c", "t6.c");
         map.put("k8.f", "t6.f");
+        map.put("k8.j", "t6.j");
 
         // t7 settings/menu family -> c6
         map.put("t7.g0", "c6.q0");
