@@ -4,8 +4,6 @@ import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.util.Log;
-import android.view.View;
-import android.view.ViewParent;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -35,15 +33,8 @@ public class NrNsaGnbIdHeaderHook {
     private boolean ready = false;
     private Class<?> cgiClass;
     private Field ecellIdValueField;
-    private Field tacValueField;
-    private Field ecellIdLabelField;
-    private Field tacLabelField;
-    private Field bandLabelField;
-    private Field bandValueField;
     private Field viewField;
     private Field gField;
-    private Field colField;
-    private Field widthField;
     private Field wsSingletonField;
     private Field wsRatField;
     private Field sdSingletonField;
@@ -61,13 +52,6 @@ public class NrNsaGnbIdHeaderHook {
     private int cachedArfcn = -1;
     private int cachedPci = -1;
     private long cachedGCellId = -1;
-    private boolean originalsSaved = false;
-    private float origBandCol;
-    private float origBandWidth;
-    private float origTacCol;
-    private float origTacWidth;
-    private float origEcellCol;
-    private float origEcellWidth;
     private boolean loggedRatMode = false;
     private boolean loggedCellDb = false;
     private boolean loggedProps = false;
@@ -95,11 +79,8 @@ public class NrNsaGnbIdHeaderHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     try {
+                        if (!SettingsToggleHook.gnbIdHeaderEnabled()) return result;
                         Object fragment = chain.getThisObject();
-                        if (!SettingsToggleHook.gnbIdHeaderEnabled()) {
-                            restoreGeometry(fragment);
-                            return result;
-                        }
                         List<Object> args = chain.getArgs();
                         Object dataSource = args.get(0);
                         short moduleIndex = (Short) args.get(2);
@@ -125,26 +106,6 @@ public class NrNsaGnbIdHeaderHook {
                     ClassMapping.runtimeFieldName(CGI_FRAGMENT, "c1", loader));
             ecellIdValueField.setAccessible(true);
 
-            tacValueField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "b1", loader));
-            tacValueField.setAccessible(true);
-
-            ecellIdLabelField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "Y0", loader));
-            ecellIdLabelField.setAccessible(true);
-
-            tacLabelField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "X0", loader));
-            tacLabelField.setAccessible(true);
-
-            bandLabelField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "Z0", loader));
-            bandLabelField.setAccessible(true);
-
-            bandValueField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "d1", loader));
-            bandValueField.setAccessible(true);
-
             Class<?> eh0Class = ClassMapping.loadClass("v6.g", loader);
             gField = eh0Class.getDeclaredField("g");
             gField.setAccessible(true);
@@ -152,10 +113,6 @@ public class NrNsaGnbIdHeaderHook {
             Class<?> yg0Class = ClassMapping.loadClass("v6.a", loader);
             viewField = yg0Class.getDeclaredField("a");
             viewField.setAccessible(true);
-            colField = yg0Class.getDeclaredField("d");
-            colField.setAccessible(true);
-            widthField = yg0Class.getDeclaredField("e");
-            widthField.setAccessible(true);
 
             Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
             wsSingletonField = wsClass.getField(
@@ -237,108 +194,10 @@ public class NrNsaGnbIdHeaderHook {
         return 24;
     }
 
-    private void adjustGeometry(Object fragment) throws Throwable {
-        Object ecellIdLabel = ecellIdLabelField.get(fragment);
-        Object ecellIdValue = ecellIdValueField.get(fragment);
-        Object tacLabel = tacLabelField.get(fragment);
-        Object tacValue = tacValueField.get(fragment);
-        Object bandLabel = bandLabelField.get(fragment);
-        Object bandValue = bandValueField.get(fragment);
-        if (ecellIdLabel == null || ecellIdValue == null || tacLabel == null || tacValue == null)
-            return;
-        if (!originalsSaved) {
-            Object bandElem = bandLabel != null ? bandLabel : bandValue;
-            if (bandElem != null) {
-                origBandCol = colField.getFloat(bandElem);
-                origBandWidth = widthField.getFloat(bandElem);
-            }
-            origTacCol = colField.getFloat(tacLabel);
-            origTacWidth = widthField.getFloat(tacLabel);
-            origEcellCol = colField.getFloat(ecellIdLabel);
-            origEcellWidth = widthField.getFloat(ecellIdLabel);
-            originalsSaved = true;
-        }
-        if (bandLabel != null) {
-            colField.setFloat(bandLabel, 21.0f);
-            widthField.setFloat(bandLabel, 12.0f);
-        }
-        if (bandValue != null) {
-            colField.setFloat(bandValue, 21.0f);
-            widthField.setFloat(bandValue, 12.0f);
-        }
-        colField.setFloat(tacLabel, 33.0f);
-        widthField.setFloat(tacLabel, 12.0f);
-        colField.setFloat(tacValue, 33.0f);
-        widthField.setFloat(tacValue, 12.0f);
-        colField.setFloat(ecellIdLabel, 45.0f);
-        widthField.setFloat(ecellIdLabel, 54.0f);
-        colField.setFloat(ecellIdValue, 45.0f);
-        widthField.setFloat(ecellIdValue, 54.0f);
-        forceLayout(fragment);
-    }
-
-    private void restoreGeometry(Object fragment) throws Throwable {
-        if (!originalsSaved) return;
-        Object ecellIdLabel = ecellIdLabelField.get(fragment);
-        Object ecellIdValue = ecellIdValueField.get(fragment);
-        Object tacLabel = tacLabelField.get(fragment);
-        Object tacValue = tacValueField.get(fragment);
-        Object bandLabel = bandLabelField.get(fragment);
-        Object bandValue = bandValueField.get(fragment);
-        if (bandLabel != null) {
-            colField.setFloat(bandLabel, origBandCol);
-            widthField.setFloat(bandLabel, origBandWidth);
-        }
-        if (bandValue != null) {
-            colField.setFloat(bandValue, origBandCol);
-            widthField.setFloat(bandValue, origBandWidth);
-        }
-        if (tacLabel != null) {
-            colField.setFloat(tacLabel, origTacCol);
-            widthField.setFloat(tacLabel, origTacWidth);
-        }
-        if (tacValue != null) {
-            colField.setFloat(tacValue, origTacCol);
-            widthField.setFloat(tacValue, origTacWidth);
-        }
-        if (ecellIdLabel != null) {
-            colField.setFloat(ecellIdLabel, origEcellCol);
-            widthField.setFloat(ecellIdLabel, origEcellWidth);
-        }
-        if (ecellIdValue != null) {
-            colField.setFloat(ecellIdValue, origEcellCol);
-            widthField.setFloat(ecellIdValue, origEcellWidth);
-        }
-        forceLayout(fragment);
-    }
-
-    private void forceLayout(Object fragment) {
-        try {
-            Object ecellIdValue = ecellIdValueField.get(fragment);
-            if (ecellIdValue == null) return;
-            Object viewObj = viewField.get(ecellIdValue);
-            if (!(viewObj instanceof View)) return;
-            ViewParent parent = ((View) viewObj).getParent();
-            if (!(parent instanceof View)) return;
-            View layoutView = (View) parent;
-            Method onLayout = layoutView.getClass().getMethod(
-                    "onLayout", boolean.class, int.class, int.class, int.class, int.class);
-            onLayout.setAccessible(true);
-            onLayout.invoke(layoutView, true,
-                    layoutView.getLeft(), layoutView.getTop(),
-                    layoutView.getRight(), layoutView.getBottom());
-        } catch (Throwable ignored) {
-        }
-    }
-
     @SuppressWarnings("unchecked")
     private void updateECellId(Object fragment, Object dataSource, short moduleIndex) throws Throwable {
         Long gCellId = resolveGCellId(dataSource, moduleIndex);
-        if (gCellId == null) {
-            restoreGeometry(fragment);
-            return;
-        }
-        adjustGeometry(fragment);
+        if (gCellId == null) return;
         injectGnbIdText(fragment, gCellId);
     }
 
