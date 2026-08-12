@@ -13,7 +13,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
+import java.util.WeakHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
@@ -59,7 +62,14 @@ public class NrNsaGnbIdHeaderHook {
     private int cachedArfcn = -1;
     private int cachedPci = -1;
     private long cachedGCellId = -1;
-    private boolean geometryAdjusted = false;
+    private boolean originalsSaved = false;
+    private float origBandCol;
+    private float origBandWidth;
+    private float origTacCol;
+    private float origTacWidth;
+    private float origEcellCol;
+    private float origEcellWidth;
+    private final Set<Object> adjustedFragments = Collections.newSetFromMap(new WeakHashMap<>());
     private boolean loggedRatMode = false;
     private boolean loggedCellDb = false;
     private boolean loggedProps = false;
@@ -88,13 +98,14 @@ public class NrNsaGnbIdHeaderHook {
                     Object result = chain.proceed();
                     try {
                         Object fragment = chain.getThisObject();
-                        if (SettingsToggleHook.gnbIdHeaderEnabled()) {
-                            adjustGeometry(fragment);
-                            List<Object> args = chain.getArgs();
-                            Object dataSource = args.get(0);
-                            short moduleIndex = (Short) args.get(2);
-                            updateECellId(fragment, dataSource, moduleIndex);
+                        if (!SettingsToggleHook.gnbIdHeaderEnabled()) {
+                            restoreGeometry(fragment);
+                            return result;
                         }
+                        List<Object> args = chain.getArgs();
+                        Object dataSource = args.get(0);
+                        short moduleIndex = (Short) args.get(2);
+                        updateECellId(fragment, dataSource, moduleIndex);
                     } catch (Throwable t) {
                         Log.e(TAG, "NrNsaGnbIdHeaderHook update error", t);
                     }
@@ -225,7 +236,7 @@ public class NrNsaGnbIdHeaderHook {
     }
 
     private void adjustGeometry(Object fragment) throws Throwable {
-        if (geometryAdjusted) return;
+        if (adjustedFragments.contains(fragment)) return;
         Object ecellIdLabel = ecellIdLabelField.get(fragment);
         Object ecellIdValue = ecellIdValueField.get(fragment);
         Object tacLabel = tacLabelField.get(fragment);
@@ -234,6 +245,18 @@ public class NrNsaGnbIdHeaderHook {
         Object bandValue = bandValueField.get(fragment);
         if (ecellIdLabel == null || ecellIdValue == null || tacLabel == null || tacValue == null)
             return;
+        if (!originalsSaved) {
+            Object bandElem = bandLabel != null ? bandLabel : bandValue;
+            if (bandElem != null) {
+                origBandCol = colField.getFloat(bandElem);
+                origBandWidth = widthField.getFloat(bandElem);
+            }
+            origTacCol = colField.getFloat(tacLabel);
+            origTacWidth = widthField.getFloat(tacLabel);
+            origEcellCol = colField.getFloat(ecellIdLabel);
+            origEcellWidth = widthField.getFloat(ecellIdLabel);
+            originalsSaved = true;
+        }
         if (bandLabel != null) {
             colField.setFloat(bandLabel, 21.0f);
             widthField.setFloat(bandLabel, 12.0f);
@@ -250,22 +273,69 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 54.0f);
         colField.setFloat(ecellIdValue, 45.0f);
         widthField.setFloat(ecellIdValue, 54.0f);
-        geometryAdjusted = true;
+        adjustedFragments.add(fragment);
+    }
+
+    private void restoreGeometry(Object fragment) throws Throwable {
+        if (!adjustedFragments.contains(fragment)) return;
+        if (!originalsSaved) return;
+        Object ecellIdLabel = ecellIdLabelField.get(fragment);
+        Object ecellIdValue = ecellIdValueField.get(fragment);
+        Object tacLabel = tacLabelField.get(fragment);
+        Object tacValue = tacValueField.get(fragment);
+        Object bandLabel = bandLabelField.get(fragment);
+        Object bandValue = bandValueField.get(fragment);
+        if (bandLabel != null) {
+            colField.setFloat(bandLabel, origBandCol);
+            widthField.setFloat(bandLabel, origBandWidth);
+        }
+        if (bandValue != null) {
+            colField.setFloat(bandValue, origBandCol);
+            widthField.setFloat(bandValue, origBandWidth);
+        }
+        if (tacLabel != null) {
+            colField.setFloat(tacLabel, origTacCol);
+            widthField.setFloat(tacLabel, origTacWidth);
+        }
+        if (tacValue != null) {
+            colField.setFloat(tacValue, origTacCol);
+            widthField.setFloat(tacValue, origTacWidth);
+        }
+        if (ecellIdLabel != null) {
+            colField.setFloat(ecellIdLabel, origEcellCol);
+            widthField.setFloat(ecellIdLabel, origEcellWidth);
+        }
+        if (ecellIdValue != null) {
+            colField.setFloat(ecellIdValue, origEcellCol);
+            widthField.setFloat(ecellIdValue, origEcellWidth);
+        }
+        adjustedFragments.remove(fragment);
     }
 
     @SuppressWarnings("unchecked")
     private void updateECellId(Object fragment, Object dataSource, short moduleIndex) throws Throwable {
+        Long gCellId = resolveGCellId(dataSource, moduleIndex);
+        if (gCellId == null) {
+            restoreGeometry(fragment);
+            return;
+        }
+        adjustGeometry(fragment);
+        injectGnbIdText(fragment, gCellId);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Long resolveGCellId(Object dataSource, short moduleIndex) throws Throwable {
         Object workspace = wsSingletonField.get(null);
-        if (workspace == null) return;
+        if (workspace == null) return null;
         Object rat = wsRatField.get(workspace);
-        if (rat == null) return;
+        if (rat == null) return null;
         String ratStr = rat.toString();
         if (!"NR-NSA".equals(ratStr)) {
             if (!loggedRatMode) {
                 Log.w(TAG, "NrNsaGnbIdHeaderHook: RAT=" + ratStr + " (not NR-NSA), skipping");
                 loggedRatMode = true;
             }
-            return;
+            return null;
         }
         loggedRatMode = false;
 
@@ -275,7 +345,7 @@ public class NrNsaGnbIdHeaderHook {
                 Log.w(TAG, "NrNsaGnbIdHeaderHook: cell DB singleton null");
                 loggedCellDb = true;
             }
-            return;
+            return null;
         }
         Object nrTable = sdEMethod.invoke(sdInstance, NR5G_TECH);
         if (nrTable == null) {
@@ -283,11 +353,11 @@ public class NrNsaGnbIdHeaderHook {
                 Log.w(TAG, "NrNsaGnbIdHeaderHook: NR5G table not loaded in cell DB");
                 loggedCellDb = true;
             }
-            return;
+            return null;
         }
         loggedCellDb = false;
 
-        if (dataSource == null) return;
+        if (dataSource == null) return null;
 
         Integer arfcn = null;
         Integer pci = null;
@@ -306,7 +376,7 @@ public class NrNsaGnbIdHeaderHook {
                 Log.w(TAG, "NrNsaGnbIdHeaderHook: NR ARFCN/PCI null (tried mi 0..3 + " + (moduleIndex & 0xFFFF) + ")");
                 loggedProps = true;
             }
-            return;
+            return null;
         }
         loggedProps = false;
 
@@ -321,9 +391,11 @@ public class NrNsaGnbIdHeaderHook {
                 cachedGCellId = ydGCellIdField.getLong(row);
             }
         }
-        if (cachedGCellId <= 0) return;
+        if (cachedGCellId <= 0) return null;
+        return cachedGCellId;
+    }
 
-        long nci = cachedGCellId;
+    private void injectGnbIdText(Object fragment, long nci) throws Throwable {
         int gnbLength = getGnbLength();
         int shift = 36 - gnbLength;
         long gnbId = nci >> shift;
