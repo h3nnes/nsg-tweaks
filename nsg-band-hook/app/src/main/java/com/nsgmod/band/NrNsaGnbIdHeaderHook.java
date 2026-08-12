@@ -376,24 +376,24 @@ public class NrNsaGnbIdHeaderHook {
         try {
             Method getView = fragment.getClass().getMethod("getView");
             View rootView = (View) getView.invoke(fragment);
-            if (rootView instanceof ScrollView && ((ScrollView) rootView).getChildCount() > 0) {
-                ViewGroup layout = (ViewGroup) ((ScrollView) rootView).getChildAt(0);
-                layout.requestLayout();
-                layout.post(() -> {
-                    try {
-                        if (layout.getWidth() > 0 && layout.getHeight() > 0) {
-                            Method onLayout = ViewGroup.class.getDeclaredMethod(
-                                    "onLayout", boolean.class, int.class, int.class, int.class, int.class);
-                            onLayout.setAccessible(true);
-                            onLayout.invoke(layout, true,
-                                    layout.getLeft(), layout.getTop(),
-                                    layout.getRight(), layout.getBottom());
-                        }
-                    } catch (Throwable ignored) {
-                    }
-                });
-            }
-        } catch (Throwable ignored) {
+            if (!(rootView instanceof ScrollView) || ((ScrollView) rootView).getChildCount() == 0) return;
+            ViewGroup layout = (ViewGroup) ((ScrollView) rootView).getChildAt(0);
+            layout.requestLayout();
+            layout.post(() -> {
+                try {
+                    if (layout.getWidth() <= 0 || layout.getHeight() <= 0) return;
+                    Method onLayout = layout.getClass().getDeclaredMethod(
+                            "onLayout", boolean.class, int.class, int.class, int.class, int.class);
+                    onLayout.setAccessible(true);
+                    onLayout.invoke(layout, true,
+                            layout.getLeft(), layout.getTop(),
+                            layout.getRight(), layout.getBottom());
+                } catch (Throwable t) {
+                    Log.e(TAG, "NrNsaGnbIdHeaderHook forceRelayout post error", t);
+                }
+            });
+        } catch (Throwable t) {
+            Log.e(TAG, "NrNsaGnbIdHeaderHook forceRelayout error", t);
         }
     }
 
