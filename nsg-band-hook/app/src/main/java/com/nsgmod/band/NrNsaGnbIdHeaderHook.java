@@ -33,8 +33,13 @@ public class NrNsaGnbIdHeaderHook {
     private boolean ready = false;
     private Class<?> cgiClass;
     private Field ecellIdValueField;
+    private Field ecellIdLabelField;
+    private Field tacValueField;
+    private Field tacLabelField;
     private Field viewField;
     private Field gField;
+    private Field colField;
+    private Field widthField;
     private Field wsSingletonField;
     private Field wsRatField;
     private Field sdSingletonField;
@@ -52,6 +57,11 @@ public class NrNsaGnbIdHeaderHook {
     private int cachedArfcn = -1;
     private int cachedPci = -1;
     private long cachedGCellId = -1;
+    private boolean originalsSaved = false;
+    private float origTacCol;
+    private float origTacWidth;
+    private float origEcellCol;
+    private float origEcellWidth;
     private boolean loggedRatMode = false;
     private boolean loggedCellDb = false;
     private boolean loggedProps = false;
@@ -79,8 +89,11 @@ public class NrNsaGnbIdHeaderHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     try {
-                        if (!SettingsToggleHook.gnbIdHeaderEnabled()) return result;
                         Object fragment = chain.getThisObject();
+                        if (!SettingsToggleHook.gnbIdHeaderEnabled()) {
+                            restoreGeometry(fragment);
+                            return result;
+                        }
                         List<Object> args = chain.getArgs();
                         Object dataSource = args.get(0);
                         short moduleIndex = (Short) args.get(2);
@@ -106,6 +119,18 @@ public class NrNsaGnbIdHeaderHook {
                     ClassMapping.runtimeFieldName(CGI_FRAGMENT, "c1", loader));
             ecellIdValueField.setAccessible(true);
 
+            ecellIdLabelField = cgiClass.getDeclaredField(
+                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "Y0", loader));
+            ecellIdLabelField.setAccessible(true);
+
+            tacValueField = cgiClass.getDeclaredField(
+                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "b1", loader));
+            tacValueField.setAccessible(true);
+
+            tacLabelField = cgiClass.getDeclaredField(
+                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "X0", loader));
+            tacLabelField.setAccessible(true);
+
             Class<?> eh0Class = ClassMapping.loadClass("v6.g", loader);
             gField = eh0Class.getDeclaredField("g");
             gField.setAccessible(true);
@@ -113,6 +138,10 @@ public class NrNsaGnbIdHeaderHook {
             Class<?> yg0Class = ClassMapping.loadClass("v6.a", loader);
             viewField = yg0Class.getDeclaredField("a");
             viewField.setAccessible(true);
+            colField = yg0Class.getDeclaredField("d");
+            colField.setAccessible(true);
+            widthField = yg0Class.getDeclaredField("e");
+            widthField.setAccessible(true);
 
             Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
             wsSingletonField = wsClass.getField(
@@ -196,27 +225,35 @@ public class NrNsaGnbIdHeaderHook {
 
     @SuppressWarnings("unchecked")
     private void updateECellId(Object fragment, Object dataSource, short moduleIndex) throws Throwable {
-        Long gCellId = resolveGCellId(dataSource, moduleIndex);
-        if (gCellId == null) return;
-        injectGnbIdText(fragment, gCellId);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Long resolveGCellId(Object dataSource, short moduleIndex) throws Throwable {
         Object workspace = wsSingletonField.get(null);
-        if (workspace == null) return null;
+        if (workspace == null) {
+            restoreGeometry(fragment);
+            return;
+        }
         Object rat = wsRatField.get(workspace);
-        if (rat == null) return null;
+        if (rat == null) {
+            restoreGeometry(fragment);
+            return;
+        }
         String ratStr = rat.toString();
         if (!"NR-NSA".equals(ratStr)) {
             if (!loggedRatMode) {
                 Log.w(TAG, "NrNsaGnbIdHeaderHook: RAT=" + ratStr + " (not NR-NSA), skipping");
                 loggedRatMode = true;
             }
-            return null;
+            restoreGeometry(fragment);
+            return;
         }
         loggedRatMode = false;
+        adjustGeometry(fragment);
 
+        Long gCellId = resolveGCellIdFromDb(dataSource, moduleIndex);
+        if (gCellId == null) return;
+        injectGnbIdText(fragment, gCellId);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Long resolveGCellIdFromDb(Object dataSource, short moduleIndex) throws Throwable {
         Object sdInstance = sdSingletonField.get(null);
         if (sdInstance == null) {
             if (!loggedCellDb) {
@@ -271,6 +308,54 @@ public class NrNsaGnbIdHeaderHook {
         }
         if (cachedGCellId <= 0) return null;
         return cachedGCellId;
+    }
+
+    private void adjustGeometry(Object fragment) throws Throwable {
+        Object tacLabel = tacLabelField.get(fragment);
+        Object tacValue = tacValueField.get(fragment);
+        Object ecellIdLabel = ecellIdLabelField.get(fragment);
+        Object ecellIdValue = ecellIdValueField.get(fragment);
+        if (tacLabel == null || tacValue == null || ecellIdLabel == null || ecellIdValue == null)
+            return;
+        if (!originalsSaved) {
+            origTacCol = colField.getFloat(tacLabel);
+            origTacWidth = widthField.getFloat(tacLabel);
+            origEcellCol = colField.getFloat(ecellIdLabel);
+            origEcellWidth = widthField.getFloat(ecellIdLabel);
+            originalsSaved = true;
+        }
+        colField.setFloat(tacLabel, 36.0f);
+        widthField.setFloat(tacLabel, 19.0f);
+        colField.setFloat(tacValue, 36.0f);
+        widthField.setFloat(tacValue, 19.0f);
+        colField.setFloat(ecellIdLabel, 55.0f);
+        widthField.setFloat(ecellIdLabel, 44.0f);
+        colField.setFloat(ecellIdValue, 55.0f);
+        widthField.setFloat(ecellIdValue, 44.0f);
+    }
+
+    private void restoreGeometry(Object fragment) throws Throwable {
+        if (!originalsSaved) return;
+        Object tacLabel = tacLabelField.get(fragment);
+        Object tacValue = tacValueField.get(fragment);
+        Object ecellIdLabel = ecellIdLabelField.get(fragment);
+        Object ecellIdValue = ecellIdValueField.get(fragment);
+        if (tacLabel != null) {
+            colField.setFloat(tacLabel, origTacCol);
+            widthField.setFloat(tacLabel, origTacWidth);
+        }
+        if (tacValue != null) {
+            colField.setFloat(tacValue, origTacCol);
+            widthField.setFloat(tacValue, origTacWidth);
+        }
+        if (ecellIdLabel != null) {
+            colField.setFloat(ecellIdLabel, origEcellCol);
+            widthField.setFloat(ecellIdLabel, origEcellWidth);
+        }
+        if (ecellIdValue != null) {
+            colField.setFloat(ecellIdValue, origEcellCol);
+            widthField.setFloat(ecellIdValue, origEcellWidth);
+        }
     }
 
     private void injectGnbIdText(Object fragment, long nci) throws Throwable {
