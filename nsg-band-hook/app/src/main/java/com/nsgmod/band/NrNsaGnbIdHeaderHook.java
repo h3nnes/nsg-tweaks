@@ -5,7 +5,6 @@ import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.util.Log;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -56,6 +55,9 @@ public class NrNsaGnbIdHeaderHook {
     private Field ydGCellIdField;
     private Field settingsSingletonField;
     private Field gnbLengthField;
+    private Method onLayoutMethod;
+    private View cgiLayoutView;
+    private boolean forceNextLayout;
 
     private int cachedArfcn = -1;
     private int cachedPci = -1;
@@ -107,6 +109,22 @@ public class NrNsaGnbIdHeaderHook {
                     return result;
                 }
             });
+
+            if (onLayoutMethod != null) {
+                xposed.hook(onLayoutMethod).intercept(new Hooker() {
+                    @Override
+                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                        if (chain.getThisObject() == cgiLayoutView && forceNextLayout) {
+                            forceNextLayout = false;
+                            List<Object> args = chain.getArgs();
+                            return chain.proceed(new Object[]{
+                                    Boolean.TRUE, args.get(1), args.get(2), args.get(3), args.get(4)
+                            });
+                        }
+                        return chain.proceed();
+                    }
+                });
+            }
 
             Log.i(TAG, "NrNsaGnbIdHeaderHook installed");
         } catch (Throwable t) {
@@ -204,6 +222,17 @@ public class NrNsaGnbIdHeaderHook {
                     gnbLengthField.setAccessible(true);
                 }
             } catch (Throwable ignored) {
+            }
+
+            try {
+                Class<?> layoutClass = ClassMapping.loadClass("v6.d", loader);
+                if (layoutClass != null) {
+                    onLayoutMethod = layoutClass.getDeclaredMethod("onLayout",
+                            boolean.class, int.class, int.class, int.class, int.class);
+                    onLayoutMethod.setAccessible(true);
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "NrNsaGnbIdHeaderHook: onLayout method not found: " + t);
             }
 
             ready = true;
@@ -335,7 +364,11 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 44.0f);
         colField.setFloat(ecellIdValue, 55.0f);
         widthField.setFloat(ecellIdValue, 44.0f);
-        forceRelayout(fragment);
+        cgiLayoutView = getLayoutView(fragment);
+        forceNextLayout = true;
+        if (cgiLayoutView != null) {
+            cgiLayoutView.requestLayout();
+        }
     }
 
     private void restoreGeometry(Object fragment) throws Throwable {
@@ -369,32 +402,26 @@ public class NrNsaGnbIdHeaderHook {
             widthField.setFloat(ecellIdValue, origEcellWidth);
             if (c != origEcellCol || w != origEcellWidth) changed = true;
         }
-        if (changed) forceRelayout(fragment);
+        if (changed) {
+            cgiLayoutView = getLayoutView(fragment);
+            forceNextLayout = true;
+            if (cgiLayoutView != null) {
+                cgiLayoutView.requestLayout();
+            }
+        }
     }
 
-    private void forceRelayout(Object fragment) {
+    private View getLayoutView(Object fragment) {
         try {
             Method getView = fragment.getClass().getMethod("getView");
             View rootView = (View) getView.invoke(fragment);
-            if (!(rootView instanceof ScrollView) || ((ScrollView) rootView).getChildCount() == 0) return;
-            ViewGroup layout = (ViewGroup) ((ScrollView) rootView).getChildAt(0);
-            layout.requestLayout();
-            layout.post(() -> {
-                try {
-                    if (layout.getWidth() <= 0 || layout.getHeight() <= 0) return;
-                    Method onLayout = layout.getClass().getDeclaredMethod(
-                            "onLayout", boolean.class, int.class, int.class, int.class, int.class);
-                    onLayout.setAccessible(true);
-                    onLayout.invoke(layout, true,
-                            layout.getLeft(), layout.getTop(),
-                            layout.getRight(), layout.getBottom());
-                } catch (Throwable t) {
-                    Log.e(TAG, "NrNsaGnbIdHeaderHook forceRelayout post error", t);
-                }
-            });
+            if (rootView instanceof ScrollView && ((ScrollView) rootView).getChildCount() > 0) {
+                return (View) ((ScrollView) rootView).getChildAt(0);
+            }
         } catch (Throwable t) {
-            Log.e(TAG, "NrNsaGnbIdHeaderHook forceRelayout error", t);
+            Log.e(TAG, "NrNsaGnbIdHeaderHook getLayoutView error", t);
         }
+        return null;
     }
 
     private void injectGnbIdText(Object fragment, long nci) throws Throwable {
