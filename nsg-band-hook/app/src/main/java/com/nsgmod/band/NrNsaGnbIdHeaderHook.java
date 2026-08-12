@@ -56,8 +56,8 @@ public class NrNsaGnbIdHeaderHook {
     private Method iterEndMethod;
     private Method iterValueMethod;
     private Field ydGCellIdField;
-    private Field xaLField;
-    private Field xaKField;
+    private Field settingsSingletonField;
+    private Field gnbLengthField;
 
     private int cachedArfcn = -1;
     private int cachedPci = -1;
@@ -207,11 +207,15 @@ public class NrNsaGnbIdHeaderHook {
             ydGCellIdField.setAccessible(true);
 
             try {
-                Class<?> xaClass = Class.forName("xa", false, loader);
-                xaLField = xaClass.getDeclaredField("l");
-                xaLField.setAccessible(true);
-                xaKField = xaClass.getDeclaredField("k");
-                xaKField.setAccessible(true);
+                Class<?> settingsClass = ClassMapping.loadClass("d7.a", loader);
+                if (settingsClass != null) {
+                    settingsSingletonField = settingsClass.getDeclaredField(
+                            ClassMapping.runtimeFieldName("d7.a", "l", loader));
+                    settingsSingletonField.setAccessible(true);
+                    gnbLengthField = settingsClass.getDeclaredField(
+                            ClassMapping.runtimeFieldName("d7.a", "k", loader));
+                    gnbLengthField.setAccessible(true);
+                }
             } catch (Throwable ignored) {
             }
 
@@ -223,10 +227,10 @@ public class NrNsaGnbIdHeaderHook {
 
     private int getGnbLength() {
         try {
-            if (xaLField != null && xaKField != null) {
-                Object xaInstance = xaLField.get(null);
-                if (xaInstance != null) {
-                    int k = xaKField.getInt(xaInstance);
+            if (settingsSingletonField != null && gnbLengthField != null) {
+                Object settingsInstance = settingsSingletonField.get(null);
+                if (settingsInstance != null) {
+                    int k = gnbLengthField.getInt(settingsInstance);
                     if (k >= 22 && k <= 32) return k;
                 }
             }

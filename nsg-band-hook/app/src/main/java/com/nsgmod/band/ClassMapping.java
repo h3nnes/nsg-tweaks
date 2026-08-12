@@ -121,6 +121,7 @@ public final class ClassMapping {
 
         map.put("h7.b", "q5.b");
         map.put("h7.e", "q5.e");
+        map.put("d7.a", "m5.a");
 
         GPLAY_OVERRIDES = Collections.unmodifiableMap(map);
 
@@ -249,6 +250,7 @@ public final class ClassMapping {
         qtrunClassMap.put("g8.b", "na0");
         qtrunClassMap.put("g8.h", "ua0");
         qtrunClassMap.put("g8.i", "va0");
+        qtrunClassMap.put("d7.a", "xa");
         qtrunClassMap.put("d7.i", "v00");
         qtrunClassMap.put("d7.i$c", "v00");
         qtrunClassMap.put("d7.i$k", "v00");
