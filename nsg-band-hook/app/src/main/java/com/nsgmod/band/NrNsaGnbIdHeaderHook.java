@@ -4,6 +4,8 @@ import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.util.Log;
+import android.view.View;
+import android.view.ViewParent;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -272,6 +274,7 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 54.0f);
         colField.setFloat(ecellIdValue, 45.0f);
         widthField.setFloat(ecellIdValue, 54.0f);
+        forceLayout(fragment);
     }
 
     private void restoreGeometry(Object fragment) throws Throwable {
@@ -305,6 +308,26 @@ public class NrNsaGnbIdHeaderHook {
         if (ecellIdValue != null) {
             colField.setFloat(ecellIdValue, origEcellCol);
             widthField.setFloat(ecellIdValue, origEcellWidth);
+        }
+        forceLayout(fragment);
+    }
+
+    private void forceLayout(Object fragment) {
+        try {
+            Object ecellIdValue = ecellIdValueField.get(fragment);
+            if (ecellIdValue == null) return;
+            Object viewObj = viewField.get(ecellIdValue);
+            if (!(viewObj instanceof View)) return;
+            ViewParent parent = ((View) viewObj).getParent();
+            if (!(parent instanceof View)) return;
+            View layoutView = (View) parent;
+            Method onLayout = layoutView.getClass().getMethod(
+                    "onLayout", boolean.class, int.class, int.class, int.class, int.class);
+            onLayout.setAccessible(true);
+            onLayout.invoke(layoutView, true,
+                    layoutView.getLeft(), layoutView.getTop(),
+                    layoutView.getRight(), layoutView.getBottom());
+        } catch (Throwable ignored) {
         }
     }
 
