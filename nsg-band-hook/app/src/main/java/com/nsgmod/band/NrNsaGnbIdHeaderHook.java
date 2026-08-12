@@ -13,10 +13,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Set;
-import java.util.WeakHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
@@ -69,7 +66,6 @@ public class NrNsaGnbIdHeaderHook {
     private float origTacWidth;
     private float origEcellCol;
     private float origEcellWidth;
-    private final Set<Object> adjustedFragments = Collections.newSetFromMap(new WeakHashMap<>());
     private boolean loggedRatMode = false;
     private boolean loggedCellDb = false;
     private boolean loggedProps = false;
@@ -240,7 +236,6 @@ public class NrNsaGnbIdHeaderHook {
     }
 
     private void adjustGeometry(Object fragment) throws Throwable {
-        if (adjustedFragments.contains(fragment)) return;
         Object ecellIdLabel = ecellIdLabelField.get(fragment);
         Object ecellIdValue = ecellIdValueField.get(fragment);
         Object tacLabel = tacLabelField.get(fragment);
@@ -277,11 +272,9 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 54.0f);
         colField.setFloat(ecellIdValue, 45.0f);
         widthField.setFloat(ecellIdValue, 54.0f);
-        adjustedFragments.add(fragment);
     }
 
     private void restoreGeometry(Object fragment) throws Throwable {
-        if (!adjustedFragments.contains(fragment)) return;
         if (!originalsSaved) return;
         Object ecellIdLabel = ecellIdLabelField.get(fragment);
         Object ecellIdValue = ecellIdValueField.get(fragment);
@@ -313,7 +306,6 @@ public class NrNsaGnbIdHeaderHook {
             colField.setFloat(ecellIdValue, origEcellCol);
             widthField.setFloat(ecellIdValue, origEcellWidth);
         }
-        adjustedFragments.remove(fragment);
     }
 
     @SuppressWarnings("unchecked")
