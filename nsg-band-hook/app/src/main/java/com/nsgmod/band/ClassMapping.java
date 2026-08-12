@@ -119,6 +119,9 @@ public final class ClassMapping {
         // AdvancedAdapter moved from x6.b to g5.b on gplay.
         map.put("x6.b", "g5.b");
 
+        map.put("h7.b", "q5.b");
+        map.put("h7.e", "q5.e");
+
         GPLAY_OVERRIDES = Collections.unmodifiableMap(map);
 
         Map<String, String> methodMap = new HashMap<>();
@@ -251,6 +254,8 @@ public final class ClassMapping {
         qtrunClassMap.put("d7.i$k", "v00");
         qtrunClassMap.put("d8.i", "mb0");
         qtrunClassMap.put("f7.b", "sd");
+        qtrunClassMap.put("h7.b", "yd");
+        qtrunClassMap.put("h7.e", "la0");
         qtrunClassMap.put("u7.f", "y80");
         qtrunClassMap.put("u7.a", "sp");
         qtrunClassMap.put("t7.e", "s2");
@@ -287,10 +292,12 @@ public final class ClassMapping {
 
         Map<String, String> qtrunFieldMap = new HashMap<>();
         qtrunFieldMap.put("k2.a|d", "b");
+        qtrunFieldMap.put("k2.a|c", "a");
         qtrunFieldMap.put("v6.b|Y", "X");
         qtrunFieldMap.put("v6.b|Z", "Y");
         qtrunFieldMap.put("v6.f|j", "i");
         qtrunFieldMap.put("v6.f|k", "j");
+        qtrunFieldMap.put("v6.f|i", "h");
         qtrunFieldMap.put("e8.b|Z", "Y");
         qtrunFieldMap.put("g8.i|Z", "Y");
         qtrunFieldMap.put("h8.b|a0", "Z");
@@ -308,6 +315,13 @@ public final class ClassMapping {
         qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|H", "E");
         qtrunFieldMap.put("com.qtrun.nsg.AdvancedActivity|L", "I");
         qtrunFieldMap.put("androidx.preference.c|Y", "X");
+        qtrunFieldMap.put("androidx.preference.Preference|C", "B");
+        qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|c1", "b1");
+        qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|b1", "a1");
+        qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|d1", "c1");
+        qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|X0", "W0");
+        qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|Y0", "X0");
+        qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|Z0", "Y0");
         QTRUN_FIELD_OVERRIDES = Collections.unmodifiableMap(qtrunFieldMap);
 
         Map<String, String> qtrunMethodMap = new HashMap<>();

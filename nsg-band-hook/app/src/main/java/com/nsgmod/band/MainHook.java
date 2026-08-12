@@ -61,5 +61,6 @@ public class MainHook extends XposedModule {
         new RefreshIntervalHook(this, param.getClassLoader()).install();
         new PageDotJumpHook(this, param.getClassLoader()).install();
         new CellRowHeightHook(this, param.getClassLoader()).install();
+        new NrNsaGnbIdHeaderHook(this, param.getClassLoader()).install();
     }
 }

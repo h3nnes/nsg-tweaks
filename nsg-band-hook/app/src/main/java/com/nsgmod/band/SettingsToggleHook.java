@@ -34,6 +34,7 @@ public class SettingsToggleHook {
     static final String  PREF_KEY_CELL_ROW_HEIGHT = "nsgmod.cell_row_height_enabled";
     static final String  PREF_KEY_PATHLOSS_COLUMN = "nsgmod.pathloss_column_enabled";
     static final String  PREF_KEY_NR_PDSCH_SINR  = "nsgmod.nr_pdsch_snr_enabled";
+    static final String  PREF_KEY_GNB_ID_HEADER  = "nsgmod.gnb_id_header_enabled";
 
     /** Returns true when the cell-table modifications toggle is enabled (default: true). */
     public static boolean cellModsEnabled() {
@@ -176,6 +177,22 @@ public class SettingsToggleHook {
         } catch (Throwable t) {
             android.util.Log.w(TAG, "nrPdschSnrEnabled check failed: " + t);
             return false; // fail closed
+        }
+    }
+
+    /** Returns true when the NR-NSA gNB-ID header toggle is enabled (default: true). */
+    public static boolean gnbIdHeaderEnabled() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            android.app.Application app =
+                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+            if (app == null) return true;
+            SharedPreferences prefs = app.getSharedPreferences(
+                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
+            return prefs.getBoolean(PREF_KEY_GNB_ID_HEADER, true); // default ON
+        } catch (Throwable t) {
+            android.util.Log.w(TAG, "gnbIdHeaderEnabled check failed: " + t);
+            return true; // fail open
         }
     }
 
@@ -325,7 +342,8 @@ public class SettingsToggleHook {
         // iconSpaceReserved field (named "C" in v4.8.6)
         Field iconSpaceField = null;
         try {
-            iconSpaceField = prefBaseCls.getDeclaredField("C");
+            String iconSpaceName = ClassMapping.runtimeFieldName("androidx.preference.Preference", "C", loader);
+            iconSpaceField = prefBaseCls.getDeclaredField(iconSpaceName);
             iconSpaceField.setAccessible(true);
         } catch (Throwable ignored) {}
 
@@ -461,6 +479,14 @@ public class SettingsToggleHook {
                     PREF_KEY_NR_PDSCH_SINR, "NSGMod: Show NR PDSCH SINR",
                     "Show PDSCH SINR row in NR-SA CA Matrix DL (Qualcomm may not provide data)",
                     false, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_GNB_ID_HEADER) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_GNB_ID_HEADER, "NSGMod: NR-NSA gNB-ID in header",
+                    "Show gNB-ID / sector next to ECellID in NR-NSA mode (requires cell DB)",
+                    true, prefManager, prefScreen, children);
         }
 
         // --- 7. Trigger adapter refresh ---

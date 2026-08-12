@@ -387,8 +387,8 @@ if (match) {
         originalGeometry.clear();
         currentlyStretched = false;
 
-        Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
-if (k2a == null) {
+        Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
+        if (k2a == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: fragment.Y is null");
             return;
         }
@@ -454,7 +454,7 @@ return;
 
     @SuppressWarnings("unchecked")
     private boolean wrapAllRows(Object fragment) {
-Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
+Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
         if (k2a == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, fragment.Y is null");
             return false;
@@ -567,7 +567,7 @@ return (TextView) fontTextViewCtor.newInstance(ctx, (AttributeSet) null);
 
     @SuppressWarnings("unchecked")
     private void unwrapAllRows(Object fragment) {
-        Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
+        Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
         if (k2a == null) return;
         View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
         if (gridView == null) return;
@@ -739,7 +739,7 @@ setGeometry(binding.lteCell, newRow + 0.3f, 1.4f);
 
     private void requestGridLayout(Object fragment) {
         try {
-            Object k2a = getFieldValue(fragment, TARGET_FRAGMENT, "Y");
+            Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
             if (k2a == null) return;
             View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
             if (gridView != null) {
@@ -819,7 +819,7 @@ if (nrClass == v6eClass) {
             }
 
             if (nrClass == v6gClass) {
-                Object helper = nrCell.getClass().getDeclaredConstructor().newInstance();
+                Object helper = unsafeAllocateInstance.invoke(unsafe, nrClass);
 
                 List<Object> pcellFormatters = (List<Object>) v6gFormattersField.get(nrCell);
                 KeyIndex[] scellKeys = getScellKeyIndices(binding.originalRow, pcellFormatters.size());
@@ -846,7 +846,7 @@ if (nrClass == v6eClass) {
                 Object scellFormatter = cloneFormatter(
                         pcellFormatter, scellKeys[0].key, scellKeys[0].index);
 
-                Object helper = nrCell.getClass().getDeclaredConstructor().newInstance();
+                Object helper = unsafeAllocateInstance.invoke(unsafe, nrClass);
                 v6fValueField.set(helper, null);
                 v6fFormatterField.set(helper, scellFormatter);
                 v6fManualField.set(helper, v6fManualField.get(nrCell));
@@ -1218,7 +1218,8 @@ return pci >= 0;
         if (className == null) return null;
         try {
             Class<?> clazz = ClassMapping.loadClass(className, loader);
-            Field f = clazz.getField(fieldName);
+            String runtimeName = ClassMapping.runtimeFieldName(className, fieldName, loader);
+            Field f = clazz.getField(runtimeName);
             return f.get(obj);
         } catch (Exception e) {
             return null;

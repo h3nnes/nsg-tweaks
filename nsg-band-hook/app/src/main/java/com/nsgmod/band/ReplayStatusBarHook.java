@@ -128,6 +128,7 @@ public class ReplayStatusBarHook {
     private Method pickerCMethod;       // d.d.c(Object) [qtrun] / d.d.a(Object) [gplay]
     private Method appDMethod;          // com.qtrun.sys.Application.d() — subscription check
     private Method drawerDMethod;       // DrawerLayout.d(boolean) — closeDrawers()
+    private boolean prongEReady = false;
 
     // Prong F: t7.e.b(Object) — runtime field names for the discriminator and Activity
     private Field teDiscriminator;      // t7.e.a (int) [qtrun] / c6.f.b (int) [gplay]
@@ -162,36 +163,55 @@ String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace"
             String wsDataSourceName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
             wsSingleton  = wsClass.getField(wsSingletonName);
             wsDataSource = wsClass.getField(wsDataSourceName);
-// Prong E reflection
+            loadCompleteCase = ClassMapping.runtimeIntConstant("a4.h|LOAD_COMPLETE_CASE", 5, loader);
+            reflectionReady = true;
+            Log.i(REPLAY_TAG, "initReflection: core reflection ready");
+        } catch (Exception e) {
+            Log.e(REPLAY_TAG, "initReflection failed: " + e);
+            return;
+        }
+        initProngEReflection();
+        initProngFReflection();
+    }
+
+    private void initProngEReflection() {
+        try {
             Class<?> advActivityClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
             String advKFieldName = ClassMapping.runtimeFieldName("com.qtrun.nsg.AdvancedActivity", "K", loader);
             advActivityKField = advActivityClass.getDeclaredField(advKFieldName);
             advActivityKField.setAccessible(true);
-Class<?> ddClass = ClassMapping.loadClass("d.d", loader);
-            pickerCMethod = ClassMapping.getDeclaredMethod(ddClass, "d.d", "c", loader, Object.class);
-            pickerCMethod.setAccessible(true);
-Class<?> appClass = ClassMapping.loadClass("com.qtrun.sys.Application", loader);
+            Class<?> ddClass = ClassMapping.loadClass("d.d", loader);
+            try {
+                pickerCMethod = ClassMapping.getDeclaredMethod(ddClass, "d.d", "c", loader, Object.class);
+                pickerCMethod.setAccessible(true);
+            } catch (NoSuchMethodException nsme) {
+                Log.w(REPLAY_TAG, "Prong E: d.d.c(Object) not found (signature changed?), Prong E disabled");
+                return;
+            }
+            Class<?> appClass = ClassMapping.loadClass("com.qtrun.sys.Application", loader);
             appDMethod = ClassMapping.getDeclaredMethod(appClass, "com.qtrun.sys.Application", "d", loader);
-            // d() is public static synchronized — accessible without setAccessible
-Class<?> drawerClass = ClassMapping.loadClass("androidx.drawerlayout.widget.DrawerLayout", loader);
+            Class<?> drawerClass = ClassMapping.loadClass("androidx.drawerlayout.widget.DrawerLayout", loader);
             drawerDMethod = ClassMapping.getMethod(drawerClass, "androidx.drawerlayout.widget.DrawerLayout",
                     "d", loader, boolean.class);
-// Prong F reflection — t7.e discriminator / activity fields
+            prongEReady = true;
+        } catch (Exception e) {
+            Log.w(REPLAY_TAG, "Prong E reflection failed (disabled): " + e);
+        }
+    }
+
+    private void initProngFReflection() {
+        try {
             Class<?> teClass = ClassMapping.loadClass("t7.e", loader);
             if (teClass == null) {
-                Log.i(REPLAY_TAG, "initReflection: t7.e not available, skipping Prong F");
+                Log.i(REPLAY_TAG, "Prong F: t7.e not available, skipping");
                 return;
             }
             String teDiscName = ClassMapping.runtimeFieldName("t7.e", "a", loader);
             String teActName  = ClassMapping.runtimeFieldName("t7.e", "b", loader);
             teDiscriminator = teClass.getDeclaredField(teDiscName); teDiscriminator.setAccessible(true);
             teActivity      = teClass.getDeclaredField(teActName);  teActivity.setAccessible(true);
-// a4.h / c6.h switch case for successful log load (qtrun=5, gplay=0).
-            loadCompleteCase = ClassMapping.runtimeIntConstant("a4.h|LOAD_COMPLETE_CASE", 5, loader);
-reflectionReady = true;
-            Log.i(REPLAY_TAG, "initReflection: reflection ready");
         } catch (Exception e) {
-            Log.e(REPLAY_TAG, "initReflection failed: " + e);
+            Log.w(REPLAY_TAG, "Prong F reflection failed (disabled): " + e);
         }
     }
 
@@ -400,6 +420,10 @@ showExitSpinner(activity);
     //  NavigationView.OnNavigationItemSelectedListener)
     // -----------------------------------------------------------------------
     private void installProngE() {
+        if (!prongEReady) {
+            Log.i(REPLAY_TAG, "installProngE: skipped — Prong E reflection not ready");
+            return;
+        }
         try {
             Class<?> tqClass      = ClassMapping.loadClass("t7.p", loader);
             Class<?> menuItemClass = ClassMapping.loadClass("android.view.MenuItem", loader);

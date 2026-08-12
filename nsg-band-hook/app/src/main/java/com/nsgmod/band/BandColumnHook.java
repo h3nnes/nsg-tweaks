@@ -76,6 +76,8 @@ public class BandColumnHook {
     private Method  f7bDMethod;
     /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
     private Field  f5509cField;
+    private Field  adapterTypeField;
+    private static final int ADAPTER_TYPE_NR_NSA = 6;
 
     public BandColumnHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -115,6 +117,12 @@ public class BandColumnHook {
             hMethod = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
             String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
             f5509cField = k8cClass.getField(sampleKeyFieldName); // data sample key (f5509c)
+
+            try {
+                adapterTypeField = bbClass.getDeclaredField("f");
+                adapterTypeField.setAccessible(true);
+            } catch (NoSuchFieldException ignored) {
+            }
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -255,6 +263,12 @@ public class BandColumnHook {
                     // Let NSG handle convertView recycling normally.
                     Object result = chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
+                    if (adapterTypeField != null) {
+                        try {
+                            if (adapterTypeField.getInt(chain.getThisObject()) != ADAPTER_TYPE_NR_NSA)
+                                return result;
+                        } catch (Exception ignored) {}
+                    }
                     View rowView = (View) result;
                     if (rowView == null) return result;
 

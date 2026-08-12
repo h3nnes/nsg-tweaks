@@ -45,6 +45,9 @@ public class NrNsaExtCellsHook {
     private Class<?> lteAdapterClass;   // a8.f$a — LTE cell table adapter (LTE + NR-NSA mode)
     private Field    eField;            // a8.b$b.e  — a8.b$a[] bucket array
     private Field    dField;            // k8.c.d    — per-bucket cell count
+    private Field    adapterTypeField;  // nc.f (v4.8.9 synthetic) — 4=LTE, 6=NR-NSA
+    private static final int ADAPTER_TYPE_LTE = 4;
+    private static final int ADAPTER_TYPE_NR_NSA = 6;
 
     public NrNsaExtCellsHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -67,6 +70,12 @@ public class NrNsaExtCellsHook {
             eField = bbClass.getField(eFieldName); // public final a8.b$a[] f127e
             String dFieldName = ClassMapping.runtimeFieldName("k8.c", "d", loader);
             dField = kcClass.getField(dFieldName); // public int f5510d
+
+            try {
+                adapterTypeField = bbClass.getDeclaredField("f");
+                adapterTypeField.setAccessible(true);
+            } catch (NoSuchFieldException ignored) {
+            }
 
             ready = true;
         } catch (Exception e) {
@@ -92,8 +101,20 @@ public class NrNsaExtCellsHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object thisObj = chain.getThisObject();
 
-                    boolean isNrNsa = nrNsaAdapterClass.isInstance(thisObj);
-                    boolean isLte   = !isNrNsa && lteAdapterClass.isInstance(thisObj);
+                    boolean isNrNsa;
+                    boolean isLte;
+                    if (adapterTypeField != null) {
+                        try {
+                            int type = adapterTypeField.getInt(thisObj);
+                            isNrNsa = (type == ADAPTER_TYPE_NR_NSA);
+                            isLte   = (type == ADAPTER_TYPE_LTE);
+                        } catch (Exception e) {
+                            return chain.proceed();
+                        }
+                    } else {
+                        isNrNsa = nrNsaAdapterClass.isInstance(thisObj);
+                        isLte   = !isNrNsa && lteAdapterClass.isInstance(thisObj);
+                    }
 
                     if (!isNrNsa && !isLte) return chain.proceed();
                     if (isNrNsa && !SettingsToggleHook.nrNsaExtCellsEnabled()) return chain.proceed();

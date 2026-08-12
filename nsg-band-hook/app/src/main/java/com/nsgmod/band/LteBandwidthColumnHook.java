@@ -91,6 +91,8 @@ public class LteBandwidthColumnHook {
     private Field  eField;       // a8.b$b.e — Object[] sources array
     private Method hMethod;      // a8.b$b.h(int) — returns Pair<source, intraRow>
     private Field  f5509cField;  // k8.c.c — adapter's current data sample key
+    private Field  adapterTypeField;
+    private static final int ADAPTER_TYPE_LTE = 4;
 
     // ------------------------------------------------------------------
     // SINR color-coding reflection
@@ -157,6 +159,12 @@ public class LteBandwidthColumnHook {
             hMethod     = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
             String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
             f5509cField = k8cClass.getField(sampleKeyFieldName);
+
+            try {
+                adapterTypeField = bbClass.getDeclaredField("f");
+                adapterTypeField.setAccessible(true);
+            } catch (NoSuchFieldException ignored) {
+            }
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -399,6 +407,12 @@ public class LteBandwidthColumnHook {
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     if (!SettingsToggleHook.cellModsEnabled()) return result;
+                    if (adapterTypeField != null) {
+                        try {
+                            if (adapterTypeField.getInt(chain.getThisObject()) != ADAPTER_TYPE_LTE)
+                                return result;
+                        } catch (Exception ignored) {}
+                    }
                     View rowView = (View) result;
                     if (rowView == null) return result;
 

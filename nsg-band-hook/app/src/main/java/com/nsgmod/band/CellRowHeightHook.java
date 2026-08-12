@@ -7,6 +7,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 import io.github.libxposed.api.XposedInterface;
@@ -14,13 +15,23 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 public class CellRowHeightHook {
     private static final String TAG = "NSGBandHook";
+    private static final int ADAPTER_TYPE_LTE = 4;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
+    private Field adapterTypeField;
 
     public CellRowHeightHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
         this.loader = loader;
+        try {
+            Class<?> bbClass = ClassMapping.loadClass("a8.b$b", loader);
+            if (bbClass != null) {
+                adapterTypeField = bbClass.getDeclaredField("f");
+                adapterTypeField.setAccessible(true);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     public void install() {
@@ -45,6 +56,12 @@ public class CellRowHeightHook {
                     // Check toggle first
                     if (!SettingsToggleHook.cellRowHeightEnabled()) {
                         return chain.proceed();
+                    }
+                    if (adapterTypeField != null) {
+                        try {
+                            if (adapterTypeField.getInt(chain.getThisObject()) != ADAPTER_TYPE_LTE)
+                                return chain.proceed();
+                        } catch (Exception ignored) {}
                     }
                     View resultView = (View) chain.proceed();
                     if (resultView == null) return null;
