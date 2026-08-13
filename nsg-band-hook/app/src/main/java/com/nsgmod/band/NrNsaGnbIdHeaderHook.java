@@ -10,6 +10,7 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -47,7 +48,10 @@ public class NrNsaGnbIdHeaderHook {
     private Method sdEMethod;
     private Method sdIMethod;
     private Method dsGetPropertyMethod;
-    private Method propGetMethod;
+    private Constructor<?> iterConstructor;
+    private Method iterReverseLongMethod;
+    private Method iterEndMethod;
+    private Method iterValueMethod;
     private Field ydGCellIdField;
     private Field settingsSingletonField;
     private Field gnbLengthField;
@@ -179,8 +183,15 @@ public class NrNsaGnbIdHeaderHook {
             dsGetPropertyMethod = dsClass.getMethod("getProperty", String.class, int.class);
 
             Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            propGetMethod = propClass.getDeclaredMethod("get", long.class);
-            propGetMethod.setAccessible(true);
+            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            iterConstructor = iterClass.getDeclaredConstructor(propClass);
+            iterConstructor.setAccessible(true);
+            iterReverseLongMethod = iterClass.getDeclaredMethod("reverse", long.class);
+            iterReverseLongMethod.setAccessible(true);
+            iterEndMethod = iterClass.getDeclaredMethod("end");
+            iterEndMethod.setAccessible(true);
+            iterValueMethod = iterClass.getDeclaredMethod("value");
+            iterValueMethod.setAccessible(true);
 
             Class<?> ydClass = ClassMapping.loadClass("h7.e", loader);
             ydGCellIdField = ydClass.getDeclaredField("g");
@@ -460,7 +471,10 @@ public class NrNsaGnbIdHeaderHook {
         try {
             Object prop = dsGetPropertyMethod.invoke(dataSource, key, moduleIndex);
             if (prop == null) return null;
-            return propGetMethod.invoke(prop, timestamp);
+            Object iter = iterConstructor.newInstance(prop);
+            iterReverseLongMethod.invoke(iter, timestamp);
+            if ((boolean) iterEndMethod.invoke(iter)) return null;
+            return iterValueMethod.invoke(iter);
         } catch (Throwable t) {
             return null;
         }
