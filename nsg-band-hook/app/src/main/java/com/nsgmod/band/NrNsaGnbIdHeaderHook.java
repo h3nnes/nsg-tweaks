@@ -55,9 +55,6 @@ public class NrNsaGnbIdHeaderHook {
     private Field ydGCellIdField;
     private Field settingsSingletonField;
     private Field gnbLengthField;
-    private Method onLayoutMethod;
-    private View cgiLayoutView;
-    private boolean forceNextLayout;
 
     private int cachedArfcn = -1;
     private int cachedPci = -1;
@@ -109,22 +106,6 @@ public class NrNsaGnbIdHeaderHook {
                     return result;
                 }
             });
-
-            if (onLayoutMethod != null) {
-                xposed.hook(onLayoutMethod).intercept(new Hooker() {
-                    @Override
-                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                        if (chain.getThisObject() == cgiLayoutView && forceNextLayout) {
-                            forceNextLayout = false;
-                            List<Object> args = chain.getArgs();
-                            return chain.proceed(new Object[]{
-                                    Boolean.TRUE, args.get(1), args.get(2), args.get(3), args.get(4)
-                            });
-                        }
-                        return chain.proceed();
-                    }
-                });
-            }
 
             Log.i(TAG, "NrNsaGnbIdHeaderHook installed");
         } catch (Throwable t) {
@@ -222,17 +203,6 @@ public class NrNsaGnbIdHeaderHook {
                     gnbLengthField.setAccessible(true);
                 }
             } catch (Throwable ignored) {
-            }
-
-            try {
-                Class<?> layoutClass = ClassMapping.loadClass("v6.d", loader);
-                if (layoutClass != null) {
-                    onLayoutMethod = layoutClass.getDeclaredMethod("onLayout",
-                            boolean.class, int.class, int.class, int.class, int.class);
-                    onLayoutMethod.setAccessible(true);
-                }
-            } catch (Throwable t) {
-                Log.w(TAG, "NrNsaGnbIdHeaderHook: onLayout method not found: " + t);
             }
 
             ready = true;
@@ -364,11 +334,7 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 44.0f);
         colField.setFloat(ecellIdValue, 55.0f);
         widthField.setFloat(ecellIdValue, 44.0f);
-        cgiLayoutView = getLayoutView(fragment);
-        forceNextLayout = true;
-        if (cgiLayoutView != null) {
-            cgiLayoutView.requestLayout();
-        }
+        repositionViews(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
     }
 
     private void restoreGeometry(Object fragment) throws Throwable {
@@ -403,25 +369,60 @@ public class NrNsaGnbIdHeaderHook {
             if (c != origEcellCol || w != origEcellWidth) changed = true;
         }
         if (changed) {
-            cgiLayoutView = getLayoutView(fragment);
-            forceNextLayout = true;
-            if (cgiLayoutView != null) {
-                cgiLayoutView.requestLayout();
-            }
+            repositionViews(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
         }
     }
 
-    private View getLayoutView(Object fragment) {
+    private void repositionViews(Object fragment, Object tacLabel, Object tacValue,
+                                  Object ecellIdLabel, Object ecellIdValue) {
         try {
             Method getView = fragment.getClass().getMethod("getView");
             View rootView = (View) getView.invoke(fragment);
-            if (rootView instanceof ScrollView && ((ScrollView) rootView).getChildCount() > 0) {
-                return (View) ((ScrollView) rootView).getChildAt(0);
+            if (!(rootView instanceof ScrollView)) return;
+            ScrollView scrollView = (ScrollView) rootView;
+            if (scrollView.getChildCount() == 0) return;
+            View layout = scrollView.getChildAt(0);
+            int layoutWidth = layout.getWidth();
+            int padLeft = layout.getPaddingLeft();
+            int padRight = layout.getPaddingRight();
+            if (layoutWidth <= 0) {
+                layout.requestLayout();
+                layout.post(() -> {
+                    try {
+                        int w = layout.getWidth();
+                        if (w <= 0) return;
+                        double uw = (w - layout.getPaddingLeft() - layout.getPaddingRight()) / 100.0;
+                        int pl = layout.getPaddingLeft();
+                        layoutElement(tacLabel, uw, pl);
+                        layoutElement(tacValue, uw, pl);
+                        layoutElement(ecellIdLabel, uw, pl);
+                        layoutElement(ecellIdValue, uw, pl);
+                    } catch (Throwable t) {
+                        Log.e(TAG, "NrNsaGnbIdHeaderHook repositionViews post error", t);
+                    }
+                });
+                return;
             }
+            double unitWidth = (layoutWidth - padLeft - padRight) / 100.0;
+            layoutElement(tacLabel, unitWidth, padLeft);
+            layoutElement(tacValue, unitWidth, padLeft);
+            layoutElement(ecellIdLabel, unitWidth, padLeft);
+            layoutElement(ecellIdValue, unitWidth, padLeft);
         } catch (Throwable t) {
-            Log.e(TAG, "NrNsaGnbIdHeaderHook getLayoutView error", t);
+            Log.e(TAG, "NrNsaGnbIdHeaderHook repositionViews error", t);
         }
-        return null;
+    }
+
+    private void layoutElement(Object elem, double unitWidth, int padLeft) throws Throwable {
+        if (elem == null) return;
+        Object viewObj = viewField.get(elem);
+        if (!(viewObj instanceof View)) return;
+        View view = (View) viewObj;
+        float col = colField.getFloat(elem);
+        float width = widthField.getFloat(elem);
+        int left = (int) (col * unitWidth + padLeft);
+        int right = (int) ((col + width) * unitWidth + padLeft);
+        view.layout(left, view.getTop(), right, view.getBottom());
     }
 
     private void injectGnbIdText(Object fragment, long nci) throws Throwable {
