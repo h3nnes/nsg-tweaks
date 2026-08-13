@@ -67,6 +67,13 @@ public class NrNsaGnbIdHeaderHook {
     private boolean loggedRatMode = false;
     private boolean loggedCellDb = false;
     private boolean loggedProps = false;
+    private Method onLayoutMethod;
+    private View cachedLayoutView;
+    private boolean active = false;
+    private Object currentTacLabel;
+    private Object currentTacValue;
+    private Object currentEcellIdLabel;
+    private Object currentEcellIdValue;
 
     public NrNsaGnbIdHeaderHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -107,7 +114,25 @@ public class NrNsaGnbIdHeaderHook {
                 }
             });
 
-            Log.i(TAG, "NrNsaGnbIdHeaderHook installed");
+            if (onLayoutMethod != null) {
+                xposed.hook(onLayoutMethod).intercept(new Hooker() {
+                    @Override
+                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                        Object result = chain.proceed();
+                        try {
+                            Object layoutObj = chain.getThisObject();
+                            if (layoutObj instanceof View && isOurCgiLayout((View) layoutObj) && active) {
+                                repositionFromLayout((View) layoutObj);
+                            }
+                        } catch (Throwable t) {
+                            Log.e(TAG, "NrNsaGnbIdHeaderHook onLayout after error", t);
+                        }
+                        return result;
+                    }
+                });
+            }
+
+            Log.i(TAG, "NrNsaGnbIdHeaderHook installed (onLayout: " + (onLayoutMethod != null ? "hooked" : "fallback") + ")");
         } catch (Throwable t) {
             Log.e(TAG, "NrNsaGnbIdHeaderHook install failed: " + t);
         }
@@ -203,6 +228,15 @@ public class NrNsaGnbIdHeaderHook {
                     gnbLengthField.setAccessible(true);
                 }
             } catch (Throwable ignored) {
+            }
+
+            try {
+                Class<?> layoutClass = ClassMapping.loadClass("v6.b", loader);
+                onLayoutMethod = layoutClass.getDeclaredMethod("onLayout",
+                        boolean.class, int.class, int.class, int.class, int.class);
+            } catch (Throwable t) {
+                Log.w(TAG, "NrNsaGnbIdHeaderHook: onLayout method not found, using fallback");
+                onLayoutMethod = null;
             }
 
             ready = true;
@@ -334,6 +368,22 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 44.0f);
         colField.setFloat(ecellIdValue, 55.0f);
         widthField.setFloat(ecellIdValue, 44.0f);
+        currentTacLabel = tacLabel;
+        currentTacValue = tacValue;
+        currentEcellIdLabel = ecellIdLabel;
+        currentEcellIdValue = ecellIdValue;
+        if (onLayoutMethod != null) {
+            View layout = getLayoutView(ecellIdValue);
+            if (layout == null) layout = getLayoutView(ecellIdLabel);
+            if (layout == null) layout = getLayoutView(tacLabel);
+            if (layout == null) layout = getLayoutView(tacValue);
+            if (layout != null) {
+                cachedLayoutView = layout;
+                active = true;
+                layout.requestLayout();
+                return;
+            }
+        }
         repositionViews(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
     }
 
@@ -369,6 +419,21 @@ public class NrNsaGnbIdHeaderHook {
             if (c != origEcellCol || w != origEcellWidth) changed = true;
         }
         if (changed) {
+            currentTacLabel = tacLabel;
+            currentTacValue = tacValue;
+            currentEcellIdLabel = ecellIdLabel;
+            currentEcellIdValue = ecellIdValue;
+            if (onLayoutMethod != null) {
+                View layout = getLayoutView(ecellIdValue);
+                if (layout == null) layout = getLayoutView(ecellIdLabel);
+                if (layout == null) layout = getLayoutView(tacLabel);
+                if (layout == null) layout = getLayoutView(tacValue);
+                if (layout != null) {
+                    cachedLayoutView = layout;
+                    layout.requestLayout();
+                    return;
+                }
+            }
             repositionViews(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
         }
     }
@@ -410,6 +475,26 @@ public class NrNsaGnbIdHeaderHook {
             layoutElement(ecellIdValue, unitWidth, padLeft);
         } catch (Throwable t) {
             Log.e(TAG, "NrNsaGnbIdHeaderHook repositionViews error", t);
+        }
+    }
+
+    private boolean isOurCgiLayout(View layout) {
+        return cachedLayoutView != null && cachedLayoutView == layout;
+    }
+
+    private void repositionFromLayout(View layout) {
+        try {
+            int layoutWidth = layout.getWidth();
+            if (layoutWidth <= 0) return;
+            int padLeft = layout.getPaddingLeft();
+            int padRight = layout.getPaddingRight();
+            double unitWidth = (layoutWidth - padLeft - padRight) / 100.0;
+            layoutElement(currentTacLabel, unitWidth, padLeft);
+            layoutElement(currentTacValue, unitWidth, padLeft);
+            layoutElement(currentEcellIdLabel, unitWidth, padLeft);
+            layoutElement(currentEcellIdValue, unitWidth, padLeft);
+        } catch (Throwable t) {
+            Log.e(TAG, "NrNsaGnbIdHeaderHook repositionFromLayout error", t);
         }
     }
 
