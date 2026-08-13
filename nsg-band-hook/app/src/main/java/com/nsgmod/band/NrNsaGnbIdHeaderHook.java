@@ -56,8 +56,6 @@ public class NrNsaGnbIdHeaderHook {
     private Field settingsSingletonField;
     private Field gnbLengthField;
     private Method onLayoutMethod;
-    private View cachedLayoutView;
-    private boolean active = false;
 
     private int cachedArfcn = -1;
     private int cachedPci = -1;
@@ -110,27 +108,7 @@ public class NrNsaGnbIdHeaderHook {
                 }
             });
 
-            if (onLayoutMethod != null) {
-                xposed.hook(onLayoutMethod).intercept(new Hooker() {
-                    @Override
-                    public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                        Object layoutObj = chain.getThisObject();
-                        if (layoutObj instanceof View && isOurCgiLayout((View) layoutObj) && active) {
-                            try {
-                                List<Object> args = chain.getArgs();
-                                return chain.proceed(new Object[]{
-                                        Boolean.TRUE, args.get(1), args.get(2), args.get(3), args.get(4)
-                                });
-                            } catch (Throwable t) {
-                                Log.e(TAG, "NrNsaGnbIdHeaderHook onLayout force error", t);
-                            }
-                        }
-                        return chain.proceed();
-                    }
-                });
-            }
-
-            Log.i(TAG, "NrNsaGnbIdHeaderHook installed (onLayout: " + (onLayoutMethod != null ? "hooked" : "fallback") + ")");
+            Log.i(TAG, "NrNsaGnbIdHeaderHook installed (onLayout: " + (onLayoutMethod != null ? "direct" : "fallback") + ")");
         } catch (Throwable t) {
             Log.e(TAG, "NrNsaGnbIdHeaderHook install failed: " + t);
         }
@@ -229,7 +207,7 @@ public class NrNsaGnbIdHeaderHook {
             }
 
             try {
-                Class<?> layoutClass = ClassMapping.loadClass("v6.b", loader);
+                Class<?> layoutClass = ClassMapping.loadClass("v6.d", loader);
                 onLayoutMethod = layoutClass.getDeclaredMethod("onLayout",
                         boolean.class, int.class, int.class, int.class, int.class);
             } catch (Throwable t) {
@@ -366,7 +344,7 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 44.0f);
         colField.setFloat(ecellIdValue, 55.0f);
         widthField.setFloat(ecellIdValue, 44.0f);
-        cacheLayoutAndRequest(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue, true);
+        cacheLayoutAndRequest(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
     }
 
     private void restoreGeometry(Object fragment) throws Throwable {
@@ -401,24 +379,49 @@ public class NrNsaGnbIdHeaderHook {
             if (c != origEcellCol || w != origEcellWidth) changed = true;
         }
         if (changed) {
-            cacheLayoutAndRequest(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue, false);
+            cacheLayoutAndRequest(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
         }
     }
 
     private void cacheLayoutAndRequest(Object fragment, Object tacLabel, Object tacValue,
-                                        Object ecellIdLabel, Object ecellIdValue, boolean activate) {
+                                        Object ecellIdLabel, Object ecellIdValue) {
         View layout = getLayoutView(ecellIdValue);
         if (layout == null) layout = getLayoutView(ecellIdLabel);
         if (layout == null) layout = getLayoutView(tacLabel);
         if (layout == null) layout = getLayoutView(tacValue);
         if (layout == null) return;
-        cachedLayoutView = layout;
-        active = activate;
-        layout.requestLayout();
+        forceOnLayout(layout);
     }
 
-    private boolean isOurCgiLayout(View layout) {
-        return cachedLayoutView != null && cachedLayoutView == layout;
+    private void forceOnLayout(View layout) {
+        try {
+            if (onLayoutMethod == null) {
+                layout.requestLayout();
+                return;
+            }
+            if (layout.getWidth() <= 0) {
+                layout.requestLayout();
+                layout.post(() -> {
+                    try {
+                        if (layout.getWidth() > 0) {
+                            onLayoutMethod.setAccessible(true);
+                            onLayoutMethod.invoke(layout, true,
+                                    layout.getLeft(), layout.getTop(),
+                                    layout.getRight(), layout.getBottom());
+                        }
+                    } catch (Throwable t) {
+                        Log.e(TAG, "NrNsaGnbIdHeaderHook forceOnLayout post error", t);
+                    }
+                });
+                return;
+            }
+            onLayoutMethod.setAccessible(true);
+            onLayoutMethod.invoke(layout, true,
+                    layout.getLeft(), layout.getTop(),
+                    layout.getRight(), layout.getBottom());
+        } catch (Throwable t) {
+            Log.e(TAG, "NrNsaGnbIdHeaderHook forceOnLayout error", t);
+        }
     }
 
     private View getLayoutView(Object elem) {
