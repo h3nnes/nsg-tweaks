@@ -5,7 +5,7 @@ import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
 import android.util.Log;
 import android.view.View;
-import android.widget.ScrollView;
+import android.view.ViewParent;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -376,12 +376,12 @@ public class NrNsaGnbIdHeaderHook {
     private void repositionViews(Object fragment, Object tacLabel, Object tacValue,
                                   Object ecellIdLabel, Object ecellIdValue) {
         try {
-            Method getView = fragment.getClass().getMethod("getView");
-            View rootView = (View) getView.invoke(fragment);
-            if (!(rootView instanceof ScrollView)) return;
-            ScrollView scrollView = (ScrollView) rootView;
-            if (scrollView.getChildCount() == 0) return;
-            View layout = scrollView.getChildAt(0);
+            View layout = getLayoutView(ecellIdValue);
+            if (layout == null) layout = getLayoutView(ecellIdLabel);
+            if (layout == null) layout = getLayoutView(tacLabel);
+            if (layout == null) layout = getLayoutView(tacValue);
+            if (layout == null) return;
+            final View layoutFinal = layout;
             int layoutWidth = layout.getWidth();
             int padLeft = layout.getPaddingLeft();
             int padRight = layout.getPaddingRight();
@@ -389,10 +389,10 @@ public class NrNsaGnbIdHeaderHook {
                 layout.requestLayout();
                 layout.post(() -> {
                     try {
-                        int w = layout.getWidth();
+                        int w = layoutFinal.getWidth();
                         if (w <= 0) return;
-                        double uw = (w - layout.getPaddingLeft() - layout.getPaddingRight()) / 100.0;
-                        int pl = layout.getPaddingLeft();
+                        double uw = (w - layoutFinal.getPaddingLeft() - layoutFinal.getPaddingRight()) / 100.0;
+                        int pl = layoutFinal.getPaddingLeft();
                         layoutElement(tacLabel, uw, pl);
                         layoutElement(tacValue, uw, pl);
                         layoutElement(ecellIdLabel, uw, pl);
@@ -411,6 +411,18 @@ public class NrNsaGnbIdHeaderHook {
         } catch (Throwable t) {
             Log.e(TAG, "NrNsaGnbIdHeaderHook repositionViews error", t);
         }
+    }
+
+    private View getLayoutView(Object elem) {
+        try {
+            if (elem == null) return null;
+            Object viewObj = viewField.get(elem);
+            if (!(viewObj instanceof View)) return null;
+            ViewParent parent = ((View) viewObj).getParent();
+            if (parent instanceof View) return (View) parent;
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     private void layoutElement(Object elem, double unitWidth, int padLeft) throws Throwable {
