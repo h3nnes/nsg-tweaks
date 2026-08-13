@@ -394,34 +394,23 @@ public class NrNsaGnbIdHeaderHook {
     }
 
     private void forceOnLayout(View layout) {
-        try {
-            if (onLayoutMethod == null) {
-                layout.requestLayout();
-                return;
-            }
-            if (layout.getWidth() <= 0) {
-                layout.requestLayout();
-                layout.post(() -> {
-                    try {
-                        if (layout.getWidth() > 0) {
-                            onLayoutMethod.setAccessible(true);
-                            onLayoutMethod.invoke(layout, true,
-                                    layout.getLeft(), layout.getTop(),
-                                    layout.getRight(), layout.getBottom());
-                        }
-                    } catch (Throwable t) {
-                        Log.e(TAG, "NrNsaGnbIdHeaderHook forceOnLayout post error", t);
-                    }
-                });
-                return;
-            }
-            onLayoutMethod.setAccessible(true);
-            onLayoutMethod.invoke(layout, true,
-                    layout.getLeft(), layout.getTop(),
-                    layout.getRight(), layout.getBottom());
-        } catch (Throwable t) {
-            Log.e(TAG, "NrNsaGnbIdHeaderHook forceOnLayout error", t);
+        if (onLayoutMethod == null) {
+            layout.requestLayout();
+            return;
         }
+        layout.requestLayout();
+        layout.post(() -> {
+            try {
+                if (layout.getWidth() > 0 && layout.getHeight() > 0) {
+                    onLayoutMethod.setAccessible(true);
+                    onLayoutMethod.invoke(layout, true,
+                            layout.getLeft(), layout.getTop(),
+                            layout.getRight(), layout.getBottom());
+                }
+            } catch (Throwable t) {
+                Log.e(TAG, "NrNsaGnbIdHeaderHook forceOnLayout post error", t);
+            }
+        });
     }
 
     private View getLayoutView(Object elem) {
