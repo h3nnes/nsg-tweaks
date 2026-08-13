@@ -55,6 +55,9 @@ public class NrNsaGnbIdHeaderHook {
     private Field ydGCellIdField;
     private Field settingsSingletonField;
     private Field gnbLengthField;
+    private Method onLayoutMethod;
+    private View cachedLayoutView;
+    private boolean active = false;
 
     private int cachedArfcn = -1;
     private int cachedPci = -1;
@@ -67,13 +70,6 @@ public class NrNsaGnbIdHeaderHook {
     private boolean loggedRatMode = false;
     private boolean loggedCellDb = false;
     private boolean loggedProps = false;
-    private Method onLayoutMethod;
-    private View cachedLayoutView;
-    private boolean active = false;
-    private Object currentTacLabel;
-    private Object currentTacValue;
-    private Object currentEcellIdLabel;
-    private Object currentEcellIdValue;
 
     public NrNsaGnbIdHeaderHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -118,16 +114,18 @@ public class NrNsaGnbIdHeaderHook {
                 xposed.hook(onLayoutMethod).intercept(new Hooker() {
                     @Override
                     public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                        Object result = chain.proceed();
-                        try {
-                            Object layoutObj = chain.getThisObject();
-                            if (layoutObj instanceof View && isOurCgiLayout((View) layoutObj) && active) {
-                                repositionFromLayout((View) layoutObj);
+                        Object layoutObj = chain.getThisObject();
+                        if (layoutObj instanceof View && isOurCgiLayout((View) layoutObj) && active) {
+                            try {
+                                List<Object> args = chain.getArgs();
+                                return chain.proceed(new Object[]{
+                                        Boolean.TRUE, args.get(1), args.get(2), args.get(3), args.get(4)
+                                });
+                            } catch (Throwable t) {
+                                Log.e(TAG, "NrNsaGnbIdHeaderHook onLayout force error", t);
                             }
-                        } catch (Throwable t) {
-                            Log.e(TAG, "NrNsaGnbIdHeaderHook onLayout after error", t);
                         }
-                        return result;
+                        return chain.proceed();
                     }
                 });
             }
@@ -368,23 +366,7 @@ public class NrNsaGnbIdHeaderHook {
         widthField.setFloat(ecellIdLabel, 44.0f);
         colField.setFloat(ecellIdValue, 55.0f);
         widthField.setFloat(ecellIdValue, 44.0f);
-        currentTacLabel = tacLabel;
-        currentTacValue = tacValue;
-        currentEcellIdLabel = ecellIdLabel;
-        currentEcellIdValue = ecellIdValue;
-        if (onLayoutMethod != null) {
-            View layout = getLayoutView(ecellIdValue);
-            if (layout == null) layout = getLayoutView(ecellIdLabel);
-            if (layout == null) layout = getLayoutView(tacLabel);
-            if (layout == null) layout = getLayoutView(tacValue);
-            if (layout != null) {
-                cachedLayoutView = layout;
-                active = true;
-                layout.requestLayout();
-                return;
-            }
-        }
-        repositionViews(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
+        cacheLayoutAndRequest(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue, true);
     }
 
     private void restoreGeometry(Object fragment) throws Throwable {
@@ -419,83 +401,24 @@ public class NrNsaGnbIdHeaderHook {
             if (c != origEcellCol || w != origEcellWidth) changed = true;
         }
         if (changed) {
-            currentTacLabel = tacLabel;
-            currentTacValue = tacValue;
-            currentEcellIdLabel = ecellIdLabel;
-            currentEcellIdValue = ecellIdValue;
-            if (onLayoutMethod != null) {
-                View layout = getLayoutView(ecellIdValue);
-                if (layout == null) layout = getLayoutView(ecellIdLabel);
-                if (layout == null) layout = getLayoutView(tacLabel);
-                if (layout == null) layout = getLayoutView(tacValue);
-                if (layout != null) {
-                    cachedLayoutView = layout;
-                    layout.requestLayout();
-                    return;
-                }
-            }
-            repositionViews(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
+            cacheLayoutAndRequest(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue, false);
         }
     }
 
-    private void repositionViews(Object fragment, Object tacLabel, Object tacValue,
-                                  Object ecellIdLabel, Object ecellIdValue) {
-        try {
-            View layout = getLayoutView(ecellIdValue);
-            if (layout == null) layout = getLayoutView(ecellIdLabel);
-            if (layout == null) layout = getLayoutView(tacLabel);
-            if (layout == null) layout = getLayoutView(tacValue);
-            if (layout == null) return;
-            final View layoutFinal = layout;
-            int layoutWidth = layout.getWidth();
-            int padLeft = layout.getPaddingLeft();
-            int padRight = layout.getPaddingRight();
-            if (layoutWidth <= 0) {
-                layout.requestLayout();
-                layout.post(() -> {
-                    try {
-                        int w = layoutFinal.getWidth();
-                        if (w <= 0) return;
-                        double uw = (w - layoutFinal.getPaddingLeft() - layoutFinal.getPaddingRight()) / 100.0;
-                        int pl = layoutFinal.getPaddingLeft();
-                        layoutElement(tacLabel, uw, pl);
-                        layoutElement(tacValue, uw, pl);
-                        layoutElement(ecellIdLabel, uw, pl);
-                        layoutElement(ecellIdValue, uw, pl);
-                    } catch (Throwable t) {
-                        Log.e(TAG, "NrNsaGnbIdHeaderHook repositionViews post error", t);
-                    }
-                });
-                return;
-            }
-            double unitWidth = (layoutWidth - padLeft - padRight) / 100.0;
-            layoutElement(tacLabel, unitWidth, padLeft);
-            layoutElement(tacValue, unitWidth, padLeft);
-            layoutElement(ecellIdLabel, unitWidth, padLeft);
-            layoutElement(ecellIdValue, unitWidth, padLeft);
-        } catch (Throwable t) {
-            Log.e(TAG, "NrNsaGnbIdHeaderHook repositionViews error", t);
-        }
+    private void cacheLayoutAndRequest(Object fragment, Object tacLabel, Object tacValue,
+                                        Object ecellIdLabel, Object ecellIdValue, boolean activate) {
+        View layout = getLayoutView(ecellIdValue);
+        if (layout == null) layout = getLayoutView(ecellIdLabel);
+        if (layout == null) layout = getLayoutView(tacLabel);
+        if (layout == null) layout = getLayoutView(tacValue);
+        if (layout == null) return;
+        cachedLayoutView = layout;
+        active = activate;
+        layout.requestLayout();
     }
 
     private boolean isOurCgiLayout(View layout) {
         return cachedLayoutView != null && cachedLayoutView == layout;
-    }
-
-    private void repositionFromLayout(View layout) {
-        try {
-            int layoutWidth = layout.getWidth();
-            if (layoutWidth <= 0) return;
-            int padLeft = layout.getPaddingLeft();
-            int padRight = layout.getPaddingRight();
-            double unitWidth = (layoutWidth - padLeft - padRight) / 100.0;
-            layoutElement(currentTacLabel, unitWidth, padLeft);
-            layoutElement(currentTacValue, unitWidth, padLeft);
-            layoutElement(currentEcellIdLabel, unitWidth, padLeft);
-            layoutElement(currentEcellIdValue, unitWidth, padLeft);
-        } catch (Throwable t) {
-            Log.e(TAG, "NrNsaGnbIdHeaderHook repositionFromLayout error", t);
-        }
     }
 
     private View getLayoutView(Object elem) {
@@ -508,18 +431,6 @@ public class NrNsaGnbIdHeaderHook {
         } catch (Throwable ignored) {
         }
         return null;
-    }
-
-    private void layoutElement(Object elem, double unitWidth, int padLeft) throws Throwable {
-        if (elem == null) return;
-        Object viewObj = viewField.get(elem);
-        if (!(viewObj instanceof View)) return;
-        View view = (View) viewObj;
-        float col = colField.getFloat(elem);
-        float width = widthField.getFloat(elem);
-        int left = (int) (col * unitWidth + padLeft);
-        int right = (int) ((col + width) * unitWidth + padLeft);
-        view.layout(left, view.getTop(), right, view.getBottom());
     }
 
     private void injectGnbIdText(Object fragment, long nci) throws Throwable {
