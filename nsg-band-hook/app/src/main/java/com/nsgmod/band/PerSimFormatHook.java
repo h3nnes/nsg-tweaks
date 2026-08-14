@@ -422,6 +422,24 @@ public class PerSimFormatHook {
         }
         if (iconSpaceField != null) iconSpaceField.set(dropDown, false);
 
+        for (Field f : prefCls.getDeclaredFields()) {
+            if (f.getType() == int.class && !Modifier.isFinal(f.getModifiers())) {
+                try {
+                    f.setAccessible(true);
+                    if (f.getInt(dropDown) == Integer.MAX_VALUE) {
+                        f.set(dropDown, 0);
+                        Log.w(TAG, "PerSimFormatHook: set order field " + f.getName() + " to 0");
+                        break;
+                    }
+                } catch (Throwable ignored) {}
+            }
+        }
+
+        try {
+            CharSequence titleVal = titleField != null ? (CharSequence) titleField.get(dropDown) : "null";
+            Log.w(TAG, "PerSimFormatHook: title after set = " + titleVal);
+        } catch (Throwable ignored) {}
+
         if (setDefaultValue != null) setDefaultValue.invoke(dropDown, "-1");
 
         final SharedPreferences mainPrefs = ctx.getSharedPreferences(MAIN_PREFS, Context.MODE_PRIVATE);
