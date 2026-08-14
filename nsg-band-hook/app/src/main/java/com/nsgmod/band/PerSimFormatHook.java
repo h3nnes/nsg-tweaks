@@ -62,13 +62,13 @@ public class PerSimFormatHook {
                         try {
                             injectSlotSelector(chain.getThisObject());
                         } catch (Throwable t) {
-                            Log.w(TAG, "PerSimFormatHook inject failed: " + t, t);
+                            Log.e(TAG, "PerSimFormatHook inject failed: " + t, t);
                         }
                         return result;
                     }
                 });
             } else {
-                Log.w(TAG, "PerSimFormatHook: format fragment not found, UI disabled");
+                Log.w(TAG, "PerSimFormatHook: format fragment not found");
             }
 
             if (sr0Method != null) {
@@ -99,7 +99,7 @@ public class PerSimFormatHook {
                     }
                 });
             } else {
-                Log.w(TAG, "PerSimFormatHook: sr0 method not found, runtime disabled");
+                Log.w(TAG, "PerSimFormatHook: sr0 method not found");
             }
 
             Log.i(TAG, "PerSimFormatHook installed");
@@ -126,7 +126,7 @@ public class PerSimFormatHook {
                 formatFragmentMethod.setAccessible(true);
             }
         } catch (Throwable t) {
-            Log.w(TAG, "PerSimFormatHook: format fragment method not found: " + t);
+            Log.w(TAG, "PerSimFormatHook: format fragment not found: " + t);
         }
     }
 
@@ -135,10 +135,7 @@ public class PerSimFormatHook {
         Class<?> baseCls = ClassMapping.loadClass("androidx.preference.c", loader);
         Field yField = baseCls.getField(ClassMapping.runtimeFieldName("androidx.preference.c", "Y", loader));
         Object prefManager = yField.get(fragment);
-        if (prefManager == null) {
-            Log.w(TAG, "PerSimFormatHook: PreferenceManager null");
-            return;
-        }
+        if (prefManager == null) return;
 
         Class<?> prefScreenCls = ClassMapping.loadClass("androidx.preference.PreferenceScreen", loader);
         Class<?> prefMgrCls = prefManager.getClass();
@@ -156,16 +153,10 @@ public class PerSimFormatHook {
                 c = c.getSuperclass();
             }
         }
-        if (screenField == null) {
-            Log.w(TAG, "PerSimFormatHook: PreferenceScreen field not found");
-            return;
-        }
+        if (screenField == null) return;
         screenField.setAccessible(true);
         Object prefScreen = screenField.get(prefManager);
-        if (prefScreen == null) {
-            Log.w(TAG, "PerSimFormatHook: PreferenceScreen null");
-            return;
-        }
+        if (prefScreen == null) return;
 
         Class<?> prefCls = ClassMapping.loadClass("androidx.preference.Preference", loader);
         Method findPref = null;
@@ -187,10 +178,7 @@ public class PerSimFormatHook {
                 break;
             }
         }
-        if (reqCtx == null) {
-            Log.w(TAG, "PerSimFormatHook: requireContext() not found");
-            return;
-        }
+        if (reqCtx == null) return;
         Context ctx = (Context) reqCtx.invoke(fragment);
 
         Class<?> ddCls = ClassMapping.loadClass("androidx.preference.DropDownPreference", loader);
@@ -201,10 +189,7 @@ public class PerSimFormatHook {
                 if (ddCtor == null || p.length < ddCtor.getParameterCount()) ddCtor = c;
             }
         }
-        if (ddCtor == null) {
-            Log.w(TAG, "PerSimFormatHook: DropDownPreference ctor not found");
-            return;
-        }
+        if (ddCtor == null) return;
         ddCtor.setAccessible(true);
         Object[] ctorArgs = new Object[ddCtor.getParameterCount()];
         ctorArgs[0] = ctx;
@@ -260,11 +245,8 @@ public class PerSimFormatHook {
             } catch (Throwable t) {
                 Log.w(TAG, "PerSimFormatHook: field probe failed: " + t);
             }
-        }
-        if (summaryField == null && csFields.size() >= 2) summaryField = csFields.get(0);
+        }        if (summaryField == null && csFields.size() >= 2) summaryField = csFields.get(0);
         if (titleField == null && csFields.size() >= 2) titleField = csFields.get(1);
-
-        Log.w(TAG, "PerSimFormatHook: titleField=" + titleField + " summaryField=" + summaryField);
 
         Field iconSpaceField = null;
         try {
@@ -298,10 +280,6 @@ public class PerSimFormatHook {
 
         CharSequence[] entries = {"Global", "SIM Slot 0", "SIM Slot 1"};
         CharSequence[] entryValues = {"-1", "0", "1"};
-
-        Log.w(TAG, "PerSimFormatHook: entriesField=" + entriesField
-                + " entryValuesField=" + entryValuesField
-                + " adapterField=" + adapterField);
 
         if (entriesField != null) {
             entriesField.set(dropDown, entries);
@@ -366,12 +344,8 @@ public class PerSimFormatHook {
         qField.setAccessible(true);
         ArrayList<Object> children = (ArrayList<Object>) qField.get(prefScreen);
         if (children == null) {
-            Log.w(TAG, "PerSimFormatHook: children ArrayList null");
             return;
         }
-
-        Log.w(TAG, "PerSimFormatHook: prefScreen children count=" + children.size()
-                + " firstChild=" + (children.isEmpty() ? "null" : children.get(0).getClass().getName()));
 
         ArrayList<Object> targetChildren = children;
         Object targetParent = prefScreen;
@@ -379,7 +353,6 @@ public class PerSimFormatHook {
             Object category = children.get(0);
             ArrayList<Object> catChildren = (ArrayList<Object>) qField.get(category);
             if (catChildren != null) {
-                Log.w(TAG, "PerSimFormatHook: inserting into PreferenceCategory, catChildren=" + catChildren.size());
                 targetChildren = catChildren;
                 targetParent = category;
             }
@@ -404,12 +377,6 @@ public class PerSimFormatHook {
         }
         if (listenerField != null) listenerField.setAccessible(true);
 
-        Log.w(TAG, "PerSimFormatHook: keyField=" + keyField
-                + " titleField=" + titleField
-                + " summaryField=" + summaryField
-                + " listenerField=" + listenerField
-                + " listenerCls=" + listenerCls);
-
         if (keyField != null) keyField.set(dropDown, EDIT_SLOT_KEY);
         if (titleField != null) titleField.set(dropDown, "Edit Formats For");
         if (setSummaryMethod != null) {
@@ -425,17 +392,11 @@ public class PerSimFormatHook {
                     f.setAccessible(true);
                     if (f.getInt(dropDown) == Integer.MAX_VALUE) {
                         f.set(dropDown, 0);
-                        Log.w(TAG, "PerSimFormatHook: set order field " + f.getName() + " to 0");
                         break;
                     }
                 } catch (Throwable ignored) {}
             }
         }
-
-        try {
-            CharSequence titleVal = titleField != null ? (CharSequence) titleField.get(dropDown) : "null";
-            Log.w(TAG, "PerSimFormatHook: title after set = " + titleVal);
-        } catch (Throwable ignored) {}
 
         if (setDefaultValue != null) setDefaultValue.invoke(dropDown, "-1");
 
@@ -446,12 +407,9 @@ public class PerSimFormatHook {
         if (listenerField != null && listenerCls != null) {
             Object proxy = Proxy.newProxyInstance(loader, new Class<?>[]{listenerCls},
                     (p, m, a) -> {
-                        Log.w(TAG, "PerSimFormatHook: listener invoked, method=" + m.getName()
-                                + " args=" + (a == null ? "null" : a.length));
                         if (a != null && a.length == 2 && m.getReturnType() == boolean.class) {
                             String oldValue = mainPrefs.getString(EDIT_SLOT_KEY, "-1");
                             String newValue = String.valueOf(a[1]);
-                            Log.w(TAG, "PerSimFormatHook: slot change " + oldValue + " -> " + newValue);
                             onEditSlotChanged(ctx, oldValue, newValue);
                             refreshListPreferences(prefCategoryChildren, refreshMethod);
                             return Boolean.TRUE;
@@ -461,16 +419,11 @@ public class PerSimFormatHook {
                         return null;
                     });
             listenerField.set(dropDown, proxy);
-            Log.w(TAG, "PerSimFormatHook: listener proxy set");
-        } else {
-            Log.w(TAG, "PerSimFormatHook: listener field not found, slot switching disabled");
         }
 
         targetChildren.add(0, dropDown);
         if (attachMethod != null) attachMethod.invoke(dropDown, prefManager);
         if (parentField != null) parentField.set(dropDown, targetParent);
-
-        Log.w(TAG, "PerSimFormatHook: inserted at pos 0, targetChildren size=" + targetChildren.size());
 
         if (!listenerRegistered) {
             listenerRegistered = true;
@@ -494,7 +447,7 @@ public class PerSimFormatHook {
                 handler.sendEmptyMessage(1);
             }
         } catch (Throwable t) {
-            Log.w(TAG, "PerSimFormatHook: adapter refresh failed: " + t);
+            Log.e(TAG, "PerSimFormatHook: adapter refresh failed: " + t);
         }
     }
 
@@ -526,13 +479,12 @@ public class PerSimFormatHook {
                 if (!isFormatKey) continue;
                 refreshMethod.invoke(pref, (Object) null);
             } catch (Throwable t) {
-                Log.w(TAG, "PerSimFormatHook: refresh failed for pref: " + t);
+                Log.e(TAG, "PerSimFormatHook: refresh failed for pref: " + t);
             }
         }
     }
 
     private void onEditSlotChanged(Context ctx, String oldSlot, String newSlot) {
-        Log.w(TAG, "PerSimFormatHook: onEditSlotChanged " + oldSlot + " -> " + newSlot);
         if (oldSlot.equals(newSlot)) return;
 
         SharedPreferences mainPrefs = ctx.getSharedPreferences(MAIN_PREFS, Context.MODE_PRIVATE);
@@ -550,7 +502,6 @@ public class PerSimFormatHook {
             String key = FORMAT_KEYS[i];
             String value = mainPrefs.getString(key, FORMAT_DEFAULTS[i]);
             backupEditor.putString(oldPrefix + key, value);
-            Log.w(TAG, "PerSimFormatHook: save " + oldPrefix + key + "=" + value);
         }
         backupEditor.apply();
 
@@ -568,7 +519,6 @@ public class PerSimFormatHook {
                         value = backupPrefs.getString("global_snapshot_" + key, FORMAT_DEFAULTS[i]);
                     }
                 }
-                Log.w(TAG, "PerSimFormatHook: load " + key + "=" + value);
                 mainEditor.putString(key, value);
             }
             mainEditor.commit();
@@ -579,8 +529,6 @@ public class PerSimFormatHook {
 
     private void onFormatPrefChanged(SharedPreferences mainPrefs, String key) {
         if (suppressListener) return;
-
-        Log.w(TAG, "PerSimFormatHook: prefChanged key=" + key);
 
         boolean isFormatKey = false;
         for (String fk : FORMAT_KEYS) {
@@ -607,7 +555,7 @@ public class PerSimFormatHook {
             }
             backupPrefs.edit().putString(prefix + key, value).apply();
         } catch (Throwable t) {
-            Log.w(TAG, "PerSimFormatHook: save override failed: " + t);
+            Log.e(TAG, "PerSimFormatHook: save override failed: " + t);
         }
     }
 
