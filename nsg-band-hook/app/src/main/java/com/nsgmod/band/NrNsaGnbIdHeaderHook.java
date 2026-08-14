@@ -65,9 +65,7 @@ public class NrNsaGnbIdHeaderHook {
     private float origTacWidth;
     private float origEcellCol;
     private float origEcellWidth;
-    private boolean loggedRatMode = false;
     private boolean loggedCellDb = false;
-    private boolean loggedProps = false;
 
     public NrNsaGnbIdHeaderHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -253,14 +251,9 @@ public class NrNsaGnbIdHeaderHook {
         }
         String ratStr = rat.toString();
         if (!"NR-NSA".equals(ratStr)) {
-            if (!loggedRatMode) {
-                Log.w(TAG, "NrNsaGnbIdHeaderHook: RAT=" + ratStr + " (not NR-NSA), skipping");
-                loggedRatMode = true;
-            }
             restoreGeometry(fragment);
             return;
         }
-        loggedRatMode = false;
         adjustGeometry(fragment);
 
         Long gCellId = resolveGCellIdFromDb(dataSource, timestamp, moduleIndex);
@@ -303,13 +296,8 @@ public class NrNsaGnbIdHeaderHook {
             pci = readIntProperty(dataSource, miUsed, timestamp, KEY_NR_PCI);
         }
         if (arfcn == null || pci == null) {
-            if (!loggedProps) {
-                Log.w(TAG, "NrNsaGnbIdHeaderHook: NR ARFCN/PCI null (tried mi 0..3 + " + (moduleIndex & 0xFFFF) + ")");
-                loggedProps = true;
-            }
             return null;
         }
-        loggedProps = false;
 
         if (arfcn != cachedArfcn || pci != cachedPci) {
             cachedArfcn = arfcn;
