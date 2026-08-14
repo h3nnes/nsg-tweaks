@@ -624,8 +624,37 @@ public class PerSimFormatHook {
             Field modField = wsCls.getDeclaredField(modName);
             modField.setAccessible(true);
             short moduleShort = modField.getShort(wsInstance);
-            int slot = moduleShort >> 4;
-            return slot;
+            int nsgSlot = moduleShort >> 4;
+
+            int defaultPhysicalSlot = getDefaultDataPhysicalSlot();
+            if (defaultPhysicalSlot < 0) return nsgSlot;
+            if (nsgSlot == 0) return defaultPhysicalSlot;
+            return defaultPhysicalSlot == 0 ? 1 : 0;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private int getDefaultDataPhysicalSlot() {
+        try {
+            Context ctx = getAppContext();
+            if (ctx == null) return -1;
+            Object sm = ctx.getSystemService("telephony_subscription_service");
+            if (sm == null) return -1;
+            Class<?> smCls = Class.forName("android.telephony.SubscriptionManager");
+            int subId = -1;
+            try {
+                subId = (Integer) smCls.getMethod("getDefaultDataSubscriptionId").invoke(null);
+            } catch (Throwable ignored) {}
+            if (subId < 0) {
+                try {
+                    subId = (Integer) smCls.getMethod("getDefaultSubscriptionId").invoke(null);
+                } catch (Throwable ignored) {}
+            }
+            if (subId < 0) return -1;
+            Object info = smCls.getMethod("getActiveSubscriptionInfo", int.class).invoke(sm, subId);
+            if (info == null) return -1;
+            return (Integer) info.getClass().getMethod("getSimSlotIndex").invoke(info);
         } catch (Throwable t) {
             return -1;
         }
