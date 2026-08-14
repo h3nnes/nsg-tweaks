@@ -1,5 +1,7 @@
 package com.nsgmod.band;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.style.ForegroundColorSpan;
@@ -28,6 +30,10 @@ public class NrNsaGnbIdHeaderHook {
     private static final String KEY_NR_ARFCN = "NR5G::Serving_Cell::NR_ARFCN_SSB";
     private static final String KEY_NR_PCI = "NR5G::Serving_Cell::NR_PCI";
     private static final String NR5G_TECH = "NR5G";
+    private static final String MAIN_PREFS = "com.qtrun.QuickTest_preferences";
+    private static final String BACKUP_PREFS = "nsg_tweaks_per_sim_formats";
+    private static final String KEY_NR_GNB_LENGTH = "NR_GNB_LENGTH";
+    private static final String KEY_NR_CELLID = "NR_CellID";
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -224,6 +230,23 @@ public class NrNsaGnbIdHeaderHook {
     }
 
     private int getGnbLength() {
+        int slot = getActiveSimSlot();
+        if (slot >= 0) {
+            String perSlot = readPref(BACKUP_PREFS, "slot" + slot + "_" + KEY_NR_GNB_LENGTH);
+            if (perSlot != null) {
+                try {
+                    int k = Integer.parseInt(perSlot);
+                    if (k >= 22 && k <= 32) return k;
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        String global = readPref(MAIN_PREFS, KEY_NR_GNB_LENGTH);
+        if (global != null) {
+            try {
+                int k = Integer.parseInt(global);
+                if (k >= 22 && k <= 32) return k;
+            } catch (NumberFormatException ignored) {}
+        }
         try {
             if (settingsSingletonField != null && gnbLengthField != null) {
                 Object settingsInstance = settingsSingletonField.get(null);
@@ -235,6 +258,88 @@ public class NrNsaGnbIdHeaderHook {
         } catch (Throwable ignored) {
         }
         return 24;
+    }
+
+    private int getSlotNrCellIdFormat() {
+        int slot = getActiveSimSlot();
+        if (slot >= 0) {
+            String perSlot = readPref(BACKUP_PREFS, "slot" + slot + "_" + KEY_NR_CELLID);
+            if (perSlot != null) {
+                try { return Integer.parseInt(perSlot); } catch (NumberFormatException ignored) {}
+            }
+        }
+        String global = readPref(MAIN_PREFS, KEY_NR_CELLID);
+        if (global != null) {
+            try { return Integer.parseInt(global); } catch (NumberFormatException ignored) {}
+        }
+        return 12;
+    }
+
+    private String readPref(String prefsName, String key) {
+        try {
+            Context ctx = getAppContext();
+            if (ctx == null) return null;
+            return ctx.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getString(key, null);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private int getActiveSimSlot() {
+        try {
+            Class<?> wsCls = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            if (wsCls == null) return -1;
+            String singletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            Field singletonField = wsCls.getDeclaredField(singletonName);
+            singletonField.setAccessible(true);
+            Object wsInstance = singletonField.get(null);
+            if (wsInstance == null) return -1;
+            String modName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            Field modField = wsCls.getDeclaredField(modName);
+            modField.setAccessible(true);
+            short moduleShort = modField.getShort(wsInstance);
+            int nsgSlot = moduleShort >> 4;
+            int defaultPhysicalSlot = getDefaultDataPhysicalSlot();
+            if (defaultPhysicalSlot < 0) return nsgSlot;
+            if (nsgSlot == 0) return defaultPhysicalSlot;
+            return defaultPhysicalSlot == 0 ? 1 : 0;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private int getDefaultDataPhysicalSlot() {
+        try {
+            Context ctx = getAppContext();
+            if (ctx == null) return -1;
+            Object sm = ctx.getSystemService("telephony_subscription_service");
+            if (sm == null) return -1;
+            Class<?> smCls = Class.forName("android.telephony.SubscriptionManager");
+            int subId = -1;
+            try {
+                subId = (Integer) smCls.getMethod("getDefaultDataSubscriptionId").invoke(null);
+            } catch (Throwable ignored) {}
+            if (subId < 0) {
+                try {
+                    subId = (Integer) smCls.getMethod("getDefaultSubscriptionId").invoke(null);
+                } catch (Throwable ignored) {}
+            }
+            if (subId < 0) return -1;
+            Object info = smCls.getMethod("getActiveSubscriptionInfo", int.class).invoke(sm, subId);
+            if (info == null) return -1;
+            return (Integer) info.getClass().getMethod("getSimSlotIndex").invoke(info);
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    private static Context getAppContext() {
+        try {
+            Class<?> atCls = Class.forName("android.app.ActivityThread");
+            return (Context) atCls.getMethod("currentApplication").invoke(null);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -431,8 +536,14 @@ public class NrNsaGnbIdHeaderHook {
         if (text.isEmpty() || "-".equals(text)) return;
         if (text.contains(" || ")) return;
 
+        int formatCode = getSlotNrCellIdFormat();
+        String gnbText;
+        if (formatCode == 13) {
+            gnbText = Long.toHexString(gnbId) + " / " + Long.toHexString(sector);
+        } else {
+            gnbText = gnbId + " / " + sector;
+        }
         String separator = " || ";
-        String gnbText = gnbId + " / " + sector;
         String fullText = text + separator + gnbText;
 
         gField.set(b1, fullText);
