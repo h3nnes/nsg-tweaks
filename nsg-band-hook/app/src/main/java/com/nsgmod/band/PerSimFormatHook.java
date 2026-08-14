@@ -34,7 +34,6 @@ public class PerSimFormatHook {
         "GSM_CellID", "GSM_LAC", "WCDMA_LAC", "WCDMA_CellID",
         "LTE_PCI", "LTE_TAC", "LTE_CellID", "NR_CellID"
     };
-    private static final long SLOT_CACHE_TTL_MS = 5000L;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -42,8 +41,6 @@ public class PerSimFormatHook {
     private Method sr0Method;
     private Method formatFragmentMethod;
 
-    private static volatile int cachedSlot = -1;
-    private static volatile long cachedSlotTime = 0;
     private static volatile boolean suppressListener = false;
     private static boolean listenerRegistered = false;
     private static SharedPreferences.OnSharedPreferenceChangeListener prefsListener;
@@ -615,54 +612,21 @@ public class PerSimFormatHook {
     }
 
     private int getActiveSimSlot() {
-        long now = System.currentTimeMillis();
-        if (cachedSlot >= 0 && (now - cachedSlotTime) < SLOT_CACHE_TTL_MS) {
-            return cachedSlot;
-        }
         try {
-            Context ctx = getAppContext();
-            if (ctx == null) {
-                cachedSlot = -1;
-                cachedSlotTime = now;
-                return -1;
-            }
-            Object sm = ctx.getSystemService("telephony_subscription_service");
-            if (sm == null) {
-                cachedSlot = -1;
-                cachedSlotTime = now;
-                return -1;
-            }
-            Class<?> smCls = Class.forName("android.telephony.SubscriptionManager");
-            int subId = -1;
-            try {
-                subId = (Integer) smCls.getMethod("getDefaultDataSubscriptionId").invoke(null);
-            } catch (Throwable ignored) {}
-            if (subId < 0) {
-                try {
-                    subId = (Integer) smCls.getMethod("getDefaultSubscriptionId").invoke(null);
-                } catch (Throwable ignored) {}
-            }
-            Log.w(TAG, "PerSimFormatHook: defaultDataSubId=" + subId);
-            if (subId < 0) {
-                cachedSlot = -1;
-                cachedSlotTime = now;
-                return -1;
-            }
-            Object info = smCls.getMethod("getActiveSubscriptionInfo", int.class).invoke(sm, subId);
-            if (info == null) {
-                cachedSlot = -1;
-                cachedSlotTime = now;
-                return -1;
-            }
-            int slot = (Integer) info.getClass().getMethod("getSimSlotIndex").invoke(info);
-            Log.w(TAG, "PerSimFormatHook: activeSimSlot=" + slot);
-            cachedSlot = slot;
-            cachedSlotTime = now;
+            Class<?> wsCls = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            if (wsCls == null) return -1;
+            String singletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
+            Field singletonField = wsCls.getDeclaredField(singletonName);
+            singletonField.setAccessible(true);
+            Object wsInstance = singletonField.get(null);
+            if (wsInstance == null) return -1;
+            String modName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
+            Field modField = wsCls.getDeclaredField(modName);
+            modField.setAccessible(true);
+            short moduleShort = modField.getShort(wsInstance);
+            int slot = moduleShort >> 4;
             return slot;
         } catch (Throwable t) {
-            Log.w(TAG, "PerSimFormatHook: getActiveSimSlot failed: " + t);
-            cachedSlot = -1;
-            cachedSlotTime = now;
             return -1;
         }
     }
