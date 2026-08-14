@@ -32,7 +32,9 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.WeakHashMap;
 
 import io.github.libxposed.api.XposedInterface;
@@ -463,10 +465,14 @@ public class SignalingShareHook {
                                         }
                                         Method fpC = fpClass.getMethod("c",
                                                 Context.class, String.class);
-                                        Object fpAInstance = fpC.invoke(null, ctx,
+                                        Object strategy = fpC.invoke(null, ctx,
                                                 "com.qtrun.QuickTest.fileprovider");
-                                        Method fpB = fpAInstance.getClass().getMethod("b", File.class);
-                                        fileUri = (Uri) fpB.invoke(fpAInstance, tmpFile);
+                                        try {
+                                            Method fpB = strategy.getClass().getMethod("b", File.class);
+                                            fileUri = (Uri) fpB.invoke(strategy, tmpFile);
+                                        } catch (NoSuchMethodException nsme) {
+                                            fileUri = buildFileProviderUri(strategy, tmpFile);
+                                        }
                                     }
                                 } catch (Exception e) {
                                     Log.w(TAG, "SignalingShareHook: share failed to write/get URI: " + e);
@@ -504,6 +510,45 @@ public class SignalingShareHook {
         } catch (Exception e) {
             Log.e(TAG, "SignalingShareHook: hookOnItemClick failed: " + e);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Uri buildFileProviderUri(Object strategy, File file) throws Exception {
+        Class<?> sc = strategy.getClass();
+        Field af = sc.getDeclaredField("a");
+        Field bf = sc.getDeclaredField("b");
+        af.setAccessible(true);
+        bf.setAccessible(true);
+        String authority = (String) af.get(strategy);
+        HashMap<String, File> roots = (HashMap<String, File>) bf.get(strategy);
+        String canonicalPath = file.getCanonicalPath();
+        String strippedCanonical = stripTrailingSlash(canonicalPath);
+        Map.Entry<String, File> best = null;
+        for (Map.Entry<String, File> entry : roots.entrySet()) {
+            String rootPath = entry.getValue().getPath();
+            String strippedRoot = stripTrailingSlash(rootPath);
+            if (strippedCanonical.startsWith(strippedRoot + "/")
+                    && (best == null || rootPath.length() > best.getValue().getPath().length())) {
+                best = entry;
+            }
+        }
+        if (best == null) return null;
+        String rootPath = best.getValue().getPath();
+        String subPath = rootPath.endsWith("/")
+                ? canonicalPath.substring(rootPath.length())
+                : canonicalPath.substring(rootPath.length() + 1);
+        return new Uri.Builder()
+                .scheme("content")
+                .authority(authority)
+                .encodedPath(Uri.encode(best.getKey()) + "/"
+                        + Uri.encode(subPath, "/"))
+                .build();
+    }
+
+    private static String stripTrailingSlash(String s) {
+        return (s.length() > 0 && s.charAt(s.length() - 1) == '/')
+                ? s.substring(0, s.length() - 1)
+                : s;
     }
 
     // -----------------------------------------------------------------------
