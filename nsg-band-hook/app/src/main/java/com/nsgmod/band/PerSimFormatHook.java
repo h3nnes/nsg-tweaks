@@ -633,23 +633,34 @@ public class PerSimFormatHook {
                 return -1;
             }
             Class<?> smCls = Class.forName("android.telephony.SubscriptionManager");
-            int defaultSubId = (Integer) smCls.getMethod("getDefaultSubscriptionId").invoke(null);
-            if (defaultSubId < 0) {
+            int subId = -1;
+            try {
+                subId = (Integer) smCls.getMethod("getDefaultDataSubscriptionId").invoke(null);
+            } catch (Throwable ignored) {}
+            if (subId < 0) {
+                try {
+                    subId = (Integer) smCls.getMethod("getDefaultSubscriptionId").invoke(null);
+                } catch (Throwable ignored) {}
+            }
+            Log.w(TAG, "PerSimFormatHook: defaultDataSubId=" + subId);
+            if (subId < 0) {
                 cachedSlot = -1;
                 cachedSlotTime = now;
                 return -1;
             }
-            Object info = smCls.getMethod("getActiveSubscriptionInfo", int.class).invoke(sm, defaultSubId);
+            Object info = smCls.getMethod("getActiveSubscriptionInfo", int.class).invoke(sm, subId);
             if (info == null) {
                 cachedSlot = -1;
                 cachedSlotTime = now;
                 return -1;
             }
             int slot = (Integer) info.getClass().getMethod("getSimSlotIndex").invoke(info);
+            Log.w(TAG, "PerSimFormatHook: activeSimSlot=" + slot);
             cachedSlot = slot;
             cachedSlotTime = now;
             return slot;
         } catch (Throwable t) {
+            Log.w(TAG, "PerSimFormatHook: getActiveSimSlot failed: " + t);
             cachedSlot = -1;
             cachedSlotTime = now;
             return -1;
