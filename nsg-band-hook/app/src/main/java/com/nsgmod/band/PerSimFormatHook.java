@@ -411,18 +411,6 @@ public class PerSimFormatHook {
         }
         if (iconSpaceField != null) iconSpaceField.set(dropDown, false);
 
-        Field orderField = null;
-        for (Field f : prefCls.getDeclaredFields()) {
-            if (f.getType() == int.class && !Modifier.isFinal(f.getModifiers())) {
-                orderField = f;
-                break;
-            }
-        }
-        if (orderField != null) {
-            orderField.setAccessible(true);
-            orderField.set(dropDown, 0);
-        }
-
         if (setDefaultValue != null) setDefaultValue.invoke(dropDown, "-1");
 
         final SharedPreferences mainPrefs = ctx.getSharedPreferences(MAIN_PREFS, Context.MODE_PRIVATE);
