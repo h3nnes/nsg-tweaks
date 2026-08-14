@@ -263,6 +263,10 @@ public class PerSimFormatHook {
         CharSequence[] entries = {"Global", "SIM Slot 0", "SIM Slot 1"};
         CharSequence[] entryValues = {"-1", "0", "1"};
 
+        Log.w(TAG, "PerSimFormatHook: entriesField=" + entriesField
+                + " entryValuesField=" + entryValuesField
+                + " adapterField=" + adapterField);
+
         if (entriesField != null) {
             entriesField.set(dropDown, entries);
         }
@@ -277,6 +281,17 @@ public class PerSimFormatHook {
                     addMethod.invoke(adapter, entry.toString());
                 }
             }
+        }
+
+        Field listPrefSummaryField = null;
+        for (Field f : listPrefCls.getDeclaredFields()) {
+            if (f.getType() == String.class && !Modifier.isFinal(f.getModifiers())) {
+                listPrefSummaryField = f;
+            }
+        }
+        if (listPrefSummaryField != null) {
+            listPrefSummaryField.setAccessible(true);
+            Log.w(TAG, "PerSimFormatHook: listPrefSummaryField=" + listPrefSummaryField.getName());
         }
 
         Method setDefaultValue = null;
@@ -330,6 +345,21 @@ public class PerSimFormatHook {
             return;
         }
 
+        Log.w(TAG, "PerSimFormatHook: prefScreen children count=" + children.size()
+                + " firstChild=" + (children.isEmpty() ? "null" : children.get(0).getClass().getName()));
+
+        ArrayList<Object> targetChildren = children;
+        Object targetParent = prefScreen;
+        if (children.size() == 1 && prefGroupCls.isInstance(children.get(0))) {
+            Object category = children.get(0);
+            ArrayList<Object> catChildren = (ArrayList<Object>) qField.get(category);
+            if (catChildren != null) {
+                Log.w(TAG, "PerSimFormatHook: inserting into PreferenceCategory, catChildren=" + catChildren.size());
+                targetChildren = catChildren;
+                targetParent = category;
+            }
+        }
+
         Field listenerField = null;
         Class<?> listenerCls = null;
         for (Field f : prefCls.getDeclaredFields()) {
@@ -349,9 +379,16 @@ public class PerSimFormatHook {
         }
         if (listenerField != null) listenerField.setAccessible(true);
 
+        Log.w(TAG, "PerSimFormatHook: keyField=" + keyField
+                + " titleField=" + titleField
+                + " summaryField=" + summaryField
+                + " listenerField=" + listenerField
+                + " listenerCls=" + listenerCls);
+
         if (keyField != null) keyField.set(dropDown, EDIT_SLOT_KEY);
         if (titleField != null) titleField.set(dropDown, "Edit Formats For");
         if (summaryField != null) summaryField.set(dropDown, "%s");
+        if (listPrefSummaryField != null) listPrefSummaryField.set(dropDown, "%s");
         if (iconSpaceField != null) iconSpaceField.set(dropDown, false);
         if (setDefaultValue != null) setDefaultValue.invoke(dropDown, "-1");
 
@@ -360,9 +397,12 @@ public class PerSimFormatHook {
         if (listenerField != null && listenerCls != null) {
             Object proxy = Proxy.newProxyInstance(loader, new Class<?>[]{listenerCls},
                     (p, m, a) -> {
+                        Log.w(TAG, "PerSimFormatHook: listener invoked, method=" + m.getName()
+                                + " args=" + (a == null ? "null" : a.length));
                         if (a != null && a.length == 2 && m.getReturnType() == boolean.class) {
                             String oldValue = mainPrefs.getString(EDIT_SLOT_KEY, "-1");
                             String newValue = String.valueOf(a[1]);
+                            Log.w(TAG, "PerSimFormatHook: slot change " + oldValue + " -> " + newValue);
                             onEditSlotChanged(ctx, oldValue, newValue);
                             return Boolean.TRUE;
                         }
@@ -371,13 +411,16 @@ public class PerSimFormatHook {
                         return null;
                     });
             listenerField.set(dropDown, proxy);
+            Log.w(TAG, "PerSimFormatHook: listener proxy set");
         } else {
             Log.w(TAG, "PerSimFormatHook: listener field not found, slot switching disabled");
         }
 
-        children.add(0, dropDown);
+        targetChildren.add(0, dropDown);
         if (attachMethod != null) attachMethod.invoke(dropDown, prefManager);
-        if (parentField != null) parentField.set(dropDown, prefScreen);
+        if (parentField != null) parentField.set(dropDown, targetParent);
+
+        Log.w(TAG, "PerSimFormatHook: inserted at pos 0, targetChildren size=" + targetChildren.size());
 
         if (!listenerRegistered) {
             listenerRegistered = true;
@@ -406,6 +449,7 @@ public class PerSimFormatHook {
     }
 
     private void onEditSlotChanged(Context ctx, String oldSlot, String newSlot) {
+        Log.w(TAG, "PerSimFormatHook: onEditSlotChanged " + oldSlot + " -> " + newSlot);
         if (oldSlot.equals(newSlot)) return;
 
         SharedPreferences mainPrefs = ctx.getSharedPreferences(MAIN_PREFS, Context.MODE_PRIVATE);
@@ -452,6 +496,8 @@ public class PerSimFormatHook {
 
     private void onFormatPrefChanged(SharedPreferences mainPrefs, String key) {
         if (suppressListener) return;
+
+        Log.w(TAG, "PerSimFormatHook: prefChanged key=" + key);
 
         boolean isFormatKey = false;
         for (String fk : FORMAT_KEYS) {
