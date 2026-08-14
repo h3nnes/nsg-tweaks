@@ -215,22 +215,59 @@ public class PerSimFormatHook {
         Object dropDown = ddCtor.newInstance(ctorArgs);
 
         Field keyField = null;
-        Field titleField = null;
-        Field summaryField = null;
+        java.util.List<Field> csFields = new java.util.ArrayList<>();
         for (Field f : prefCls.getDeclaredFields()) {
             Class<?> ft = f.getType();
             int mod = f.getModifiers();
             if (ft == String.class && Modifier.isFinal(mod) && keyField == null) {
                 keyField = f;
-            } else if (ft == CharSequence.class && titleField == null) {
-                titleField = f;
-            } else if (ft == CharSequence.class && summaryField == null) {
-                summaryField = f;
+            } else if (ft == CharSequence.class) {
+                csFields.add(f);
             }
         }
         if (keyField != null) keyField.setAccessible(true);
-        if (titleField != null) titleField.setAccessible(true);
-        if (summaryField != null) summaryField.setAccessible(true);
+        for (Field f : csFields) f.setAccessible(true);
+
+        Class<?> listPrefCls = ClassMapping.loadClass("androidx.preference.ListPreference", loader);
+
+        Method setSummaryMethod = null;
+        for (Method m : listPrefCls.getDeclaredMethods()) {
+            if (m.getReturnType() == void.class && m.getParameterCount() == 1) {
+                Class<?> p = m.getParameterTypes()[0];
+                if (p == CharSequence.class) {
+                    setSummaryMethod = m;
+                    setSummaryMethod.setAccessible(true);
+                    break;
+                }
+            }
+        }
+
+        Field summaryField = null;
+        Field titleField = null;
+        if (setSummaryMethod != null && csFields.size() >= 2) {
+            try {
+                java.util.List<CharSequence> originals = new java.util.ArrayList<>();
+                for (Field f : csFields) originals.add((CharSequence) f.get(dropDown));
+                setSummaryMethod.invoke(dropDown, (CharSequence) "PROBE");
+                for (int pi = 0; pi < csFields.size(); pi++) {
+                    CharSequence now = (CharSequence) csFields.get(pi).get(dropDown);
+                    if (!java.util.Objects.equals(originals.get(pi), now)) {
+                        summaryField = csFields.get(pi);
+                        break;
+                    }
+                }
+                setSummaryMethod.invoke(dropDown, (CharSequence) null);
+                for (Field f : csFields) {
+                    if (f != summaryField) { titleField = f; break; }
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "PerSimFormatHook: field probe failed: " + t);
+            }
+        }
+        if (summaryField == null && csFields.size() >= 2) summaryField = csFields.get(0);
+        if (titleField == null && csFields.size() >= 2) titleField = csFields.get(1);
+
+        Log.w(TAG, "PerSimFormatHook: titleField=" + titleField + " summaryField=" + summaryField);
 
         Field iconSpaceField = null;
         try {
@@ -239,7 +276,6 @@ public class PerSimFormatHook {
             iconSpaceField.setAccessible(true);
         } catch (Throwable ignored) {}
 
-        Class<?> listPrefCls = ClassMapping.loadClass("androidx.preference.ListPreference", loader);
         Field entriesField = null;
         Field entryValuesField = null;
         for (Field f : listPrefCls.getDeclaredFields()) {
@@ -285,30 +321,6 @@ public class PerSimFormatHook {
                 }
             }
         }
-
-        Field listPrefSummaryField = null;
-        for (Field f : listPrefCls.getDeclaredFields()) {
-            if (f.getType() == String.class && !Modifier.isFinal(f.getModifiers())) {
-                listPrefSummaryField = f;
-            }
-        }
-        if (listPrefSummaryField != null) {
-            listPrefSummaryField.setAccessible(true);
-            Log.w(TAG, "PerSimFormatHook: listPrefSummaryField=" + listPrefSummaryField.getName());
-        }
-
-        Method setSummaryMethod = null;
-        for (Method m : listPrefCls.getDeclaredMethods()) {
-            if (m.getReturnType() == void.class && m.getParameterCount() == 1) {
-                Class<?> p = m.getParameterTypes()[0];
-                if (p == CharSequence.class) {
-                    setSummaryMethod = m;
-                    setSummaryMethod.setAccessible(true);
-                    break;
-                }
-            }
-        }
-        Log.w(TAG, "PerSimFormatHook: setSummaryMethod=" + setSummaryMethod);
 
         Method setDefaultValue = null;
         for (Method m : prefCls.getDeclaredMethods()) {
@@ -403,17 +415,18 @@ public class PerSimFormatHook {
 
         if (keyField != null) keyField.set(dropDown, EDIT_SLOT_KEY);
         if (titleField != null) titleField.set(dropDown, "Edit Formats For");
-        if (summaryField != null) summaryField.set(dropDown, "%s");
         if (setSummaryMethod != null) {
             setSummaryMethod.invoke(dropDown, (CharSequence) "%s");
-        } else if (listPrefSummaryField != null) {
-            listPrefSummaryField.set(dropDown, "%s");
+        } else if (summaryField != null) {
+            summaryField.set(dropDown, "%s");
         }
         if (iconSpaceField != null) iconSpaceField.set(dropDown, false);
 
         if (setDefaultValue != null) setDefaultValue.invoke(dropDown, "-1");
 
         final SharedPreferences mainPrefs = ctx.getSharedPreferences(MAIN_PREFS, Context.MODE_PRIVATE);
+        final ArrayList<Object> prefCategoryChildren = targetChildren;
+        final Method refreshMethod = setDefaultValue;
 
         if (listenerField != null && listenerCls != null) {
             Object proxy = Proxy.newProxyInstance(loader, new Class<?>[]{listenerCls},
@@ -425,6 +438,7 @@ public class PerSimFormatHook {
                             String newValue = String.valueOf(a[1]);
                             Log.w(TAG, "PerSimFormatHook: slot change " + oldValue + " -> " + newValue);
                             onEditSlotChanged(ctx, oldValue, newValue);
+                            refreshListPreferences(prefCategoryChildren, refreshMethod);
                             return Boolean.TRUE;
                         }
                         if (m.getReturnType() == boolean.class) return Boolean.FALSE;
@@ -466,6 +480,39 @@ public class PerSimFormatHook {
             }
         } catch (Throwable t) {
             Log.w(TAG, "PerSimFormatHook: adapter refresh failed: " + t);
+        }
+    }
+
+    private void refreshListPreferences(ArrayList<Object> categoryChildren, Method refreshMethod) {
+        if (refreshMethod == null || categoryChildren == null) return;
+        Class<?> listPrefCls = ClassMapping.loadClass("androidx.preference.ListPreference", loader);
+        Class<?> prefCls = ClassMapping.loadClass("androidx.preference.Preference", loader);
+        Field keyField = null;
+        try {
+            for (Field f : prefCls.getDeclaredFields()) {
+                if (f.getType() == String.class && Modifier.isFinal(f.getModifiers())) {
+                    keyField = f;
+                    break;
+                }
+            }
+        } catch (Throwable ignored) {}
+        if (keyField == null) return;
+        keyField.setAccessible(true);
+
+        for (Object pref : categoryChildren) {
+            if (pref == null) continue;
+            if (listPrefCls != null && !listPrefCls.isInstance(pref)) continue;
+            try {
+                String key = (String) keyField.get(pref);
+                boolean isFormatKey = false;
+                for (String fk : FORMAT_KEYS) {
+                    if (fk.equals(key)) { isFormatKey = true; break; }
+                }
+                if (!isFormatKey) continue;
+                refreshMethod.invoke(pref, (Object) null);
+            } catch (Throwable t) {
+                Log.w(TAG, "PerSimFormatHook: refresh failed for pref: " + t);
+            }
         }
     }
 
