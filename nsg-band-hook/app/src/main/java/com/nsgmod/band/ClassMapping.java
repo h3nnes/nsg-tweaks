@@ -123,6 +123,8 @@ public final class ClassMapping {
         map.put("h7.b", "q5.b");
         map.put("h7.e", "q5.e");
         map.put("d7.a", "m5.a");
+        map.put("sr0", "m5.f");
+        map.put("js", "c6.a0");
 
         GPLAY_OVERRIDES = Collections.unmodifiableMap(map);
 
@@ -167,6 +169,7 @@ public final class ClassMapping {
         // qtrun a(b,double)->Integer -> gplay d(b,double)
         methodMap.put("com.qtrun.legend.LegendManager|c", "e");
         methodMap.put("com.qtrun.legend.LegendManager|a", "d");
+        methodMap.put("js|f0", "h0");
         GPLAY_METHOD_OVERRIDES = Collections.unmodifiableMap(methodMap);
 
         Map<String, String> fieldMap = new HashMap<>();
