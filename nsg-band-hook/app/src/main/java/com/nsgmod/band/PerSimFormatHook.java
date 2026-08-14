@@ -27,6 +27,9 @@ public class PerSimFormatHook {
         "GSM_CellID", "GSM_LAC", "WCDMA_LAC", "WCDMA_CellID",
         "LTE_PCI", "LTE_TAC", "LTE_CellID", "NR_CellID", "NR_GNB_LENGTH"
     };
+    private static final String[] FORMAT_DEFAULTS = {
+        "0", "0", "0", "5", "7", "0", "3", "12", "24"
+    };
     private static final String[] TYPE_INDEX_TO_KEY = {
         "GSM_CellID", "GSM_LAC", "WCDMA_LAC", "WCDMA_CellID",
         "LTE_PCI", "LTE_TAC", "LTE_CellID", "NR_CellID"
@@ -294,6 +297,19 @@ public class PerSimFormatHook {
             Log.w(TAG, "PerSimFormatHook: listPrefSummaryField=" + listPrefSummaryField.getName());
         }
 
+        Method setSummaryMethod = null;
+        for (Method m : listPrefCls.getDeclaredMethods()) {
+            if (m.getReturnType() == void.class && m.getParameterCount() == 1) {
+                Class<?> p = m.getParameterTypes()[0];
+                if (p == CharSequence.class) {
+                    setSummaryMethod = m;
+                    setSummaryMethod.setAccessible(true);
+                    break;
+                }
+            }
+        }
+        Log.w(TAG, "PerSimFormatHook: setSummaryMethod=" + setSummaryMethod);
+
         Method setDefaultValue = null;
         for (Method m : prefCls.getDeclaredMethods()) {
             if (m.getReturnType() == void.class) {
@@ -388,8 +404,25 @@ public class PerSimFormatHook {
         if (keyField != null) keyField.set(dropDown, EDIT_SLOT_KEY);
         if (titleField != null) titleField.set(dropDown, "Edit Formats For");
         if (summaryField != null) summaryField.set(dropDown, "%s");
-        if (listPrefSummaryField != null) listPrefSummaryField.set(dropDown, "%s");
+        if (setSummaryMethod != null) {
+            setSummaryMethod.invoke(dropDown, (CharSequence) "%s");
+        } else if (listPrefSummaryField != null) {
+            listPrefSummaryField.set(dropDown, "%s");
+        }
         if (iconSpaceField != null) iconSpaceField.set(dropDown, false);
+
+        Field orderField = null;
+        for (Field f : prefCls.getDeclaredFields()) {
+            if (f.getType() == int.class && !Modifier.isFinal(f.getModifiers())) {
+                orderField = f;
+                break;
+            }
+        }
+        if (orderField != null) {
+            orderField.setAccessible(true);
+            orderField.set(dropDown, 0);
+        }
+
         if (setDefaultValue != null) setDefaultValue.invoke(dropDown, "-1");
 
         final SharedPreferences mainPrefs = ctx.getSharedPreferences(MAIN_PREFS, Context.MODE_PRIVATE);
@@ -463,32 +496,32 @@ public class PerSimFormatHook {
         }
 
         SharedPreferences.Editor backupEditor = backupPrefs.edit();
-        for (String key : FORMAT_KEYS) {
-            String value = mainPrefs.getString(key, null);
-            if (value != null) {
-                backupEditor.putString(oldPrefix + key, value);
-            }
+        for (int i = 0; i < FORMAT_KEYS.length; i++) {
+            String key = FORMAT_KEYS[i];
+            String value = mainPrefs.getString(key, FORMAT_DEFAULTS[i]);
+            backupEditor.putString(oldPrefix + key, value);
+            Log.w(TAG, "PerSimFormatHook: save " + oldPrefix + key + "=" + value);
         }
         backupEditor.apply();
 
         suppressListener = true;
         try {
             SharedPreferences.Editor mainEditor = mainPrefs.edit();
-            for (String key : FORMAT_KEYS) {
-                String value = null;
+            for (int i = 0; i < FORMAT_KEYS.length; i++) {
+                String key = FORMAT_KEYS[i];
+                String value;
                 if ("-1".equals(newSlot)) {
-                    value = backupPrefs.getString("global_snapshot_" + key, null);
+                    value = backupPrefs.getString("global_snapshot_" + key, FORMAT_DEFAULTS[i]);
                 } else {
                     value = backupPrefs.getString("slot" + newSlot + "_" + key, null);
                     if (value == null) {
-                        value = backupPrefs.getString("global_snapshot_" + key, null);
+                        value = backupPrefs.getString("global_snapshot_" + key, FORMAT_DEFAULTS[i]);
                     }
                 }
-                if (value != null) {
-                    mainEditor.putString(key, value);
-                }
+                Log.w(TAG, "PerSimFormatHook: load " + key + "=" + value);
+                mainEditor.putString(key, value);
             }
-            mainEditor.apply();
+            mainEditor.commit();
         } finally {
             suppressListener = false;
         }
