@@ -29,6 +29,7 @@ public class MapDotColorHook {
     public void install() {
         installPresentationManagerHook();
         installLegendManagerHook();
+        installHw0BNullSafeHook();
     }
 
     private void installPresentationManagerHook() {
@@ -182,6 +183,34 @@ public class MapDotColorHook {
             Log.i(TAG, "MapDotColorHook: LegendManager color hook installed");
         } catch (Throwable t) {
             Log.e(TAG, "MapDotColorHook: LegendManager color hook failed: " + t);
+        }
+    }
+
+    private void installHw0BNullSafeHook() {
+        try {
+            Class<?> hw0Class = ClassMapping.loadClass("hw0", loader);
+            if (hw0Class == null) {
+                Log.w(TAG, "MapDotColorHook: hw0 class not found");
+                return;
+            }
+            Class<?> sf0Class = ClassMapping.loadClass("sf0", loader);
+            if (sf0Class == null) {
+                Log.w(TAG, "MapDotColorHook: sf0 class not found for hw0.b hook");
+                return;
+            }
+            Method bMethod = hw0Class.getDeclaredMethod("b", sf0Class);
+            xposed.hook(bMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    if (chain.getArg(0) == null) {
+                        return new HashMap<>();
+                    }
+                    return chain.proceed();
+                }
+            });
+            Log.i(TAG, "MapDotColorHook: hw0.b null-safe hook installed");
+        } catch (Throwable t) {
+            Log.e(TAG, "MapDotColorHook: hw0.b null-safe hook failed: " + t);
         }
     }
 

@@ -126,6 +126,7 @@ public final class ClassMapping {
         map.put("sr0", "m5.f");
         map.put("js", "c6.a0");
         map.put("sf0", "y5.a");
+        map.put("hw0", "x5.d");
 
         GPLAY_OVERRIDES = Collections.unmodifiableMap(map);
 
