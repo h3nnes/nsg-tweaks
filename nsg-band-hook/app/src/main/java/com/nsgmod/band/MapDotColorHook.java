@@ -8,6 +8,7 @@ import androidx.annotation.NonNull;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.HashMap;
@@ -99,21 +100,13 @@ public class MapDotColorHook {
         sf0C.setAccessible(true);
         sf0D.setAccessible(true);
 
-        Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-        Field unsafeField;
-        try {
-            unsafeField = unsafeClass.getDeclaredField("THE_ONE");
-        } catch (NoSuchFieldException e2) {
-            unsafeField = unsafeClass.getDeclaredField("theUnsafe");
-        }
-        unsafeField.setAccessible(true);
-        Object unsafe = unsafeField.get(null);
-        Method unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
+        java.lang.reflect.Constructor<?> sf0Ctor = sf0Class.getDeclaredConstructor();
+        sf0Ctor.setAccessible(true);
 
-        Object commonSinr = unsafeAllocateInstance.invoke(unsafe, sf0Class);
+        Object commonSinr = sf0Ctor.newInstance();
         sf0A.set(commonSinr, "Common SINR");
         sf0B.set(commonSinr, "Common_SINR");
-        HashMap<String, String> sinrMap = new HashMap<>();
+        HashMap<String, String> sinrMap = (HashMap<String, String>) sf0C.get(commonSinr);
         sinrMap.put("GSM", "GSM::Downlink_Measurements::ServC2I");
         sinrMap.put("WCDMA", "WCDMA::Downlink_Measurements::Uu_Serving_EcNo");
         sinrMap.put("TDSCDMA", "TDSCDMA::Downlink_Measurements::Uu_PCCPCH_C2I");
@@ -121,28 +114,25 @@ public class MapDotColorHook {
         sinrMap.put("EVDO", "EvDo::Pilot_Measurements::EV_SINR_Best");
         sinrMap.put("LTE", "LTE::Downlink_Measurements::LTE_SINR_PCell");
         sinrMap.put("NR5G", "NR5G::Downlink_Measurements::NR_SS_SINR");
-        sf0C.set(commonSinr, sinrMap);
-        sf0D.setBoolean(commonSinr, false);
+        try { sf0D.setBoolean(commonSinr, false); } catch (Throwable ignored) {}
         commonList.add(commonSinr);
 
-        Object powerHeadroom = unsafeAllocateInstance.invoke(unsafe, sf0Class);
+        Object powerHeadroom = sf0Ctor.newInstance();
         sf0A.set(powerHeadroom, "Power Headroom");
         sf0B.set(powerHeadroom, "Power_Headroom");
-        HashMap<String, String> phrMap = new HashMap<>();
+        HashMap<String, String> phrMap = (HashMap<String, String>) sf0C.get(powerHeadroom);
         phrMap.put("LTE", "LTE::Uplink_Measurements::LTE_AvgPHR_UL");
         phrMap.put("NR5G", "NR5G::Uplink_Measurements::NR_Power_Headroom");
-        sf0C.set(powerHeadroom, phrMap);
-        sf0D.setBoolean(powerHeadroom, true);
+        try { sf0D.setBoolean(powerHeadroom, true); } catch (Throwable ignored) {}
         singlesList.add(powerHeadroom);
 
-        Object throughputDL = unsafeAllocateInstance.invoke(unsafe, sf0Class);
+        Object throughputDL = sf0Ctor.newInstance();
         sf0A.set(throughputDL, "Throughput DL");
         sf0B.set(throughputDL, "Throughput_DL");
-        HashMap<String, String> tputMap = new HashMap<>();
+        HashMap<String, String> tputMap = (HashMap<String, String>) sf0C.get(throughputDL);
         tputMap.put("LTE", "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL");
         tputMap.put("NR5G", "NR5G::Downlink_Measurements::NR_Physical_Throughput_DL");
-        sf0C.set(throughputDL, tputMap);
-        sf0D.setBoolean(throughputDL, true);
+        try { sf0D.setBoolean(throughputDL, true); } catch (Throwable ignored) {}
         singlesList.add(throughputDL);
     }
 
