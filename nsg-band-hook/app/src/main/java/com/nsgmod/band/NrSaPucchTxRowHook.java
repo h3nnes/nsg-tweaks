@@ -325,16 +325,18 @@ public class NrSaPucchTxRowHook {
             double value = ((Number) valueObj).doubleValue();
 
             int color;
-            if (value > 30.0) {
-                color = 0xFF2E7D32; // dark green
-            } else if (value > 20.0) {
-                color = 0xFF43A047; // green
+            if (value > 35.0) {
+                color = 0xFF1B5E20;
+            } else if (value > 25.0) {
+                color = 0xFF2E7D32;
+            } else if (value > 15.0) {
+                color = 0xFF43A047;
             } else if (value > 10.0) {
-                color = 0xFFFBC02D; // yellow
+                color = 0xFFFBC02D;
             } else if (value > 5.0) {
-                color = 0xFFFF9800; // orange
+                color = 0xFFFF9800;
             } else {
-                color = 0xFFF44336; // red
+                color = 0xFFF44336;
             }
 
             vfF8122j.set(bar, color);
@@ -383,8 +385,7 @@ public class NrSaPucchTxRowHook {
                 sysAFieldB.set(prop, "%.0f dB");
                 sysAFieldC.set(prop, -1);
                 vfF8120g.set(headroomBar, prop);
-                // manual bar style: green default, max 30 dB
-                vfFMethod.invoke(headroomBar, 0xFF43A047, 30.0f);
+                vfFMethod.invoke(headroomBar, 0xFF2E7D32, 40.0f);
             }
 
             // Step 4: inject "SRS TX" label at row=9.0, h=1.0, col=0.0, w=27.0

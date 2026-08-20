@@ -125,6 +125,7 @@ public final class ClassMapping {
         map.put("d7.a", "m5.a");
         map.put("sr0", "m5.f");
         map.put("js", "c6.a0");
+        map.put("sf0", "y5.a");
 
         GPLAY_OVERRIDES = Collections.unmodifiableMap(map);
 
@@ -170,6 +171,7 @@ public final class ClassMapping {
         methodMap.put("com.qtrun.legend.LegendManager|c", "e");
         methodMap.put("com.qtrun.legend.LegendManager|a", "d");
         methodMap.put("js|f0", "h0");
+        methodMap.put("com.qtrun.legend.Presentation.PresentationManager|a", "d");
         GPLAY_METHOD_OVERRIDES = Collections.unmodifiableMap(methodMap);
 
         Map<String, String> fieldMap = new HashMap<>();
@@ -225,6 +227,9 @@ public final class ClassMapping {
         fieldMap.put("com.qtrun.widget.textview.ProgressTextView|j", "k");
         // LegendManager singleton field: qtrun e -> gplay f
         fieldMap.put("com.qtrun.legend.LegendManager|e", "f");
+        fieldMap.put("com.qtrun.legend.Presentation.PresentationManager|e", "f");
+        fieldMap.put("com.qtrun.legend.Presentation.PresentationManager|a", "b");
+        fieldMap.put("com.qtrun.legend.Presentation.PresentationManager|b", "c");
         GPLAY_FIELD_OVERRIDES = Collections.unmodifiableMap(fieldMap);
 
         Map<String, Integer> constantMap = new HashMap<>();

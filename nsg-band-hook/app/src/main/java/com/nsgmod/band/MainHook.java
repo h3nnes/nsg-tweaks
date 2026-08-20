@@ -63,5 +63,6 @@ public class MainHook extends XposedModule {
         new CellRowHeightHook(this, param.getClassLoader()).install();
         new NrNsaGnbIdHeaderHook(this, param.getClassLoader()).install();
         new PerSimFormatHook(this, param.getClassLoader()).install();
+        new MapDotColorHook(this, param.getClassLoader()).install();
     }
 }
