@@ -19,6 +19,26 @@ public class MapDotColorHook {
 
     private static final String TAG = "NSGBandHook";
 
+    static final HashMap<String, HashMap<String, String>> INJECTED_OPTIONS = new HashMap<>();
+
+    static {
+        HashMap<String, String> nrPhr = new HashMap<>();
+        nrPhr.put("NR_Power_Headroom", "NR5G::Uplink_Measurements::NR_Power_Headroom");
+        INJECTED_OPTIONS.put("NR_Power_Headroom", nrPhr);
+
+        HashMap<String, String> ltePhr = new HashMap<>();
+        ltePhr.put("LTE_Power_Headroom", "LTE::Uplink_Measurements::LTE_AvgPHR_UL");
+        INJECTED_OPTIONS.put("LTE_Power_Headroom", ltePhr);
+
+        HashMap<String, String> nrTput = new HashMap<>();
+        nrTput.put("NR_Throughput_DL", "NR5G::Downlink_Measurements::NR_Physical_Throughput_DL");
+        INJECTED_OPTIONS.put("NR_Throughput_DL", nrTput);
+
+        HashMap<String, String> lteTput = new HashMap<>();
+        lteTput.put("LTE_Throughput_DL", "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL");
+        INJECTED_OPTIONS.put("LTE_Throughput_DL", lteTput);
+    }
+
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
@@ -103,10 +123,22 @@ public class MapDotColorHook {
         sf0C.setAccessible(true);
         sf0D.setAccessible(true);
 
-        java.lang.reflect.Constructor<?> sf0Ctor = sf0Class.getDeclaredConstructor();
-        sf0Ctor.setAccessible(true);
+        java.lang.reflect.Constructor<?> sf0Ctor;
+        java.lang.reflect.Constructor<?> sf0CtorSingles = null;
+        try {
+            sf0Ctor = sf0Class.getDeclaredConstructor();
+            sf0Ctor.setAccessible(true);
+        } catch (NoSuchMethodException e) {
+            sf0Ctor = null;
+        }
+        try {
+            sf0CtorSingles = sf0Class.getDeclaredConstructor(int.class);
+            sf0CtorSingles.setAccessible(true);
+        } catch (NoSuchMethodException e) {
+            sf0CtorSingles = null;
+        }
 
-        Object commonSinr = sf0Ctor.newInstance();
+        Object commonSinr = sf0Ctor != null ? sf0Ctor.newInstance() : sf0CtorSingles.newInstance(0);
         sf0A.set(commonSinr, "Common SINR");
         sf0B.set(commonSinr, "Common_SINR");
         HashMap<String, String> sinrMap = (HashMap<String, String>) sf0C.get(commonSinr);
@@ -120,7 +152,7 @@ public class MapDotColorHook {
         try { sf0D.setBoolean(commonSinr, false); } catch (Throwable ignored) {}
         commonList.add(commonSinr);
 
-        Object nrHeadroom = sf0Ctor.newInstance();
+        Object nrHeadroom = sf0CtorSingles != null ? sf0CtorSingles.newInstance(0) : sf0Ctor.newInstance();
         sf0A.set(nrHeadroom, "NR Power Headroom");
         sf0B.set(nrHeadroom, "NR_Power_Headroom");
         HashMap<String, String> nrPhrMap = (HashMap<String, String>) sf0C.get(nrHeadroom);
@@ -128,7 +160,7 @@ public class MapDotColorHook {
         try { sf0D.setBoolean(nrHeadroom, true); } catch (Throwable ignored) {}
         singlesList.add(nrHeadroom);
 
-        Object lteHeadroom = sf0Ctor.newInstance();
+        Object lteHeadroom = sf0CtorSingles != null ? sf0CtorSingles.newInstance(0) : sf0Ctor.newInstance();
         sf0A.set(lteHeadroom, "LTE Power Headroom");
         sf0B.set(lteHeadroom, "LTE_Power_Headroom");
         HashMap<String, String> ltePhrMap = (HashMap<String, String>) sf0C.get(lteHeadroom);
@@ -136,7 +168,7 @@ public class MapDotColorHook {
         try { sf0D.setBoolean(lteHeadroom, true); } catch (Throwable ignored) {}
         singlesList.add(lteHeadroom);
 
-        Object nrThroughput = sf0Ctor.newInstance();
+        Object nrThroughput = sf0CtorSingles != null ? sf0CtorSingles.newInstance(0) : sf0Ctor.newInstance();
         sf0A.set(nrThroughput, "NR Throughput DL");
         sf0B.set(nrThroughput, "NR_Throughput_DL");
         HashMap<String, String> nrTputMap = (HashMap<String, String>) sf0C.get(nrThroughput);
@@ -144,7 +176,7 @@ public class MapDotColorHook {
         try { sf0D.setBoolean(nrThroughput, true); } catch (Throwable ignored) {}
         singlesList.add(nrThroughput);
 
-        Object lteThroughput = sf0Ctor.newInstance();
+        Object lteThroughput = sf0CtorSingles != null ? sf0CtorSingles.newInstance(0) : sf0Ctor.newInstance();
         sf0A.set(lteThroughput, "LTE Throughput DL");
         sf0B.set(lteThroughput, "LTE_Throughput_DL");
         HashMap<String, String> lteTputMap = (HashMap<String, String>) sf0C.get(lteThroughput);
@@ -362,26 +394,54 @@ public class MapDotColorHook {
             }
             sf0AMethod.setAccessible(true);
 
-            java.lang.reflect.Constructor<?> sf0Ctor = sf0Class.getDeclaredConstructor();
-            sf0Ctor.setAccessible(true);
+            java.lang.reflect.Constructor<?> sf0CtorNoArg = null;
+            java.lang.reflect.Constructor<?> sf0CtorInt = null;
+            try {
+                sf0CtorNoArg = sf0Class.getDeclaredConstructor();
+                sf0CtorNoArg.setAccessible(true);
+            } catch (NoSuchMethodException e) { }
+            try {
+                sf0CtorInt = sf0Class.getDeclaredConstructor(int.class);
+                sf0CtorInt.setAccessible(true);
+            } catch (NoSuchMethodException e) { }
+            final java.lang.reflect.Constructor<?> ctorNoArg = sf0CtorNoArg;
+            final java.lang.reflect.Constructor<?> ctorInt = sf0CtorInt;
+
             Field sf0B = sf0Class.getDeclaredField("b");
             Field sf0A = sf0Class.getDeclaredField("a");
+            Field sf0C = sf0Class.getDeclaredField("c");
             sf0B.setAccessible(true);
             sf0A.setAccessible(true);
+            sf0C.setAccessible(true);
 
-            final java.lang.reflect.Constructor<?> ctor = sf0Ctor;
             final Field fieldB = sf0B;
             final Field fieldA = sf0A;
+            final Field fieldC = sf0C;
 
             xposed.hook(sf0AMethod).intercept(new Hooker() {
                 @Override
+                @SuppressWarnings("unchecked")
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     if (result != null) return result;
                     String storedKey = (String) chain.getArg(0);
-                    Object fallback = ctor.newInstance();
-                    fieldA.set(fallback, storedKey);
-                    fieldB.set(fallback, storedKey);
+                    String optionKey = storedKey;
+                    int idx = storedKey.indexOf("::");
+                    if (idx != -1) {
+                        optionKey = storedKey.substring(idx + 2);
+                    }
+                    HashMap<String, String> cEntries = INJECTED_OPTIONS.get(optionKey);
+                    if (cEntries == null) {
+                        optionKey = storedKey;
+                        cEntries = INJECTED_OPTIONS.get(optionKey);
+                    }
+                    Object fallback = ctorInt != null ? ctorInt.newInstance(0) : ctorNoArg.newInstance();
+                    fieldA.set(fallback, optionKey);
+                    fieldB.set(fallback, optionKey);
+                    if (cEntries != null) {
+                        HashMap<String, String> fallbackC = (HashMap<String, String>) fieldC.get(fallback);
+                        fallbackC.putAll(cEntries);
+                    }
                     return fallback;
                 }
             });
