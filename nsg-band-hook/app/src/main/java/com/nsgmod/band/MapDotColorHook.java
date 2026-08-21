@@ -224,8 +224,23 @@ public class MapDotColorHook {
         Class<?> oi0Class = ClassMapping.loadClass("oi0", loader);
         if (e20Class == null || or0Class == null || oi0Class == null) return;
 
-        Constructor<?> e20Ctor = e20Class.getDeclaredConstructor();
-        e20Ctor.setAccessible(true);
+        Constructor<?> e20Ctor = null;
+        Method e20UnsafeAlloc = null;
+        try {
+            e20Ctor = e20Class.getDeclaredConstructor();
+            e20Ctor.setAccessible(true);
+        } catch (NoSuchMethodException e) {
+            Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+            Field unsafeField;
+            try {
+                unsafeField = unsafeClass.getDeclaredField("THE_ONE");
+            } catch (NoSuchFieldException e2) {
+                unsafeField = unsafeClass.getDeclaredField("theUnsafe");
+            }
+            unsafeField.setAccessible(true);
+            e20UnsafeAlloc = unsafeClass.getMethod("allocateInstance", Class.class);
+            e20UnsafeAlloc.setAccessible(true);
+        }
 
         Constructor<?> or0Ctor;
         try {
@@ -253,11 +268,11 @@ public class MapDotColorHook {
 
         double[] hrThresholds = {-10, 5, 10, 15, 25, 35};
         int[] hrColors = {0xFFF44336, 0xFFFF9800, 0xFFFBC02D, 0xFF43A047, 0xFF2E7D32, 0xFF1B5E20};
-        injectLegend(attrMap, defMap, e20Ctor, or0Ctor, oi0Ctor,
+        injectLegend(attrMap, defMap, e20Ctor, e20UnsafeAlloc, e20Class, or0Ctor, oi0Ctor,
                 e20A, e20B, e20C, e20D, or0ListField,
                 "NR5G::Uplink_Measurements::NR_Power_Headroom", "NR_Power_Headroom",
                 hrThresholds, hrColors, 40, -10);
-        injectLegend(attrMap, defMap, e20Ctor, or0Ctor, oi0Ctor,
+        injectLegend(attrMap, defMap, e20Ctor, e20UnsafeAlloc, e20Class, or0Ctor, oi0Ctor,
                 e20A, e20B, e20C, e20D, or0ListField,
                 "LTE::Uplink_Measurements::LTE_AvgPHR_UL", "LTE_Power_Headroom",
                 hrThresholds, hrColors, 40, -10);
@@ -265,11 +280,11 @@ public class MapDotColorHook {
         double[] tputThresholds = {0, 5, 10, 20, 50, 100, 200, 300, 500, 800, 1000};
         int[] tputColors = {0xFF8B0000, 0xFFC03030, 0xFFE06030, 0xFFF08020, 0xFFF0B020,
                 0xFFE0E030, 0xFFA0C020, 0xFF60C020, 0xFF20A040, 0xFF208040, 0xFF1B5E20};
-        injectLegend(attrMap, defMap, e20Ctor, or0Ctor, oi0Ctor,
+        injectLegend(attrMap, defMap, e20Ctor, e20UnsafeAlloc, e20Class, or0Ctor, oi0Ctor,
                 e20A, e20B, e20C, e20D, or0ListField,
                 "NR5G::Downlink_Measurements::NR_Physical_Throughput_DL", "NR_Throughput_DL",
                 tputThresholds, tputColors, 2000, 0);
-        injectLegend(attrMap, defMap, e20Ctor, or0Ctor, oi0Ctor,
+        injectLegend(attrMap, defMap, e20Ctor, e20UnsafeAlloc, e20Class, or0Ctor, oi0Ctor,
                 e20A, e20B, e20C, e20D, or0ListField,
                 "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL", "LTE_Throughput_DL",
                 tputThresholds, tputColors, 2000, 0);
@@ -277,13 +292,27 @@ public class MapDotColorHook {
 
     @SuppressWarnings("unchecked")
     private void injectLegend(HashMap<String, String> attrMap, HashMap<String, Object> defMap,
-            Constructor<?> e20Ctor, Constructor<?> or0Ctor, Constructor<?> oi0Ctor,
+            Constructor<?> e20Ctor, Method e20UnsafeAlloc, Class<?> e20Class,
+            Constructor<?> or0Ctor, Constructor<?> oi0Ctor,
             Field e20A, Field e20B, Field e20C, Field e20D, Field or0ListField,
             String attrKey, String legendName,
             double[] thresholds, int[] colors, double max, double min) throws Throwable {
         attrMap.put(attrKey, legendName);
 
-        Object def = e20Ctor.newInstance();
+        Object def;
+        if (e20Ctor != null) {
+            def = e20Ctor.newInstance();
+        } else {
+            Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
+            Field unsafeField;
+            try {
+                unsafeField = unsafeClass.getDeclaredField("THE_ONE");
+            } catch (NoSuchFieldException e2) {
+                unsafeField = unsafeClass.getDeclaredField("theUnsafe");
+            }
+            unsafeField.setAccessible(true);
+            def = e20UnsafeAlloc.invoke(unsafeField.get(null), e20Class);
+        }
         e20A.set(def, legendName);
         e20C.setDouble(def, max);
         e20D.setDouble(def, min);
