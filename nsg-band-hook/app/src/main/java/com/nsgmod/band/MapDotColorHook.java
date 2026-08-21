@@ -22,6 +22,16 @@ public class MapDotColorHook {
     static final HashMap<String, HashMap<String, String>> INJECTED_OPTIONS = new HashMap<>();
 
     static {
+        HashMap<String, String> commonSinr = new HashMap<>();
+        commonSinr.put("GSM", "GSM::Downlink_Measurements::ServC2I");
+        commonSinr.put("WCDMA", "WCDMA::Downlink_Measurements::Uu_Serving_EcNo");
+        commonSinr.put("TDSCDMA", "TDSCDMA::Downlink_Measurements::Uu_PCCPCH_C2I");
+        commonSinr.put("CDMA", "CDMA::Pilot_Measurements::EcIo_Combined");
+        commonSinr.put("EVDO", "EvDo::Pilot_Measurements::EV_SINR_Best");
+        commonSinr.put("LTE", "LTE::Downlink_Measurements::LTE_SINR_PCell");
+        commonSinr.put("NR5G", "NR5G::Downlink_Measurements::NR_SS_SINR");
+        INJECTED_OPTIONS.put("Common_SINR", commonSinr);
+
         HashMap<String, String> nrPhr = new HashMap<>();
         nrPhr.put("NR_Power_Headroom", "NR5G::Uplink_Measurements::NR_Power_Headroom");
         INJECTED_OPTIONS.put("NR_Power_Headroom", nrPhr);
