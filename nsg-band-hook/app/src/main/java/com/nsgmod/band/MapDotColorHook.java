@@ -30,6 +30,7 @@ public class MapDotColorHook {
         installPresentationManagerHook();
         installLegendManagerHook();
         installHw0BNullSafeHook();
+        installSf0AFallbackHook();
     }
 
     private void installPresentationManagerHook() {
@@ -211,6 +212,57 @@ public class MapDotColorHook {
             Log.i(TAG, "MapDotColorHook: hw0.b null-safe hook installed");
         } catch (Throwable t) {
             Log.e(TAG, "MapDotColorHook: hw0.b null-safe hook failed: " + t);
+        }
+    }
+
+    private void installSf0AFallbackHook() {
+        try {
+            Class<?> sf0Class = ClassMapping.loadClass("sf0", loader);
+            if (sf0Class == null) {
+                Log.w(TAG, "MapDotColorHook: sf0 class not found for sf0.a hook");
+                return;
+            }
+            Method sf0AMethod = null;
+            for (Method m : sf0Class.getDeclaredMethods()) {
+                if (!java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
+                if (m.getReturnType() != sf0Class) continue;
+                if (m.getParameterCount() != 2) continue;
+                if (m.getParameterTypes()[0] != String.class) continue;
+                sf0AMethod = m;
+                break;
+            }
+            if (sf0AMethod == null) {
+                Log.w(TAG, "MapDotColorHook: sf0.a(String,?) method not found");
+                return;
+            }
+            sf0AMethod.setAccessible(true);
+
+            java.lang.reflect.Constructor<?> sf0Ctor = sf0Class.getDeclaredConstructor();
+            sf0Ctor.setAccessible(true);
+            Field sf0B = sf0Class.getDeclaredField("b");
+            Field sf0A = sf0Class.getDeclaredField("a");
+            sf0B.setAccessible(true);
+            sf0A.setAccessible(true);
+
+            final java.lang.reflect.Constructor<?> ctor = sf0Ctor;
+            final Field fieldB = sf0B;
+            final Field fieldA = sf0A;
+
+            xposed.hook(sf0AMethod).intercept(new Hooker() {
+                @Override
+                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    Object result = chain.proceed();
+                    if (result != null) return result;
+                    String storedKey = (String) chain.getArg(0);
+                    Object fallback = ctor.newInstance();
+                    fieldA.set(fallback, storedKey);
+                    fieldB.set(fallback, storedKey);
+                    return fallback;
+                }
+            });
+            Log.i(TAG, "MapDotColorHook: sf0.a fallback hook installed");
+        } catch (Throwable t) {
+            Log.e(TAG, "MapDotColorHook: sf0.a fallback hook failed: " + t);
         }
     }
 
