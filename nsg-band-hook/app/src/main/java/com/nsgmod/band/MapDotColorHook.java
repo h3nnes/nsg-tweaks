@@ -119,23 +119,37 @@ public class MapDotColorHook {
         try { sf0D.setBoolean(commonSinr, false); } catch (Throwable ignored) {}
         commonList.add(commonSinr);
 
-        Object powerHeadroom = sf0Ctor.newInstance();
-        sf0A.set(powerHeadroom, "Power Headroom");
-        sf0B.set(powerHeadroom, "Power_Headroom");
-        HashMap<String, String> phrMap = (HashMap<String, String>) sf0C.get(powerHeadroom);
-        phrMap.put("LTE", "LTE::Uplink_Measurements::LTE_AvgPHR_UL");
-        phrMap.put("NR5G", "NR5G::Uplink_Measurements::NR_Power_Headroom");
-        try { sf0D.setBoolean(powerHeadroom, true); } catch (Throwable ignored) {}
-        singlesList.add(powerHeadroom);
+        Object nrHeadroom = sf0Ctor.newInstance();
+        sf0A.set(nrHeadroom, "NR Power Headroom");
+        sf0B.set(nrHeadroom, "NR_Power_Headroom");
+        HashMap<String, String> nrPhrMap = (HashMap<String, String>) sf0C.get(nrHeadroom);
+        nrPhrMap.put("NR_Power_Headroom", "NR5G::Uplink_Measurements::NR_Power_Headroom");
+        try { sf0D.setBoolean(nrHeadroom, true); } catch (Throwable ignored) {}
+        singlesList.add(nrHeadroom);
 
-        Object throughputDL = sf0Ctor.newInstance();
-        sf0A.set(throughputDL, "Throughput DL");
-        sf0B.set(throughputDL, "Throughput_DL");
-        HashMap<String, String> tputMap = (HashMap<String, String>) sf0C.get(throughputDL);
-        tputMap.put("LTE", "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL");
-        tputMap.put("NR5G", "NR5G::Downlink_Measurements::NR_Physical_Throughput_DL");
-        try { sf0D.setBoolean(throughputDL, true); } catch (Throwable ignored) {}
-        singlesList.add(throughputDL);
+        Object lteHeadroom = sf0Ctor.newInstance();
+        sf0A.set(lteHeadroom, "LTE Power Headroom");
+        sf0B.set(lteHeadroom, "LTE_Power_Headroom");
+        HashMap<String, String> ltePhrMap = (HashMap<String, String>) sf0C.get(lteHeadroom);
+        ltePhrMap.put("LTE_Power_Headroom", "LTE::Uplink_Measurements::LTE_AvgPHR_UL");
+        try { sf0D.setBoolean(lteHeadroom, true); } catch (Throwable ignored) {}
+        singlesList.add(lteHeadroom);
+
+        Object nrThroughput = sf0Ctor.newInstance();
+        sf0A.set(nrThroughput, "NR Throughput DL");
+        sf0B.set(nrThroughput, "NR_Throughput_DL");
+        HashMap<String, String> nrTputMap = (HashMap<String, String>) sf0C.get(nrThroughput);
+        nrTputMap.put("NR_Throughput_DL", "NR5G::Downlink_Measurements::NR_Physical_Throughput_DL");
+        try { sf0D.setBoolean(nrThroughput, true); } catch (Throwable ignored) {}
+        singlesList.add(nrThroughput);
+
+        Object lteThroughput = sf0Ctor.newInstance();
+        sf0A.set(lteThroughput, "LTE Throughput DL");
+        sf0B.set(lteThroughput, "LTE_Throughput_DL");
+        HashMap<String, String> lteTputMap = (HashMap<String, String>) sf0C.get(lteThroughput);
+        lteTputMap.put("LTE_Throughput_DL", "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL");
+        try { sf0D.setBoolean(lteThroughput, true); } catch (Throwable ignored) {}
+        singlesList.add(lteThroughput);
     }
 
     private void installLegendManagerHook() {
