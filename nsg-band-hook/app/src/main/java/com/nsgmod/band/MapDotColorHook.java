@@ -11,6 +11,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
@@ -150,6 +151,116 @@ public class MapDotColorHook {
         lteTputMap.put("LTE_Throughput_DL", "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL");
         try { sf0D.setBoolean(lteThroughput, true); } catch (Throwable ignored) {}
         singlesList.add(lteThroughput);
+
+        injectLegendEntries();
+    }
+
+    @SuppressWarnings("unchecked")
+    private void injectLegendEntries() throws Throwable {
+        Class<?> lmClass = ClassMapping.loadClass("com.qtrun.legend.LegendManager", loader);
+        if (lmClass == null) return;
+        String singletonName = ClassMapping.runtimeFieldName(
+                "com.qtrun.legend.LegendManager", "e", loader);
+        Field singletonField = lmClass.getDeclaredField(singletonName);
+        singletonField.setAccessible(true);
+        Object lmInstance = singletonField.get(null);
+
+        String attrMapName = ClassMapping.runtimeFieldName(
+                "com.qtrun.legend.LegendManager", "c", loader);
+        Field attrMapField = lmClass.getDeclaredField(attrMapName);
+        attrMapField.setAccessible(true);
+        HashMap<String, String> attrMap = (HashMap<String, String>) attrMapField.get(lmInstance);
+
+        String defMapName = ClassMapping.runtimeFieldName(
+                "com.qtrun.legend.LegendManager", "b", loader);
+        Field defMapField = lmClass.getDeclaredField(defMapName);
+        defMapField.setAccessible(true);
+        HashMap<String, Object> defMap = (HashMap<String, Object>) defMapField.get(lmInstance);
+
+        Class<?> e20Class = ClassMapping.loadClass("e20", loader);
+        Class<?> or0Class = ClassMapping.loadClass("or0", loader);
+        Class<?> oi0Class = ClassMapping.loadClass("oi0", loader);
+        if (e20Class == null || or0Class == null || oi0Class == null) return;
+
+        Constructor<?> e20Ctor = e20Class.getDeclaredConstructor();
+        e20Ctor.setAccessible(true);
+
+        Constructor<?> or0Ctor;
+        try {
+            or0Ctor = or0Class.getDeclaredConstructor(int.class);
+        } catch (NoSuchMethodException e) {
+            or0Ctor = or0Class.getDeclaredConstructor();
+        }
+        or0Ctor.setAccessible(true);
+
+        Constructor<?> oi0Ctor = oi0Class.getDeclaredConstructor(double.class, int.class);
+        oi0Ctor.setAccessible(true);
+
+        Field e20A = e20Class.getDeclaredField("a");
+        Field e20B = e20Class.getDeclaredField("b");
+        Field e20C = e20Class.getDeclaredField("c");
+        Field e20D = e20Class.getDeclaredField("d");
+        e20A.setAccessible(true);
+        e20B.setAccessible(true);
+        e20C.setAccessible(true);
+        e20D.setAccessible(true);
+
+        String listFieldName = ClassMapping.runtimeFieldName("or0", "b", loader);
+        Field or0ListField = or0Class.getDeclaredField(listFieldName);
+        or0ListField.setAccessible(true);
+
+        double[] hrThresholds = {-10, 5, 10, 15, 25, 35};
+        int[] hrColors = {0xFFF44336, 0xFFFF9800, 0xFFFBC02D, 0xFF43A047, 0xFF2E7D32, 0xFF1B5E20};
+        injectLegend(attrMap, defMap, e20Ctor, or0Ctor, oi0Ctor,
+                e20A, e20B, e20C, e20D, or0ListField,
+                "NR5G::Uplink_Measurements::NR_Power_Headroom", "NR_Power_Headroom",
+                hrThresholds, hrColors, 40, -10);
+        injectLegend(attrMap, defMap, e20Ctor, or0Ctor, oi0Ctor,
+                e20A, e20B, e20C, e20D, or0ListField,
+                "LTE::Uplink_Measurements::LTE_AvgPHR_UL", "LTE_Power_Headroom",
+                hrThresholds, hrColors, 40, -10);
+
+        double[] tputThresholds = {0, 5, 10, 20, 50, 100, 200, 300, 500, 800, 1000};
+        int[] tputColors = {0xFF8B0000, 0xFFC03030, 0xFFE06030, 0xFFF08020, 0xFFF0B020,
+                0xFFE0E030, 0xFFA0C020, 0xFF60C020, 0xFF20A040, 0xFF208040, 0xFF1B5E20};
+        injectLegend(attrMap, defMap, e20Ctor, or0Ctor, oi0Ctor,
+                e20A, e20B, e20C, e20D, or0ListField,
+                "NR5G::Downlink_Measurements::NR_Physical_Throughput_DL", "NR_Throughput_DL",
+                tputThresholds, tputColors, 2000, 0);
+        injectLegend(attrMap, defMap, e20Ctor, or0Ctor, oi0Ctor,
+                e20A, e20B, e20C, e20D, or0ListField,
+                "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL", "LTE_Throughput_DL",
+                tputThresholds, tputColors, 2000, 0);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void injectLegend(HashMap<String, String> attrMap, HashMap<String, Object> defMap,
+            Constructor<?> e20Ctor, Constructor<?> or0Ctor, Constructor<?> oi0Ctor,
+            Field e20A, Field e20B, Field e20C, Field e20D, Field or0ListField,
+            String attrKey, String legendName,
+            double[] thresholds, int[] colors, double max, double min) throws Throwable {
+        attrMap.put(attrKey, legendName);
+
+        Object def = e20Ctor.newInstance();
+        e20A.set(def, legendName);
+        e20C.setDouble(def, max);
+        e20D.setDouble(def, min);
+
+        Object listHolder;
+        if (or0Ctor.getParameterCount() == 1 && or0Ctor.getParameterTypes()[0] == int.class) {
+            listHolder = or0Ctor.newInstance(15);
+        } else {
+            listHolder = or0Ctor.newInstance();
+        }
+
+        ArrayList<Object> list = (ArrayList<Object>) or0ListField.get(listHolder);
+        for (int i = 0; i < thresholds.length; i++) {
+            Object entry = oi0Ctor.newInstance(thresholds[i], colors[i]);
+            list.add(entry);
+        }
+
+        e20B.set(def, listHolder);
+        defMap.put(legendName, def);
     }
 
     private void installLegendManagerHook() {

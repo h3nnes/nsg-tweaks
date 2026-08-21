@@ -127,6 +127,9 @@ public final class ClassMapping {
         map.put("js", "c6.a0");
         map.put("sf0", "y5.a");
         map.put("hw0", "x5.d");
+        map.put("e20", "x5.a");
+        map.put("or0", "c5.a");
+        map.put("oi0", "x5.c");
 
         GPLAY_OVERRIDES = Collections.unmodifiableMap(map);
 
@@ -231,6 +234,9 @@ public final class ClassMapping {
         fieldMap.put("com.qtrun.legend.Presentation.PresentationManager|e", "f");
         fieldMap.put("com.qtrun.legend.Presentation.PresentationManager|a", "b");
         fieldMap.put("com.qtrun.legend.Presentation.PresentationManager|b", "c");
+        fieldMap.put("com.qtrun.legend.LegendManager|b", "c");
+        fieldMap.put("com.qtrun.legend.LegendManager|c", "d");
+        fieldMap.put("or0|b", "c");
         GPLAY_FIELD_OVERRIDES = Collections.unmodifiableMap(fieldMap);
 
         Map<String, Integer> constantMap = new HashMap<>();
