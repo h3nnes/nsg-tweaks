@@ -130,6 +130,9 @@ public class LteBandwidthColumnHook {
     private Field            legendSingleton;  // static singleton field
     private Method           legendMethodC;    // c(com.qtrun.sys.b, double) -> float
     private Method           legendMethodA;    // a(com.qtrun.sys.b, double) -> Integer
+    /** Cached LegendManager singleton instance (stable app object, not modem
+     *  data) — avoids a reflective static-field read on every LTE row per frame. */
+    private volatile Object  legendSingletonCache;
 
     private Class<?>         sysBClass;        // com.qtrun.sys.b
     private Field            sysAFieldA;       // com.qtrun.sys.a.a — String key
@@ -443,23 +446,22 @@ public class LteBandwidthColumnHook {
                         long    adapterSampleKey = ctx.sampleKey();
 
                         // Read BW and SINR fresh — no persistent cache.
+                        // DataSource/moduleIndex resolved once per getView call and
+                        // shared with other cell-table hooks via RowContext.
                         String bwText  = null;
                         Float  sinrRaw = null;
                         if (isServing && reflectionReady) {
-                            try {
-                                Object ws = wsSingleton.get(null);
-                                if (ws != null) {
-                                    int modIdx = ((Number) wsModuleIndex.get(ws)).intValue();
-                                    Object ds  = wsDataSource.get(ws);
-                                    if (ds != null) {
-                                        bwText  = readLteBwFresh(ds, modIdx,
-                                                adapterSampleKey, intraRow);
-                                        sinrRaw = readLteSinrRaw(ds, modIdx,
-                                                adapterSampleKey, intraRow);
-                                    }
+                            Object ds = ctx.dataSource();
+                            int modIdx = ctx.moduleIndex();
+                            if (ds != null) {
+                                try {
+                                    bwText  = readLteBwFresh(ds, modIdx,
+                                            adapterSampleKey, intraRow);
+                                    sinrRaw = readLteSinrRaw(ds, modIdx,
+                                            adapterSampleKey, intraRow);
+                                } catch (Exception ex) {
+                                    Log.w(TAG, "LteBW: read failed: " + ex);
                                 }
-                            } catch (Exception ex) {
-                                Log.w(TAG, "LteBW: ws read failed: " + ex);
                             }
                         }
 
@@ -651,8 +653,12 @@ public class LteBandwidthColumnHook {
                 ptvFieldJ.setBoolean(snrView, false);
                 snrView.invalidate();
 
-                // Get legend progress and color.
-                Object legend = legendSingleton.get(null);
+                // Get legend progress and color (singleton cached after first read).
+                Object legend = legendSingletonCache;
+                if (legend == null) {
+                    legend = legendSingleton.get(null);
+                    if (legend != null) legendSingletonCache = legend;
+                }
                 if (legend != null) {
                     float    progress = (float) legendMethodC.invoke(legend, bVar, doubleVal);
                     Integer  color    = (Integer) legendMethodA.invoke(legend, bVar, doubleVal);

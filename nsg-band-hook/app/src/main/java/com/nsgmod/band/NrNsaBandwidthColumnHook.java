@@ -253,20 +253,19 @@ public class NrNsaBandwidthColumnHook {
                         long    adapterSampleKey = ctx.sampleKey();
 
                         // Read BW fresh from DataSource — mirrors v6/f.java pattern.
+                        // DataSource/moduleIndex resolved once per getView call and
+                        // shared with BandColumnHook via RowContext.
                         String bwText = null;
                         if (isSource0 && reflectionReady) {
-                            try {
-                                Object ws = wsSingleton.get(null);
-                                if (ws != null) {
-                                    int modIdx = ((Number) wsModuleIndex.get(ws)).intValue();
-                                    Object ds  = wsDataSource.get(ws);
-                                    if (ds != null) {
-                                        bwText = readNrNsaBwFresh(ds, modIdx,
-                                                adapterSampleKey, intraRow);
-                                    }
+                            Object ds = ctx.dataSource();
+                            int modIdx = ctx.moduleIndex();
+                            if (ds != null) {
+                                try {
+                                    bwText = readNrNsaBwFresh(ds, modIdx,
+                                            adapterSampleKey, intraRow);
+                                } catch (Exception ex) {
+                                    Log.w(TAG, "NrNsaBW getView: read failed: " + ex);
                                 }
-                            } catch (Exception ex) {
-                                Log.w(TAG, "NrNsaBW getView: ws read failed: " + ex);
                             }
                         }
 

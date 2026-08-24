@@ -88,6 +88,7 @@ final class CellTableRowDispatcher {
 
         private boolean typeResolved;
         private boolean pairResolved;
+        private boolean dsResolved;
 
         /** null => adapter-type field missing or read failed => NO type filtering. */
         Integer  adapterType;
@@ -95,6 +96,12 @@ final class CellTableRowDispatcher {
         boolean  isSource0;
         int      intraRow;
         long     sampleKey = -1;
+
+        /** Workspace data source / module index — resolved once per getView call
+         *  and shared across all RowProcessors so they don't each independently
+         *  reflectively read the Workspace singleton. */
+        Object dataSource;
+        int    moduleIndex = -1;
 
         RowContext(Object adapter, int position) {
             this.adapter  = adapter;
@@ -126,6 +133,18 @@ final class CellTableRowDispatcher {
         long sampleKey() {
             resolvePair();
             return sampleKey;
+        }
+
+        /** Shared data source for this row — resolved once, reused by all processors. */
+        Object dataSource() {
+            resolveDs();
+            return dataSource;
+        }
+
+        /** Shared module index for this row — resolved once, reused by all processors. */
+        int moduleIndex() {
+            resolveDs();
+            return moduleIndex;
         }
 
         private void resolveType() {
@@ -162,6 +181,21 @@ final class CellTableRowDispatcher {
                 Log.w(TAG, "CellTableRowDispatcher: h(position) failed: " + e);
             }
         }
+
+        private void resolveDs() {
+            if (dsResolved) return;
+            dsResolved = true;
+            Handles h = handles;
+            if (h == null || h.wsSingleton == null) return;
+            try {
+                Object ws = h.wsSingleton.get(null);
+                if (ws != null) {
+                    moduleIndex = ((Number) h.wsModuleIndex.get(ws)).intValue();
+                    dataSource  = h.wsDataSource.get(ws);
+                }
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -175,6 +209,13 @@ final class CellTableRowDispatcher {
         Field  adapterTypeField; // a8.b$b.f — adapter type (4=LTE, 6=NR-NSA)
         boolean pairReady;
 
+        // Workspace singleton / module index / data source — resolved once so
+        // every RowProcessor can share them via RowContext instead of each
+        // independently doing 3 reflective field reads per row per frame.
+        Field wsSingleton;   // com.qtrun.sys.Workspace — static singleton field
+        Field wsModuleIndex; // com.qtrun.sys.Workspace — module index field
+        Field wsDataSource;  // com.qtrun.sys.Workspace — data source field
+
         static Handles resolve(ClassLoader loader) {
             Handles h = new Handles();
             try {
@@ -185,8 +226,11 @@ final class CellTableRowDispatcher {
                     return h;
                 }
                 try {
-                    h.adapterTypeField = bbClass.getDeclaredField("f");
-                    h.adapterTypeField.setAccessible(true);
+                    Field f = bbClass.getDeclaredField("f");
+                    if (f.getType() == int.class) {
+                        h.adapterTypeField = f;
+                        h.adapterTypeField.setAccessible(true);
+                    }
                 } catch (NoSuchFieldException ignored) {
                 }
                 try {
@@ -197,6 +241,22 @@ final class CellTableRowDispatcher {
                     h.pairReady = true;
                 } catch (Exception e) {
                     Log.w(TAG, "CellTableRowDispatcher: pair resolution handles unavailable: " + e);
+                }
+                try {
+                    Class<?> wsClass = ClassMapping.loadClass(
+                            "com.qtrun.sys.Workspace", loader);
+                    if (wsClass != null) {
+                        h.wsSingleton = wsClass.getField(
+                                ClassMapping.runtimeFieldName(
+                                        "com.qtrun.sys.Workspace", "j", loader));
+                        h.wsModuleIndex = wsClass.getField(
+                                ClassMapping.runtimeFieldName(
+                                        "com.qtrun.sys.Workspace", "a", loader));
+                        h.wsDataSource = wsClass.getField(
+                                ClassMapping.runtimeFieldName(
+                                        "com.qtrun.sys.Workspace", "c", loader));
+                    }
+                } catch (Exception ignored) {
                 }
             } catch (Exception e) {
                 Log.w(TAG, "CellTableRowDispatcher: handle resolution failed: " + e);
@@ -223,8 +283,19 @@ final class CellTableRowDispatcher {
         }
     }
 
-    /** Runtime getView Method -> registered processors (chain/registration order). */
-    private static final Map<Method, List<Entry>> PROCESSORS = new IdentityHashMap<>();
+    /**
+     * Per-runtime-Method slot holding the processor list and a volatile
+     * snapshot array. The snapshot is published via a volatile write in
+     * register() and read lock-free in the interceptor hot path, so a
+     * getView call does NOT acquire a monitor or allocate an array.
+     */
+    private static final class MethodSlot {
+        final List<Entry> processors = new ArrayList<>();
+        volatile Entry[] entries = new Entry[0];
+    }
+
+    /** Runtime getView Method -> slot. */
+    private static final Map<Method, MethodSlot> SLOTS = new IdentityHashMap<>();
     private static long seqCounter = 0;
 
     /**
@@ -263,30 +334,28 @@ final class CellTableRowDispatcher {
             }
         }
 
-        List<Entry> entries = PROCESSORS.get(getViewMethod);
-        if (entries == null) {
-            entries = new ArrayList<>();
-            PROCESSORS.put(getViewMethod, entries);
+        MethodSlot slot = SLOTS.get(getViewMethod);
+        if (slot == null) {
+            slot = new MethodSlot();
+            SLOTS.put(getViewMethod, slot);
         }
-        entries.add(new Entry(processor, seqCounter++, featureName));
+        slot.processors.add(new Entry(processor, seqCounter++, featureName));
+        slot.entries = slot.processors.toArray(new Entry[0]);
 
-        if (entries.size() == 1) {
-            installInterceptor(xposed, getViewMethod);
+        if (slot.processors.size() == 1) {
+            installInterceptor(xposed, getViewMethod, slot);
             Log.i(TAG, "CellTableRowDispatcher: installed single getView interceptor on "
                     + getViewMethod.getDeclaringClass().getName());
         }
         return true;
     }
 
-    private static void installInterceptor(XposedInterface xposed, final Method method) {
+    private static void installInterceptor(XposedInterface xposed, final Method method,
+                                           final MethodSlot slot) {
         xposed.hook(method).intercept(new Hooker() {
             @Override
             public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                final Entry[] entries;
-                synchronized (CellTableRowDispatcher.class) {
-                    List<Entry> l = PROCESSORS.get(method);
-                    entries = l.toArray(new Entry[0]);
-                }
+                final Entry[] entries = slot.entries;
                 RowContext ctx = new RowContext(chain.getThisObject(), (int) chain.getArg(0));
 
                 // Pre-proceed phase — registration (chain) order.

@@ -23,6 +23,12 @@ public class CellRowHeightHook {
     private static final String TAG = "NSGBandHook";
     private static final int ADAPTER_TYPE_LTE = 4;
 
+    // Tag slots on the recycled row view for the NSG sub-row TextViews — avoids
+    // a full findViewById traversal on every getView (row recycling reuses the
+    // same view instance, so the cached references stay valid).
+    private static final int CELL_NAME_TAG_KEY = "nsg_crh_cellname".hashCode();
+    private static final int CELL_ID_TAG_KEY   = "nsg_crh_cellid".hashCode();
+
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
@@ -73,8 +79,16 @@ public class CellRowHeightHook {
                 return;
             }
 
-            TextView cellNameView = rowView.findViewById(cellNameId);
-            TextView cellIdView = rowView.findViewById(cellIdId);
+            TextView cellNameView = (TextView) rowView.getTag(CELL_NAME_TAG_KEY);
+            if (cellNameView == null) {
+                cellNameView = rowView.findViewById(cellNameId);
+                if (cellNameView != null) rowView.setTag(CELL_NAME_TAG_KEY, cellNameView);
+            }
+            TextView cellIdView = (TextView) rowView.getTag(CELL_ID_TAG_KEY);
+            if (cellIdView == null) {
+                cellIdView = rowView.findViewById(cellIdId);
+                if (cellIdView != null) rowView.setTag(CELL_ID_TAG_KEY, cellIdView);
+            }
 
             if (cellNameView == null || cellIdView == null) {
                 return;

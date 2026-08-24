@@ -169,22 +169,16 @@ public class BandColumnHook {
      * @param isServing true = serving bucket (PCell/SCells); false = detected/neighbour
      * @param intraRow  row index within the bucket (0-based)
      */
-    private String readArfcn(boolean isServing, int intraRow, long queryTime) {
+    private String readArfcn(Object ds, int modIdx, boolean isServing, int intraRow, long queryTime) {
         String key = isServing
                 ? "NR5G::Cell_Measurements::NR_Cells_ARFCN"
                 : "NR5G::Detected_Cells::NR_DetectedCells_ARFCN";
-        return readPropertyWithIndex(key, intraRow, queryTime);
+        return readPropertyWithIndex(ds, modIdx, key, intraRow, queryTime);
     }
 
-    private String readPropertyWithIndex(String key, int idx, long queryTime) {
+    private String readPropertyWithIndex(Object ds, int modIdx, String key, int idx, long queryTime) {
         try {
-            Object ws = wsSingleton.get(null);
-            if (ws == null) { Log.w(TAG, "Workspace null"); return null; }
-            int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
-            Object ds          = wsDataSource.get(ws);
-            if (ds == null) { Log.w(TAG, "DataSource null"); return null; }
-
-            Object prop = dsGetProperty.invoke(ds, key, moduleIndex);
+            Object prop = dsGetProperty.invoke(ds, key, modIdx);
             if (prop == null) return null;
 
             Object iter = propIterMethod.invoke(prop, queryTime);
@@ -276,9 +270,9 @@ public class BandColumnHook {
                             if (subRow instanceof ViewGroup) {
                                 ViewGroup subRowVg = (ViewGroup) subRow;
                                 boolean hasData = false;
+                                int[] ids = CellTableRowDispatcher.cellRowIds(
+                                        subRowVg.getResources());
                                 if (isNrCellDbLoaded()) {
-                                    int[] ids = CellTableRowDispatcher.cellRowIds(
-                                            subRowVg.getResources());
                                     int cellNameId = ids[CellTableRowDispatcher.ROW_ID_CELL_NAME];
                                     int cellIdId   = ids[CellTableRowDispatcher.ROW_ID_CELL_ID];
                                     if (cellNameId != 0 && cellIdId != 0) {
@@ -294,8 +288,7 @@ public class BandColumnHook {
                                 }
                                 if (hasData) {
                                     subRow.setVisibility(View.VISIBLE);
-                                    int rfidId = CellTableRowDispatcher.cellRowIds(
-                                            subRowVg.getResources())[CellTableRowDispatcher.ROW_ID_RF_ID];
+                                    int rfidId = ids[CellTableRowDispatcher.ROW_ID_RF_ID];
                                     if (rfidId != 0) {
                                         View rfid = subRowVg.findViewById(rfidId);
                                         if (rfid != null) rfid.setVisibility(View.GONE);
@@ -327,7 +320,13 @@ public class BandColumnHook {
                         }
 
                         // Read ARFCN using adapter-aligned sample key (not Workspace.g).
-                        String arfcn = readArfcn(isServing, intraRow, queryTime);
+                        // DataSource/moduleIndex resolved once per getView call and
+                        // shared with NrNsaBandwidthColumnHook via RowContext.
+                        Object ds = ctx.dataSource();
+                        int modIdx = ctx.moduleIndex();
+                        String arfcn = (ds != null)
+                                ? readArfcn(ds, modIdx, isServing, intraRow, queryTime)
+                                : null;
                         String arfcnText = (arfcn != null) ? arfcn : "-";
 
                         // ---- Already-injected fast path (recycled view) ----
