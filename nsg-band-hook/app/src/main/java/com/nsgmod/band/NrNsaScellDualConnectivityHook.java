@@ -537,7 +537,6 @@ List<Object> gridCells;
             if (binding.wrapped) continue;
             int index = gridCells.indexOf(binding.nrCell);
             if (index < 0 || index >= gridGroup.getChildCount()) {
-                Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot find grid child for row " + binding.originalRow);
                 return false;
             }
             View originalView = gridGroup.getChildAt(index);
