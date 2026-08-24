@@ -59,6 +59,7 @@ public class LteCellColorHook {
         0xFF00BCD4, // SCell 2 — turquoise
         0xFFFFEB3B, // SCell 3 — yellow
         0xFF4CAF50, // SCell 4 — green
+        0xFFEF9A9A, // SCell 5 — light red (Material Red 200)
     };
 
     private final XposedInterface xposed;

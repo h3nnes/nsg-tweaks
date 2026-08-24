@@ -640,6 +640,11 @@ xposed.hook(bMethod).intercept(new Hooker() {
     }
 
     private void onDataUpdate(Object fragment, Object dataSource, long sampleKey, short moduleIndex) {
+        Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
+        if (k2a == null) return;
+        View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
+        if (gridView == null || !gridView.isAttachedToWindow()) return;
+
         lastDataSource = dataSource;
         lastSampleKey = sampleKey;
         lastModuleIndex = moduleIndex;

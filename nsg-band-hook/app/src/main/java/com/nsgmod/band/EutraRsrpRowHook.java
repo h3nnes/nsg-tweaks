@@ -56,6 +56,7 @@ public class EutraRsrpRowHook {
     // k2.a builder methods
     private Method k2aRMethod;
     private Method k2aSMethod;
+    private Method k2aTMethod;
 
     // v6.e label fields
     private Field veF;
@@ -65,8 +66,24 @@ public class EutraRsrpRowHook {
     // v6.f bar data-binding field
     private Field vfF8120g;
 
+    // v6.f bar color/max/fixed fields (flavor-dependent)
+    private Field barFixedField;
+    private Field barColorField;
+    private Field barMaxField;
+
     // v6.f bar color/max setter: f(int color, float max)
     private Method vfFMethod;
+
+    // v6.g (eh0) fields for cloning
+    private Field vgBindingsField;
+    private Field vgColorField;
+    private Field vgSepField;
+    private Field vgAppField;
+    private Field vgGravField;
+
+    // v00 (d7.i$k) class and case field
+    private Class<?> v00Class;
+    private Field v00CaseField;
 
     // com.qtrun.sys.b / a — property binding
     private Class<?> sysBClass;
@@ -81,9 +98,17 @@ public class EutraRsrpRowHook {
     // g8.i carrier count field — bytecode name "Z"
     private Field g8iCarrierCountField;
 
-    // k2.a list + v6.a row field
+    // k2.a list + v6.a fields
     private Field k2aListField;
     private Field vaRowField;
+    private Field vaHeightField;
+    private Field vaColField;
+    private Field vaWidthField;
+
+    // Element type classes for instanceof checks
+    private Class<?> ch0Class;
+    private Class<?> dh0Class;
+    private Class<?> eh0Class;
 
     private boolean ready = false;
 
@@ -98,10 +123,13 @@ public class EutraRsrpRowHook {
             Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
             Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
             Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
+            Class<?> vgClass  = ClassMapping.loadClass("v6.g", loader);
 
             k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
                     float.class, float.class, float.class, float.class);
             k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
+                    float.class, float.class, float.class, float.class);
+            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
                     float.class, float.class, float.class, float.class);
 
             veF = veClass.getField("f");
@@ -115,6 +143,40 @@ public class EutraRsrpRowHook {
                     int.class, float.class);
             vfFMethod.setAccessible(true);
 
+            boolean isGplay = FlavorDetector.detect(loader) == FlavorDetector.Flavor.GPLAY;
+            if (isGplay) {
+                barFixedField = vfClass.getDeclaredField("i");
+                barColorField = vfClass.getDeclaredField("j");
+                barMaxField = vfClass.getDeclaredField("k");
+            } else {
+                barFixedField = vfClass.getDeclaredField("h");
+                barColorField = vfClass.getDeclaredField("i");
+                barMaxField = vfClass.getDeclaredField("j");
+            }
+            barFixedField.setAccessible(true);
+            barColorField.setAccessible(true);
+            barMaxField.setAccessible(true);
+
+            vgBindingsField = vgClass.getDeclaredField("f");
+            vgBindingsField.setAccessible(true);
+            vgColorField = vgClass.getDeclaredField("i");
+            vgColorField.setAccessible(true);
+            vgSepField = vgClass.getDeclaredField("h");
+            vgSepField.setAccessible(true);
+            vgAppField = vgClass.getDeclaredField("j");
+            vgAppField.setAccessible(true);
+            vgGravField = vgClass.getDeclaredField("k");
+            vgGravField.setAccessible(true);
+
+            v00Class = ClassMapping.loadClass("d7.i$k", loader);
+            if (v00Class != null) {
+                try {
+                    v00CaseField = v00Class.getDeclaredField("e");
+                    v00CaseField.setAccessible(true);
+                } catch (NoSuchFieldException ignored) {
+                }
+            }
+
             sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
             Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAFieldA = sysAClass.getDeclaredField("a");
@@ -127,15 +189,14 @@ public class EutraRsrpRowHook {
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
             java.lang.reflect.Field unsafeField;
             try {
-                unsafeField = unsafeClass.getDeclaredField("THE_ONE");   // Android/Dalvik
+                unsafeField = unsafeClass.getDeclaredField("THE_ONE");
             } catch (NoSuchFieldException e2) {
-                unsafeField = unsafeClass.getDeclaredField("theUnsafe"); // OpenJDK fallback
+                unsafeField = unsafeClass.getDeclaredField("theUnsafe");
             }
             unsafeField.setAccessible(true);
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            // g8.i.Z = carrier count (int field, bytecode name "Z")
             Class<?> g8iClass = ClassMapping.loadClass("g8.i", loader);
             if (g8iClass == null) {
                 Log.i(TAG, "EutraRsrpRowHook: g8.i not available on this flavor, skipping");
@@ -149,6 +210,16 @@ public class EutraRsrpRowHook {
             Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
+            vaHeightField = vaClass.getDeclaredField("c");
+            vaHeightField.setAccessible(true);
+            vaColField = vaClass.getDeclaredField("d");
+            vaColField.setAccessible(true);
+            vaWidthField = vaClass.getDeclaredField("e");
+            vaWidthField.setAccessible(true);
+
+            ch0Class = veClass;
+            dh0Class = vfClass;
+            eh0Class = vgClass;
 
             ready = true;
         } catch (Exception e) {
@@ -236,6 +307,13 @@ public class EutraRsrpRowHook {
         try {
             boolean isPathA = (carriers == 1 || carriers == 2);
             boolean isPathB = (carriers == 3);
+            boolean isPathD = (carriers == 5);
+            boolean isPathE = (carriers >= 6);
+            boolean isPathDE = isPathD || isPathE;
+
+            if (isPathDE) {
+                transformGrid(k2aObj, carriers);
+            }
 
             float rsrpRow;
             float shiftFrom;
@@ -244,15 +322,17 @@ public class EutraRsrpRowHook {
             if (isPathA) {
                 rsrpRow     = 11.0f;
                 shiftFrom   = 11.0f;
-                shiftAmount = 1.0f;  // one h=1.0 row inserted → shift by 1
+                shiftAmount = 1.0f;
+            } else if (isPathDE) {
+                rsrpRow     = 15.0f;
+                shiftFrom   = 15.0f;
+                shiftAmount = 3.0f;
             } else {
-                // Path B: one h=2.0 row; Path C: two h=1.0 rows → shift by 2
                 rsrpRow     = 13.0f;
                 shiftFrom   = 13.0f;
                 shiftAmount = 2.0f;
             }
 
-            // Shift all existing elements at or after insertion point
             java.util.ArrayList<?> list =
                     (java.util.ArrayList<?>) k2aListField.get(k2aObj);
             if (list != null) {
@@ -264,17 +344,21 @@ public class EutraRsrpRowHook {
                 }
             }
 
-            // Path B/C: shift for Rank3/Rank4 insertion (rows >= 25 by +4).
+            float rankRow = RANK_ROW;
+            float rankShift = RANK_SHIFT_AMOUNT;
+            if (isPathDE) {
+                rankRow = 33.0f;
+                rankShift = 6.0f;
+            }
             if (!isPathA && list != null) {
                 for (Object elem : list) {
                     float elemRow = (float) vaRowField.get(elem);
-                    if (elemRow >= RANK_ROW) {
-                        vaRowField.set(elem, elemRow + RANK_SHIFT_AMOUNT);
+                    if (elemRow >= rankRow) {
+                        vaRowField.set(elem, elemRow + rankShift);
                     }
                 }
             }
 
-            // MCS Cwd 0/1 insertion: between CQI and Mod.
             float mcsRow;
             float mcsShiftFrom;
             float mcsShiftAmount;
@@ -282,6 +366,10 @@ public class EutraRsrpRowHook {
                 mcsRow        = 21.0f;
                 mcsShiftFrom  = 21.0f;
                 mcsShiftAmount = 1.0f;
+            } else if (isPathDE) {
+                mcsRow        = 51.0f;
+                mcsShiftFrom  = 51.0f;
+                mcsShiftAmount = 3.0f;
             } else {
                 mcsRow        = 37.0f;
                 mcsShiftFrom  = 37.0f;
@@ -296,27 +384,36 @@ public class EutraRsrpRowHook {
                 }
             }
 
-            // Insert RSRP rows
             if (isPathA) {
                 injectRsrpRowPathA(k2aObj, rsrpRow);
             } else if (isPathB) {
                 injectRsrpRowPathB(k2aObj, rsrpRow);
+            } else if (isPathD) {
+                injectRsrpRowPathD(k2aObj, rsrpRow);
+            } else if (isPathE) {
+                injectRsrpRowPathE(k2aObj, rsrpRow);
             } else {
                 injectRsrpRowPathC(k2aObj, rsrpRow);
             }
 
-            // Path B/C: insert Rank3/Rank4 usage rows at row 25
             if (isPathB) {
-                injectRankUsageRowPathB(k2aObj, RANK_ROW);
+                injectRankUsageRowPathB(k2aObj, rankRow);
+            } else if (isPathD) {
+                injectRankUsageRowPathD(k2aObj, rankRow);
+            } else if (isPathE) {
+                injectRankUsageRowPathE(k2aObj, rankRow);
             } else if (!isPathA) {
-                injectRankUsageRowPathC(k2aObj, RANK_ROW);
+                injectRankUsageRowPathC(k2aObj, rankRow);
             }
 
-            // Insert MCS Cwd 0/1 rows (after all shifts)
             if (isPathA) {
                 injectMcsRowPathA(k2aObj, mcsRow);
             } else if (isPathB) {
                 injectMcsRowPathB(k2aObj, mcsRow);
+            } else if (isPathD) {
+                injectMcsRowPathD(k2aObj, mcsRow);
+            } else if (isPathE) {
+                injectMcsRowPathE(k2aObj, mcsRow);
             } else {
                 injectMcsRowPathC(k2aObj, mcsRow);
             }
@@ -652,5 +749,361 @@ public class EutraRsrpRowHook {
                     "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL", -1));
             vfFMethod.invoke(rank4SCell3, DEEP_BLUE, RANK_BAR_MAX);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void transformGrid(Object k2aObj, int carriers) throws Exception {
+        java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+        if (list == null) return;
+
+        boolean isPathD = (carriers == 5);
+        boolean isPathE = (carriers >= 6);
+
+        java.util.ArrayList<Object> originals = new java.util.ArrayList<>(list);
+
+        if (isPathE) {
+            for (Object elem : originals) {
+                float row = (float) vaRowField.get(elem);
+                if (row < 9.0f) continue;
+                float col = (float) vaColField.get(elem);
+                if (col < 50.0f) continue;
+                int oldRowInt = (int) row;
+                boolean isFirstSubRow = ((oldRowInt - 9) % 2) == 0;
+                if (isFirstSubRow) {
+                    replaceScellInElement(elem, 2, 3);
+                } else {
+                    replaceScellInElement(elem, 3, 4);
+                }
+            }
+        }
+
+        Object[][] templates = new Object[13][4];
+        for (Object elem : originals) {
+            float row = (float) vaRowField.get(elem);
+            if (row < 9.0f) continue;
+            int oldRowInt = (int) row;
+            int l = (oldRowInt - 9) / 2;
+            boolean isFirstSubRow = ((oldRowInt - 9) % 2) == 0;
+            if (isFirstSubRow) continue;
+            if (l < 0 || l >= 13) continue;
+            float col = (float) vaColField.get(elem);
+            if (Math.abs(col - 30.0f) < 0.1f) templates[l][0] = elem;
+            else if (Math.abs(col - 47.0f) < 0.1f) templates[l][1] = elem;
+            else if (Math.abs(col - 65.0f) < 0.1f) templates[l][2] = elem;
+            else if (Math.abs(col - 82.0f) < 0.1f) templates[l][3] = elem;
+        }
+
+        for (Object elem : originals) {
+            float row = (float) vaRowField.get(elem);
+            if (row < 9.0f) continue;
+            float col = (float) vaColField.get(elem);
+            int oldRowInt = (int) row;
+            int l = (oldRowInt - 9) / 2;
+            boolean isFirstSubRow = ((oldRowInt - 9) % 2) == 0;
+
+            float newRow;
+            if (isPathE) {
+                newRow = isFirstSubRow ? 9 + 3*l : 10 + 3*l;
+                if (col < 5.0f) {
+                    float h = (float) vaHeightField.get(elem);
+                    if (h >= 1.9f) vaHeightField.set(elem, 3.0f);
+                }
+            } else {
+                if (col < 5.0f) {
+                    newRow = 9 + 3*l;
+                    float h = (float) vaHeightField.get(elem);
+                    if (h >= 1.9f) vaHeightField.set(elem, 3.0f);
+                } else if (col < 50.0f) {
+                    if (isFirstSubRow) {
+                        newRow = 9.15f + 3*l;
+                        vaHeightField.set(elem, 1.2f);
+                    } else {
+                        newRow = 10.65f + 3*l;
+                        vaHeightField.set(elem, 1.2f);
+                    }
+                } else {
+                    newRow = isFirstSubRow ? 9 + 3*l : 10 + 3*l;
+                }
+            }
+            vaRowField.set(elem, newRow);
+        }
+
+        for (int l = 0; l < 13; l++) {
+            float newRow = 11.0f + 3*l;
+            float newH = 1.0f;
+
+            if (isPathE) {
+                if (templates[l][0] != null)
+                    cloneElement(k2aObj, templates[l][0], newRow, 30.0f, newH, 1, 2);
+                if (templates[l][1] != null)
+                    cloneElement(k2aObj, templates[l][1], newRow, 47.0f, newH, 1, 2);
+                if (templates[l][2] != null)
+                    cloneElement(k2aObj, templates[l][2], newRow, 65.0f, newH, 4, 5);
+                if (templates[l][3] != null)
+                    cloneElement(k2aObj, templates[l][3], newRow, 82.0f, newH, 4, 5);
+            } else {
+                if (templates[l][2] != null)
+                    cloneElement(k2aObj, templates[l][2], newRow, 65.0f, newH, 3, 4);
+                if (templates[l][3] != null)
+                    cloneElement(k2aObj, templates[l][3], newRow, 82.0f, newH, 3, 4);
+            }
+        }
+
+        if (isPathE) {
+            updateHeaderText(originals, 30.0f, "PCC/SCC1/2");
+            updateHeaderText(originals, 65.0f, "SCC 3/4/5");
+        } else {
+            updateHeaderText(originals, 30.0f, "PCC/SCC1");
+            updateHeaderText(originals, 65.0f, "SCC 2/3/4");
+        }
+    }
+
+    private void replaceScellInElement(Object elem, int oldIdx, int newIdx) throws Exception {
+        String oldStr = "SCell" + oldIdx;
+        String newStr = "SCell" + newIdx;
+        if (dh0Class.isInstance(elem)) {
+            Object binding = vfF8120g.get(elem);
+            if (binding != null) replaceScellInBinding(binding, oldStr, newStr);
+        } else if (eh0Class.isInstance(elem)) {
+            java.util.ArrayList<?> bindings = (java.util.ArrayList<?>) vgBindingsField.get(elem);
+            if (bindings != null) {
+                for (Object binding : bindings) {
+                    if (binding != null) replaceScellInBinding(binding, oldStr, newStr);
+                }
+            }
+        }
+    }
+
+    private void replaceScellInBinding(Object binding, String oldStr, String newStr) throws Exception {
+        String key = (String) sysAFieldA.get(binding);
+        if (key != null && key.contains(oldStr)) {
+            sysAFieldA.set(binding, key.replace(oldStr, newStr));
+        }
+    }
+
+    private void cloneElement(Object k2aObj, Object template, float newRow, float newCol, float newH,
+                              int oldScellIdx, int newScellIdx) throws Exception {
+        String oldStr = "SCell" + oldScellIdx;
+        String newStr = "SCell" + newScellIdx;
+        float w = (float) vaWidthField.get(template);
+
+        if (ch0Class.isInstance(template)) {
+            Object newElem = k2aRMethod.invoke(k2aObj, newRow, newH, newCol, w);
+            if (newElem != null) {
+                veF.set(newElem, veF.get(template));
+                veG.set(newElem, veG.get(template));
+                veH.set(newElem, veH.get(template));
+            }
+        } else if (dh0Class.isInstance(template)) {
+            Object newElem = k2aSMethod.invoke(k2aObj, newRow, newH, newCol, w);
+            if (newElem != null) {
+                Object binding = vfF8120g.get(template);
+                if (binding != null) {
+                    Object newBinding = cloneBinding(binding, oldStr, newStr);
+                    vfF8120g.set(newElem, newBinding);
+                }
+                boolean fixed = barFixedField.getBoolean(template);
+                if (fixed) {
+                    int color = barColorField.getInt(template);
+                    float max = barMaxField.getFloat(template);
+                    vfFMethod.invoke(newElem, color, max);
+                }
+            }
+        } else if (eh0Class.isInstance(template)) {
+            Object newElem = k2aTMethod.invoke(k2aObj, newRow, newH, newCol, w);
+            if (newElem != null) {
+                java.util.ArrayList<?> bindings = (java.util.ArrayList<?>) vgBindingsField.get(template);
+                if (bindings != null) {
+                    java.util.ArrayList<Object> newBindings = new java.util.ArrayList<>();
+                    for (Object binding : bindings) {
+                        newBindings.add(cloneBinding(binding, oldStr, newStr));
+                    }
+                    vgBindingsField.set(newElem, newBindings);
+                }
+                vgSepField.set(newElem, vgSepField.get(template));
+                vgColorField.set(newElem, vgColorField.get(template));
+                vgAppField.set(newElem, vgAppField.get(template));
+                vgGravField.set(newElem, vgGravField.get(template));
+            }
+        }
+    }
+
+    private Object cloneBinding(Object binding, String oldStr, String newStr) throws Exception {
+        Class<?> bindingClass = binding.getClass();
+        Object newBinding = unsafeAllocateInstance.invoke(unsafe, bindingClass);
+        Class<?> c = bindingClass;
+        while (c != null && c != Object.class) {
+            for (Field f : c.getDeclaredFields()) {
+                int mods = f.getModifiers();
+                if (java.lang.reflect.Modifier.isStatic(mods)) continue;
+                f.setAccessible(true);
+                Object value = f.get(binding);
+                if (value instanceof String) {
+                    String s = (String) value;
+                    if (s.contains(oldStr)) {
+                        s = s.replace(oldStr, newStr);
+                    }
+                    f.set(newBinding, s);
+                } else {
+                    f.set(newBinding, value);
+                }
+            }
+            c = c.getSuperclass();
+        }
+        return newBinding;
+    }
+
+    private void updateHeaderText(java.util.ArrayList<?> list, float col, String text) throws Exception {
+        for (Object elem : list) {
+            float row = (float) vaRowField.get(elem);
+            if (Math.abs(row - 8.0f) > 0.1f) continue;
+            float c = (float) vaColField.get(elem);
+            if (Math.abs(c - col) > 0.1f) continue;
+            if (ch0Class.isInstance(elem)) {
+                veF.set(elem, text);
+            }
+        }
+    }
+
+    private void injectRsrpRowPathD(Object k2aObj, float rsrpRow) throws Exception {
+        final float labelH = 3.0f;
+        final float leftH = 1.2f;
+        final float barH = 1.0f;
+
+        Object label = k2aRMethod.invoke(k2aObj, rsrpRow, labelH, 0.0f, 27.0f);
+        if (label != null) { veF.set(label, "RSRP"); veG.set(label, 0); veH.set(label, 1); }
+
+        Object pCellBar = k2aSMethod.invoke(k2aObj, rsrpRow + 0.15f, leftH, 30.0f, 34.0f);
+        if (pCellBar != null) vfF8120g.set(pCellBar, makeProp("LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
+
+        Object sCell1Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.65f, leftH, 30.0f, 34.0f);
+        if (sCell1Bar != null) vfF8120g.set(sCell1Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
+
+        Object sCell2Bar = k2aSMethod.invoke(k2aObj, rsrpRow, barH, 65.0f, 34.0f);
+        if (sCell2Bar != null) vfF8120g.set(sCell2Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2", -1));
+
+        Object sCell3Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, barH, 65.0f, 34.0f);
+        if (sCell3Bar != null) vfF8120g.set(sCell3Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3", -1));
+
+        Object sCell4Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 2.0f, barH, 65.0f, 34.0f);
+        if (sCell4Bar != null) vfF8120g.set(sCell4Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell4", -1));
+    }
+
+    private void injectRsrpRowPathE(Object k2aObj, float rsrpRow) throws Exception {
+        final float labelH = 3.0f;
+        final float barH = 1.0f;
+
+        Object label = k2aRMethod.invoke(k2aObj, rsrpRow, labelH, 0.0f, 27.0f);
+        if (label != null) { veF.set(label, "RSRP"); veG.set(label, 0); veH.set(label, 1); }
+
+        Object pCellBar = k2aSMethod.invoke(k2aObj, rsrpRow, barH, 30.0f, 34.0f);
+        if (pCellBar != null) vfF8120g.set(pCellBar, makeProp("LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
+
+        Object sCell1Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, barH, 30.0f, 34.0f);
+        if (sCell1Bar != null) vfF8120g.set(sCell1Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
+
+        Object sCell2Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 2.0f, barH, 30.0f, 34.0f);
+        if (sCell2Bar != null) vfF8120g.set(sCell2Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2", -1));
+
+        Object sCell3Bar = k2aSMethod.invoke(k2aObj, rsrpRow, barH, 65.0f, 34.0f);
+        if (sCell3Bar != null) vfF8120g.set(sCell3Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3", -1));
+
+        Object sCell4Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, barH, 65.0f, 34.0f);
+        if (sCell4Bar != null) vfF8120g.set(sCell4Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell4", -1));
+
+        Object sCell5Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 2.0f, barH, 65.0f, 34.0f);
+        if (sCell5Bar != null) vfF8120g.set(sCell5Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell5", -1));
+    }
+
+    private void injectRankUsageRowPathD(Object k2aObj, float startRow) throws Exception {
+        final float labelH = 3.0f;
+        final float leftH = 1.2f;
+        final float barH = 1.0f;
+
+        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) { veF.set(rank3Label, "Rank3 Usage"); veG.set(rank3Label, 0); veH.set(rank3Label, 1); }
+        injectRankBar(k2aObj, startRow + 0.15f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL");
+        injectRankBar(k2aObj, startRow + 1.65f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL");
+        injectRankBar(k2aObj, startRow, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL");
+        injectRankBar(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL");
+        injectRankBar(k2aObj, startRow + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell4_DL");
+
+        float rank4Row = startRow + 3.0f;
+        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) { veF.set(rank4Label, "Rank4 Usage"); veG.set(rank4Label, 0); veH.set(rank4Label, 1); }
+        injectRankBar(k2aObj, rank4Row + 0.15f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL");
+        injectRankBar(k2aObj, rank4Row + 1.65f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL");
+        injectRankBar(k2aObj, rank4Row, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL");
+        injectRankBar(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL");
+        injectRankBar(k2aObj, rank4Row + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell4_DL");
+    }
+
+    private void injectRankUsageRowPathE(Object k2aObj, float startRow) throws Exception {
+        final float labelH = 3.0f;
+        final float barH = 1.0f;
+
+        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) { veF.set(rank3Label, "Rank3 Usage"); veG.set(rank3Label, 0); veH.set(rank3Label, 1); }
+        injectRankBar(k2aObj, startRow, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL");
+        injectRankBar(k2aObj, startRow + 1.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL");
+        injectRankBar(k2aObj, startRow + 2.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL");
+        injectRankBar(k2aObj, startRow, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL");
+        injectRankBar(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell4_DL");
+        injectRankBar(k2aObj, startRow + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell5_DL");
+
+        float rank4Row = startRow + 3.0f;
+        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) { veF.set(rank4Label, "Rank4 Usage"); veG.set(rank4Label, 0); veH.set(rank4Label, 1); }
+        injectRankBar(k2aObj, rank4Row, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL");
+        injectRankBar(k2aObj, rank4Row + 1.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL");
+        injectRankBar(k2aObj, rank4Row + 2.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL");
+        injectRankBar(k2aObj, rank4Row, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL");
+        injectRankBar(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell4_DL");
+        injectRankBar(k2aObj, rank4Row + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell5_DL");
+    }
+
+    private void injectRankBar(Object k2aObj, float row, float h, float col, float w, String key) throws Exception {
+        Object bar = k2aSMethod.invoke(k2aObj, row, h, col, w);
+        if (bar != null) {
+            vfF8120g.set(bar, makeRankProp(key, -1));
+            vfFMethod.invoke(bar, DEEP_BLUE, RANK_BAR_MAX);
+        }
+    }
+
+    private void injectMcsRowPathD(Object k2aObj, float row) throws Exception {
+        final float labelH = 3.0f;
+        final float leftH = 1.2f;
+        final float barH = 1.0f;
+        Object label = k2aRMethod.invoke(k2aObj, row, labelH, 0.0f, 27.0f);
+        if (label != null) { veF.set(label, "MCS Cwd 0/1"); veG.set(label, 0); veH.set(label, 1); }
+        injectMcsBar(k2aObj, row + 0.15f, leftH, 30.0f, 16.5f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
+        injectMcsBar(k2aObj, row + 0.15f, leftH, 47.0f, 17.0f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
+        injectMcsBar(k2aObj, row + 1.65f, leftH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
+        injectMcsBar(k2aObj, row + 1.65f, leftH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
+        injectMcsBar(k2aObj, row, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
+        injectMcsBar(k2aObj, row, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell3_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell3_DL");
+        injectMcsBar(k2aObj, row + 2.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell4_DL");
+        injectMcsBar(k2aObj, row + 2.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell4_DL");
+    }
+
+    private void injectMcsRowPathE(Object k2aObj, float row) throws Exception {
+        final float labelH = 3.0f;
+        final float barH = 1.0f;
+        Object label = k2aRMethod.invoke(k2aObj, row, labelH, 0.0f, 27.0f);
+        if (label != null) { veF.set(label, "MCS Cwd 0/1"); veG.set(label, 0); veH.set(label, 1); }
+        injectMcsBar(k2aObj, row, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
+        injectMcsBar(k2aObj, row, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
+        injectMcsBar(k2aObj, row + 2.0f, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
+        injectMcsBar(k2aObj, row + 2.0f, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
+        injectMcsBar(k2aObj, row, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell3_DL");
+        injectMcsBar(k2aObj, row, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell3_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell4_DL");
+        injectMcsBar(k2aObj, row + 1.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell4_DL");
+        injectMcsBar(k2aObj, row + 2.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell5_DL");
+        injectMcsBar(k2aObj, row + 2.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell5_DL");
     }
 }

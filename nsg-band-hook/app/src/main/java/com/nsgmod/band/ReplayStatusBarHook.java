@@ -181,13 +181,24 @@ String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace"
             advActivityKField = advActivityClass.getDeclaredField(advKFieldName);
             advActivityKField.setAccessible(true);
             Class<?> ddClass = ClassMapping.loadClass("d.d", loader);
+            String pickerMethodName = ClassMapping.runtimeMethodName("d.d", "c", loader);
             try {
-                pickerCMethod = ClassMapping.getDeclaredMethod(ddClass, "d.d", "c", loader, Object.class);
-                pickerCMethod.setAccessible(true);
+                pickerCMethod = ddClass.getDeclaredMethod(pickerMethodName, Object.class);
             } catch (NoSuchMethodException nsme) {
-                Log.w(REPLAY_TAG, "Prong E: d.d.c(Object) not found (signature changed?), Prong E disabled");
-                return;
+                for (Method m : ddClass.getDeclaredMethods()) {
+                    if (m.getName().equals(pickerMethodName) && m.getParameterCount() == 2
+                            && m.getParameterTypes()[0] == Object.class) {
+                        pickerCMethod = m;
+                        break;
+                    }
+                }
+                if (pickerCMethod == null) {
+                    Log.w(REPLAY_TAG, "Prong E: " + pickerMethodName
+                            + "(Object) not found, Prong E disabled");
+                    return;
+                }
             }
+            pickerCMethod.setAccessible(true);
             Class<?> appClass = ClassMapping.loadClass("com.qtrun.sys.Application", loader);
             appDMethod = ClassMapping.getDeclaredMethod(appClass, "com.qtrun.sys.Application", "d", loader);
             Class<?> drawerClass = ClassMapping.loadClass("androidx.drawerlayout.widget.DrawerLayout", loader);
@@ -465,7 +476,11 @@ if (loadLogfileId == 0 || item.getItemId() != loadLogfileId) {
 if (subscribed) {
                             Object kPicker = advActivityKField.get(activity);
                             if (kPicker != null) {
-pickerCMethod.invoke(kPicker, new Object[]{new String[]{"*/*"}});
+                                if (pickerCMethod.getParameterCount() > 1) {
+                                    pickerCMethod.invoke(kPicker, new Object[]{new String[]{"*/*"}, null});
+                                } else {
+                                    pickerCMethod.invoke(kPicker, new Object[]{new String[]{"*/*"}});
+                                }
                             } else {
                                 Log.w(REPLAY_TAG, "Prong E: advancedActivity.K is null");
                                 return chain.proceed(); // fall back
