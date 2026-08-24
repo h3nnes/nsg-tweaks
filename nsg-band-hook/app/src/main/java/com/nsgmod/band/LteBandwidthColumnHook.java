@@ -64,6 +64,29 @@ public class LteBandwidthColumnHook {
             0.05f, 0.10f, 0.09f, 0.17f, 0.14f, 0.15f, 0.15f, 0.15f
     };
 
+    // Precomputed LTE BW / SINR property keys (identical strings to the legacy
+    // per-row concatenations, computed once at class init).
+    private static final String[] LTE_BW_KEYS = {
+            "LTE::Serving_Cell::LTE_Bandwidth_PCell_DL",
+            "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell1_DL",
+            "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell2_DL",
+            "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell3_DL",
+            "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell4_DL",
+            "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell5_DL",
+            "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell6_DL",
+            "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell7_DL",
+    };
+    private static final String[] LTE_SINR_KEYS = {
+            "LTE::Downlink_Measurements::LTE_SINR_PCell",
+            "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell1",
+            "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell2",
+            "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell3",
+            "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell4",
+            "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell5",
+            "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell6",
+            "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell7",
+    };
+
     // Tag keys on the row LinearLayout.
     private static final String TAG_HEADER_INJECTED = "nsg_lte_header_injected";
     private static final int    HEADER_TAG_KEY    = "nsg_lte_header_injected".hashCode();
@@ -107,6 +130,9 @@ public class LteBandwidthColumnHook {
     private Field            legendSingleton;  // static singleton field
     private Method           legendMethodC;    // c(com.qtrun.sys.b, double) -> float
     private Method           legendMethodA;    // a(com.qtrun.sys.b, double) -> Integer
+    /** Cached LegendManager singleton instance (stable app object, not modem
+     *  data) — avoids a reflective static-field read on every LTE row per frame. */
+    private volatile Object  legendSingletonCache;
 
     private Class<?>         sysBClass;        // com.qtrun.sys.b
     private Field            sysAFieldA;       // com.qtrun.sys.a.a — String key
@@ -294,8 +320,8 @@ public class LteBandwidthColumnHook {
      */
     private String readLteBwFresh(Object ds, int modIdx, long adsk, int intraRow) {
         long qt = (adsk > 0) ? adsk : Long.MAX_VALUE;
-        String key = (intraRow == 0)
-                ? "LTE::Serving_Cell::LTE_Bandwidth_PCell_DL"
+        String key = (intraRow >= 0 && intraRow < LTE_BW_KEYS.length)
+                ? LTE_BW_KEYS[intraRow]
                 : "LTE::Serving_Cell::SCC::LTE_Bandwidth_SCell" + intraRow + "_DL";
         return readScalarBw(ds, key, modIdx, qt);
     }
@@ -347,8 +373,8 @@ public class LteBandwidthColumnHook {
      */
     private Float readLteSinrRaw(Object ds, int modIdx, long adsk, int intraRow) {
         long qt = (adsk > 0) ? adsk : Long.MAX_VALUE;
-        String key = (intraRow == 0)
-                ? "LTE::Downlink_Measurements::LTE_SINR_PCell"
+        String key = (intraRow >= 0 && intraRow < LTE_SINR_KEYS.length)
+                ? LTE_SINR_KEYS[intraRow]
                 : "LTE::Downlink_Measurements::SCC::LTE_SINR_SCell" + intraRow;
         return readScalarSinrRaw(ds, key, modIdx, qt);
     }
@@ -386,155 +412,128 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.f$a.getView — single merged hook (injects both BW and SNR)
+    // Hook: a8.f$a.getView — registered with the shared CellTableRowDispatcher
+    // (single interceptor per runtime getView method). Runs AFTER
+    // CellRowHeightHook's row processor (reverse registration order), exactly
+    // as in the legacy interceptor chain.
+    //
+    // Injects BOTH the BW column (between Band and EARFCN) and the SNR column
+    // (last column, after RSRQ) in a single pass.
     // -----------------------------------------------------------------------
     private void hookGetView() {
         if (!reflectionReady) {
             Log.e(TAG, "LteBWHook.hookGetView skipped — reflection not ready");
             return;
         }
-        try {
-            Class<?> adapterClass  = ClassMapping.loadClass("a8.f$a", loader);
-            if (adapterClass == null) {
-                Log.i(TAG, "LteBandwidthColumnHook: a8.f$a not available, skipping getView hook");
-                return;
-            }
-            Method   getViewMethod = adapterClass.getMethod("getView",
-                    int.class, View.class, ViewGroup.class);
+        boolean registered =
+                CellTableRowDispatcher.register(xposed, loader, "a8.f$a", "LteBandwidthColumnHook",
+                new CellTableRowDispatcher.RowProcessor() {
+                    @Override
+                    public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
+                        if (!SettingsToggleHook.cellModsEnabled()) return;
+                        if (!ctx.isAdapterType(ADAPTER_TYPE_LTE)) return;
+                        View rowView = (View) result;
+                        if (rowView == null) return;
 
-            xposed.hook(getViewMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result = chain.proceed();
-                    if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    if (adapterTypeField != null) {
-                        try {
-                            if (adapterTypeField.getInt(chain.getThisObject()) != ADAPTER_TYPE_LTE)
-                                return result;
-                        } catch (Exception ignored) {}
-                    }
-                    View rowView = (View) result;
-                    if (rowView == null) return result;
+                        LinearLayout row = findHorizontalRow(rowView);
+                        if (row == null) return;
 
-                    LinearLayout row = findHorizontalRow(rowView);
-                    if (row == null) return result;
+                        // Resolve (isServing, intraRow, adapterSampleKey) from the
+                        // shared row context (resolved once per getView call).
+                        int     position         = ctx.position();
+                        boolean isServing        = ctx.isSource0();
+                        int     intraRow         = ctx.intraRow();
+                        long    adapterSampleKey = ctx.sampleKey();
 
-                    // Resolve (isServing, intraRow, adapterSampleKey) from adapter.
-                    int     position         = (int) chain.getArg(0);
-                    boolean isServing        = false;
-                    int     intraRow         = position;
-                    long    adapterSampleKey = -1;
-                    try {
-                        Object   adapter = chain.getThisObject();
-                        Object[] sources = (Object[]) eField.get(adapter);
-                        android.util.Pair<?, ?> pair =
-                                (android.util.Pair<?, ?>) hMethod.invoke(adapter, position);
-                        if (pair != null && pair.second != null) {
-                            intraRow  = (int) pair.second;
-                            isServing = (pair.first != null && sources != null
-                                    && sources.length > 0 && pair.first == sources[0]);
-                        }
-                        if (f5509cField != null && sources != null && sources.length > 0) {
-                            adapterSampleKey = f5509cField.getLong(sources[0]);
-                        }
-                    } catch (Exception e) {
-                        Log.w(TAG, "LteBWHook: h(position) failed: " + e);
-                    }
-
-                    // Read BW and SINR fresh — no persistent cache.
-                    String bwText  = null;
-                    Float  sinrRaw = null;
-                    if (isServing && reflectionReady) {
-                        try {
-                            Object ws = wsSingleton.get(null);
-                            if (ws != null) {
-                                int modIdx = ((Number) wsModuleIndex.get(ws)).intValue();
-                                Object ds  = wsDataSource.get(ws);
-                                if (ds != null) {
+                        // Read BW and SINR fresh — no persistent cache.
+                        // DataSource/moduleIndex resolved once per getView call and
+                        // shared with other cell-table hooks via RowContext.
+                        String bwText  = null;
+                        Float  sinrRaw = null;
+                        if (isServing && reflectionReady) {
+                            Object ds = ctx.dataSource();
+                            int modIdx = ctx.moduleIndex();
+                            if (ds != null) {
+                                try {
                                     bwText  = readLteBwFresh(ds, modIdx,
                                             adapterSampleKey, intraRow);
                                     sinrRaw = readLteSinrRaw(ds, modIdx,
                                             adapterSampleKey, intraRow);
+                                } catch (Exception ex) {
+                                    Log.w(TAG, "LteBW: read failed: " + ex);
                                 }
                             }
-                        } catch (Exception ex) {
-                            Log.w(TAG, "LteBW: ws read failed: " + ex);
                         }
-                    }
 
-                    // ---- Fast path: both views already injected (tags set) ----
-                    Object bwTag  = row.getTag(BW_VIEW_TAG_KEY);
-                    Object snrTag = row.getTag(SNR_VIEW_TAG_KEY);
-                    if (bwTag instanceof TextView && snrTag instanceof View) {
-                        TextView bwView  = (TextView) bwTag;
-                        View     snrView = (View) snrTag;
-                        String bwDisplay = (bwText != null) ? bwText : "-";
-                        bwView.setText(bwDisplay);
+                        // ---- Fast path: both views already injected (tags set) ----
+                        Object bwTag  = row.getTag(BW_VIEW_TAG_KEY);
+                        Object snrTag = row.getTag(SNR_VIEW_TAG_KEY);
+                        if (bwTag instanceof TextView && snrTag instanceof View) {
+                            TextView bwView  = (TextView) bwTag;
+                            View     snrView = (View) snrTag;
+                            String bwDisplay = (bwText != null) ? bwText : "-";
+                            bwView.setText(bwDisplay);
+                            if (bwText != null) {
+                                bwView.setTextColor(0xFFFFFFFF);
+                            } else {
+                                if (row.getChildCount() > 3
+                                        && row.getChildAt(3) instanceof TextView) {
+                                    bwView.setTextColor(
+                                            ((TextView) row.getChildAt(3)).getTextColors());
+                                }
+                            }
+                            applySnrColor(snrView, sinrRaw, intraRow);
+                            return;
+                        }
+
+                        // ---- First injection — must have exactly 6 children ----
+                        if (row.getChildCount() != 6) return;
+
+                        float density = rowView.getContext().getResources()
+                                .getDisplayMetrics().density;
+
+                        // Inject BW (plain TextView) at index 2.
+                        TextView bandView = (TextView) row.getChildAt(1);
+                        TextView bwView   = new TextView(rowView.getContext());
+                        bwView.setText((bwText != null) ? bwText : "-");
+                        bwView.setGravity(android.view.Gravity.CENTER);
+                        bwView.setMaxLines(1);
+                        bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                                bandView.getTextSize());
+                        bwView.setTypeface(bandView.getTypeface());
                         if (bwText != null) {
                             bwView.setTextColor(0xFFFFFFFF);
                         } else {
-                            if (row.getChildCount() > 3
-                                    && row.getChildAt(3) instanceof TextView) {
-                                bwView.setTextColor(
-                                        ((TextView) row.getChildAt(3)).getTextColors());
-                            }
+                            bwView.setTextColor(bandView.getTextColors());
                         }
+                        LinearLayout.LayoutParams bwLp = new LinearLayout.LayoutParams(
+                                0, (int) (21 * density));
+                        bwLp.weight = WEIGHTS[2];
+                        bwView.setLayoutParams(bwLp);
+                        row.addView(bwView, 2);
+
+                        // Inject SNR (ProgressTextView) at end.
+                        // After BW insertion RSRQ is now at index 6.
+                        TextView rsrqView = (row.getChildCount() > 6
+                                && row.getChildAt(6) instanceof TextView)
+                                ? (TextView) row.getChildAt(6) : null;
+                        View snrView = createSnrView(rowView.getContext(), rsrqView, density);
+                        LinearLayout.LayoutParams snrLp = new LinearLayout.LayoutParams(
+                                0, (int) (21 * density));
+                        snrLp.weight = WEIGHTS[7];
+                        snrView.setLayoutParams(snrLp);
+                        row.addView(snrView);
+
+                        applyWeights(row);
+
+                        // Cache view references — intraRow resolved fresh on every getView.
+                        row.setTag(BW_VIEW_TAG_KEY, bwView);
+                        row.setTag(SNR_VIEW_TAG_KEY, snrView);
+
                         applySnrColor(snrView, sinrRaw, intraRow);
-                        return result;
                     }
-
-                    // ---- First injection — must have exactly 6 children ----
-                    if (row.getChildCount() != 6) return result;
-
-                    float density = rowView.getContext().getResources()
-                            .getDisplayMetrics().density;
-
-                    // Inject BW (plain TextView) at index 2.
-                    TextView bandView = (TextView) row.getChildAt(1);
-                    TextView bwView   = new TextView(rowView.getContext());
-                    bwView.setText((bwText != null) ? bwText : "-");
-                    bwView.setGravity(android.view.Gravity.CENTER);
-                    bwView.setMaxLines(1);
-                    bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
-                            bandView.getTextSize());
-                    bwView.setTypeface(bandView.getTypeface());
-                    if (bwText != null) {
-                        bwView.setTextColor(0xFFFFFFFF);
-                    } else {
-                        bwView.setTextColor(bandView.getTextColors());
-                    }
-                    LinearLayout.LayoutParams bwLp = new LinearLayout.LayoutParams(
-                            0, (int) (21 * density));
-                    bwLp.weight = WEIGHTS[2];
-                    bwView.setLayoutParams(bwLp);
-                    row.addView(bwView, 2);
-
-                    // Inject SNR (ProgressTextView) at end.
-                    // After BW insertion RSRQ is now at index 6.
-                    TextView rsrqView = (row.getChildCount() > 6
-                            && row.getChildAt(6) instanceof TextView)
-                            ? (TextView) row.getChildAt(6) : null;
-                    View snrView = createSnrView(rowView.getContext(), rsrqView, density);
-                    LinearLayout.LayoutParams snrLp = new LinearLayout.LayoutParams(
-                            0, (int) (21 * density));
-                    snrLp.weight = WEIGHTS[7];
-                    snrView.setLayoutParams(snrLp);
-                    row.addView(snrView);
-
-                    applyWeights(row);
-
-                    // Cache view references — intraRow resolved fresh on every getView.
-                    row.setTag(BW_VIEW_TAG_KEY, bwView);
-                    row.setTag(SNR_VIEW_TAG_KEY, snrView);
-
-                    applySnrColor(snrView, sinrRaw, intraRow);
-                    return result;
-                }
-            });
-            Log.i(TAG, "LteBandwidthColumnHook: installed (merged BW+SNR)");
-        } catch (Exception e) {
-            Log.e(TAG, "LteBWHook: hookGetView failed: " + e);
-        }
+                });
+        if (registered) Log.i(TAG, "LteBandwidthColumnHook: installed (merged BW+SNR)");
     }
 
     // -----------------------------------------------------------------------
@@ -654,8 +653,12 @@ public class LteBandwidthColumnHook {
                 ptvFieldJ.setBoolean(snrView, false);
                 snrView.invalidate();
 
-                // Get legend progress and color.
-                Object legend = legendSingleton.get(null);
+                // Get legend progress and color (singleton cached after first read).
+                Object legend = legendSingletonCache;
+                if (legend == null) {
+                    legend = legendSingleton.get(null);
+                    if (legend != null) legendSingletonCache = legend;
+                }
                 if (legend != null) {
                     float    progress = (float) legendMethodC.invoke(legend, bVar, doubleVal);
                     Integer  color    = (Integer) legendMethodA.invoke(legend, bVar, doubleVal);

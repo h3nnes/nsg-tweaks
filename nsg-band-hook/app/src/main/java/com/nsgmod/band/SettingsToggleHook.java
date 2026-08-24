@@ -36,164 +36,159 @@ public class SettingsToggleHook {
     static final String  PREF_KEY_NR_PDSCH_SINR  = "nsgmod.nr_pdsch_snr_enabled";
     static final String  PREF_KEY_GNB_ID_HEADER  = "nsgmod.gnb_id_header_enabled";
 
+    // -----------------------------------------------------------------------
+    // Cached toggle reads.
+    //
+    // The Application + SharedPreferences are resolved ONCE (lazy, synchronized).
+    // Each toggle is mirrored in a volatile field kept exact and immediate by a
+    // SharedPreferences.OnSharedPreferenceChangeListener — toggles are user
+    // settings, not modem data. All other hooks only read the volatiles.
+    //
+    // Fallback behavior matches the previous per-call reflective implementation:
+    // if the Application cannot be resolved (or resolution throws) the documented
+    // per-toggle default is returned and resolution is retried on the next call.
+    // -----------------------------------------------------------------------
+    private static final String PREFS_NAME = "com.qtrun.QuickTest_preferences";
+
+    private static volatile SharedPreferences sPrefs;
+    private static boolean sResolutionWarned = false;
+
+    private static volatile boolean sCellMods       = true;  // default ON  (fail open)
+    private static volatile boolean sCellIdMatch    = true;  // default ON  (fail open)
+    private static volatile boolean sRtPlay         = true;  // default ON  (fail open)
+    private static volatile boolean sNrNsaExtCells  = true;  // default ON  (fail open)
+    private static volatile boolean sLteExtCells    = true;  // default ON  (fail open)
+    private static volatile boolean sFastRefresh    = false; // default OFF (fail closed)
+    private static volatile boolean sCellRowHeight  = true;  // default ON  (fail open)
+    private static volatile boolean sPathlossColumn = false; // default OFF (fail closed)
+    private static volatile boolean sNrPdschSnr     = false; // default OFF (fail closed)
+    private static volatile boolean sGnbIdHeader    = true;  // default ON  (fail open)
+
+    // NOTE: must be a strong static reference — SharedPreferencesImpl keeps
+    // listeners in a WeakHashMap.
+    private static final SharedPreferences.OnSharedPreferenceChangeListener PREF_LISTENER =
+            new SharedPreferences.OnSharedPreferenceChangeListener() {
+                @Override
+                public void onSharedPreferenceChanged(SharedPreferences p, String key) {
+                    if (key == null) return;
+                    try {
+                        updateToggle(p, key);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "toggle listener failed for key " + key + ": " + t);
+                    }
+                }
+            };
+
+    private static void updateToggle(SharedPreferences p, String key) {
+        switch (key) {
+            case PREF_KEY_CELL_MODS:       sCellMods       = p.getBoolean(key, true);  break;
+            case PREF_KEY_CELL_ID_MATCH:   sCellIdMatch    = p.getBoolean(key, true);  break;
+            case PREF_KEY_RT_PLAY:         sRtPlay         = p.getBoolean(key, true);  break;
+            case PREF_KEY_NRNSA_EXT_CELLS: sNrNsaExtCells  = p.getBoolean(key, true);  break;
+            case PREF_KEY_LTE_EXT_CELLS:   sLteExtCells    = p.getBoolean(key, true);  break;
+            case PREF_KEY_FAST_REFRESH:    sFastRefresh    = p.getBoolean(key, false); break;
+            case PREF_KEY_CELL_ROW_HEIGHT: sCellRowHeight  = p.getBoolean(key, true);  break;
+            case PREF_KEY_PATHLOSS_COLUMN: sPathlossColumn = p.getBoolean(key, false); break;
+            case PREF_KEY_NR_PDSCH_SINR:   sNrPdschSnr     = p.getBoolean(key, false); break;
+            case PREF_KEY_GNB_ID_HEADER:   sGnbIdHeader    = p.getBoolean(key, true);  break;
+            default: break;
+        }
+    }
+
+    private static void loadAllToggles(SharedPreferences p) {
+        updateToggle(p, PREF_KEY_CELL_MODS);
+        updateToggle(p, PREF_KEY_CELL_ID_MATCH);
+        updateToggle(p, PREF_KEY_RT_PLAY);
+        updateToggle(p, PREF_KEY_NRNSA_EXT_CELLS);
+        updateToggle(p, PREF_KEY_LTE_EXT_CELLS);
+        updateToggle(p, PREF_KEY_FAST_REFRESH);
+        updateToggle(p, PREF_KEY_CELL_ROW_HEIGHT);
+        updateToggle(p, PREF_KEY_PATHLOSS_COLUMN);
+        updateToggle(p, PREF_KEY_NR_PDSCH_SINR);
+        updateToggle(p, PREF_KEY_GNB_ID_HEADER);
+    }
+
+    /** Resolves Application + SharedPreferences once; on failure retries next call. */
+    private static void ensurePrefs() {
+        if (sPrefs != null) return;
+        synchronized (SettingsToggleHook.class) {
+            if (sPrefs != null) return;
+            try {
+                Class<?> atCls = Class.forName("android.app.ActivityThread");
+                android.app.Application app =
+                        (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
+                if (app == null) return; // not ready yet — defaults, retry next call
+                SharedPreferences p = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+                loadAllToggles(p);
+                p.registerOnSharedPreferenceChangeListener(PREF_LISTENER);
+                sPrefs = p;
+            } catch (Throwable t) {
+                if (!sResolutionWarned) {
+                    sResolutionWarned = true;
+                    Log.w(TAG, "SharedPreferences resolution failed, using defaults: " + t);
+                }
+            }
+        }
+    }
+
     /** Returns true when the cell-table modifications toggle is enabled (default: true). */
     public static boolean cellModsEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return true;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_CELL_MODS, true); // default ON
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "cellModsEnabled check failed: " + t);
-            return true; // fail open — keep mods active
-        }
+        ensurePrefs();
+        return sCellMods;
     }
 
     /** Returns true when the cell-ID matching toggle is enabled (default: true). */
     public static boolean cellIdMatchEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return true;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_CELL_ID_MATCH, true); // default ON
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "cellIdMatchEnabled check failed: " + t);
-            return true; // fail open
-        }
+        ensurePrefs();
+        return sCellIdMatch;
     }
 
     /** Returns true when the fast-refresh toggle is enabled (default: false). */
     public static boolean fastRefreshEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return false;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_FAST_REFRESH, false); // default OFF
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "fastRefreshEnabled check failed: " + t);
-            return false; // fail closed
-        }
+        ensurePrefs();
+        return sFastRefresh;
     }
 
     /** Returns true when the NR-SA Pathloss header column toggle is enabled (default: false). */
     public static boolean pathlossColumnEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return false;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_PATHLOSS_COLUMN, false); // default OFF
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "pathlossColumnEnabled check failed: " + t);
-            return false; // fail closed
-        }
+        ensurePrefs();
+        return sPathlossColumn;
     }
 
     /** Returns true when the cell row height toggle is enabled (default: true). */
     public static boolean cellRowHeightEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return true;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_CELL_ROW_HEIGHT, true); // default ON
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "cellRowHeightEnabled check failed: " + t);
-            return true; // fail open
-        }
+        ensurePrefs();
+        return sCellRowHeight;
     }
 
     /** Returns true when the RT-Play button toggle is enabled (default: true). */
     public static boolean rtPlayEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return true;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_RT_PLAY, true); // default ON
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "rtPlayEnabled check failed: " + t);
-            return true; // fail open — keep button visible
-        }
+        ensurePrefs();
+        return sRtPlay;
     }
 
     /** Returns true when NR-NSA extended cell count (16 rows) is enabled (default: true). */
     public static boolean nrNsaExtCellsEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return true;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_NRNSA_EXT_CELLS, true); // default ON
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "nrNsaExtCellsEnabled check failed: " + t);
-            return true; // fail open
-        }
+        ensurePrefs();
+        return sNrNsaExtCells;
     }
 
     /** Returns true when LTE extended cell count (16 rows) is enabled (default: true). */
     public static boolean lteExtCellsEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return true;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_LTE_EXT_CELLS, true); // default ON
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "lteExtCellsEnabled check failed: " + t);
-            return true; // fail open
-        }
+        ensurePrefs();
+        return sLteExtCells;
     }
 
     /** Returns true when the NR PDSCH SINR row toggle is enabled (default: false). */
     public static boolean nrPdschSnrEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return false;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_NR_PDSCH_SINR, false); // default OFF
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "nrPdschSnrEnabled check failed: " + t);
-            return false; // fail closed
-        }
+        ensurePrefs();
+        return sNrPdschSnr;
     }
 
     /** Returns true when the NR-NSA gNB-ID header toggle is enabled (default: true). */
     public static boolean gnbIdHeaderEnabled() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            android.app.Application app =
-                    (android.app.Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return true;
-            SharedPreferences prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", android.content.Context.MODE_PRIVATE);
-            return prefs.getBoolean(PREF_KEY_GNB_ID_HEADER, true); // default ON
-        } catch (Throwable t) {
-            android.util.Log.w(TAG, "gnbIdHeaderEnabled check failed: " + t);
-            return true; // fail open
-        }
+        ensurePrefs();
+        return sGnbIdHeader;
     }
 
     private static final String FRAGMENT_CLS = "t7.t";

@@ -220,145 +220,115 @@ public class NrNsaBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.h$a.getView
+    // Hook: a8.h$a.getView — registered with the shared CellTableRowDispatcher
+    // (single interceptor per runtime getView method). Runs AFTER BandColumnHook's
+    // row processor (reverse registration order), so a fresh row has 7 children
+    // by the time this runs — exactly as in the legacy interceptor chain.
     // -----------------------------------------------------------------------
     private void hookGetView() {
         if (!reflectionReady) {
             Log.e(TAG, "NrNsaBandwidthColumnHook: hookGetView skipped — reflection not ready");
             return;
         }
-        try {
-            Class<?> adapterClass  = ClassMapping.loadClass("a8.h$a", loader);
-            if (adapterClass == null) {
-                Log.i(TAG, "NrNsaBandwidthColumnHook: a8.h$a not available, skipping getView hook");
-                return;
-            }
-            Method   getViewMethod = adapterClass.getMethod("getView",
-                    int.class, View.class, ViewGroup.class);
+        boolean registered =
+                CellTableRowDispatcher.register(xposed, loader, "a8.h$a", "NrNsaBandwidthColumnHook",
+                new CellTableRowDispatcher.RowProcessor() {
+                    @Override
+                    public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
+                        if (!SettingsToggleHook.cellModsEnabled()) return;
+                        if (!ctx.isAdapterType(ADAPTER_TYPE_NR_NSA)) return;
+                        View rowView = (View) result;
+                        if (rowView == null) return;
 
-            xposed.hook(getViewMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object result = chain.proceed();
-                    if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    if (adapterTypeField != null) {
-                        try {
-                            if (adapterTypeField.getInt(chain.getThisObject()) != ADAPTER_TYPE_NR_NSA)
-                                return result;
-                        } catch (Exception ignored) {}
-                    }
-                    View rowView = (View) result;
-                    if (rowView == null) return result;
+                        LinearLayout row = findHorizontalRow(rowView);
+                        if (row == null) return;
 
-                    LinearLayout row = findHorizontalRow(rowView);
-                    if (row == null) return result;
+                        int childCount = row.getChildCount();
 
-                    int childCount = row.getChildCount();
+                        // Resolve (isSource0, intraRow, adapterSampleKey) from the shared
+                        // row context (resolved once per getView call).
+                        int     position         = ctx.position();
+                        boolean isSource0        = ctx.isSource0();
+                        int     intraRow         = ctx.intraRow();
+                        long    adapterSampleKey = ctx.sampleKey();
 
-                    // Resolve (isSource0, intraRow, adapterSampleKey) on every getView.
-                    int     position         = (int) chain.getArg(0);
-                    boolean isSource0        = false;
-                    int     intraRow         = position;
-                    long    adapterSampleKey = -1;
-                    try {
-                        Object   adapter = chain.getThisObject();
-                        Object[] sources = (Object[]) eField.get(adapter);
-                        android.util.Pair<?, ?> pair =
-                                (android.util.Pair<?, ?>) hMethod.invoke(adapter, position);
-                        if (pair != null && pair.second != null) {
-                            intraRow  = (int) pair.second;
-                            isSource0 = (pair.first != null && sources != null
-                                    && sources.length > 0 && pair.first == sources[0]);
-                        }
-                        if (f5509cField != null && sources != null && sources.length > 0) {
-                            adapterSampleKey = f5509cField.getLong(sources[0]);
-                        }
-                    } catch (Exception ex) {
-                        Log.w(TAG, "NrNsaBandwidthColumnHook: h(position) failed: " + ex);
-                    }
-
-                    // Read BW fresh from DataSource — mirrors v6/f.java pattern.
-                    String bwText = null;
-                    if (isSource0 && reflectionReady) {
-                        try {
-                            Object ws = wsSingleton.get(null);
-                            if (ws != null) {
-                                int modIdx = ((Number) wsModuleIndex.get(ws)).intValue();
-                                Object ds  = wsDataSource.get(ws);
-                                if (ds != null) {
+                        // Read BW fresh from DataSource — mirrors v6/f.java pattern.
+                        // DataSource/moduleIndex resolved once per getView call and
+                        // shared with BandColumnHook via RowContext.
+                        String bwText = null;
+                        if (isSource0 && reflectionReady) {
+                            Object ds = ctx.dataSource();
+                            int modIdx = ctx.moduleIndex();
+                            if (ds != null) {
+                                try {
                                     bwText = readNrNsaBwFresh(ds, modIdx,
                                             adapterSampleKey, intraRow);
+                                } catch (Exception ex) {
+                                    Log.w(TAG, "NrNsaBW getView: read failed: " + ex);
                                 }
                             }
-                        } catch (Exception ex) {
-                            Log.w(TAG, "NrNsaBW getView: ws read failed: " + ex);
                         }
-                    }
 
-                    // ---- Already-injected fast path ----
-                    Object bvTag = row.getTag(BW_VIEW_TAG_KEY);
-                    if (bvTag instanceof TextView) {
-                        TextView bwView = (TextView) bvTag;
-                        bwView.setText(bwText != null ? bwText : "-");
+                        // ---- Already-injected fast path ----
+                        Object bvTag = row.getTag(BW_VIEW_TAG_KEY);
+                        if (bvTag instanceof TextView) {
+                            TextView bwView = (TextView) bvTag;
+                            bwView.setText(bwText != null ? bwText : "-");
+                            if (bwText != null) {
+                                bwView.setTextColor(0xFFFFFFFF);
+                            } else {
+                            if (childCount > 2 && row.getChildAt(2) instanceof TextView)
+                                bwView.setTextColor(
+                                        ((TextView) row.getChildAt(2)).getTextColors());
+                            }
+                            return;
+                        }
+
+                        // ---- First injection path ----
+                        // BandColumnHook already ran → 7 children.
+                        if (childCount != 7) return;
+
+                        String bwDisplay = (bwText != null) ? bwText : "-";
+
+                        // Style from PCI column (child[3] after Band injection).
+                        View refRaw = row.getChildAt(3);
+                        if (!(refRaw instanceof TextView)) return;
+                        TextView refView = (TextView) refRaw;
+
+                        TextView bwView = new TextView(rowView.getContext());
+                        bwView.setText(bwDisplay);
+                        bwView.setGravity(android.view.Gravity.CENTER);
+                        bwView.setMaxLines(1);
+                        bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                                refView.getTextSize());
+                        bwView.setTypeface(refView.getTypeface());
                         if (bwText != null) {
                             bwView.setTextColor(0xFFFFFFFF);
                         } else {
-                        if (childCount > 2 && row.getChildAt(2) instanceof TextView)
-                            bwView.setTextColor(
-                                    ((TextView) row.getChildAt(2)).getTextColors());
+                            bwView.setTextColor(refView.getTextColors());
                         }
-                        return result;
+
+                        float density = rowView.getContext()
+                                .getResources().getDisplayMetrics().density;
+                        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                                0, (int) (21 * density));
+                        lp.weight = FINAL_WEIGHTS[2];
+                        bwView.setLayoutParams(lp);
+
+                        row.addView(bwView, 3);
+
+                        for (int i2 = 0; i2 < 8 && i2 < row.getChildCount(); i2++) {
+                            View child = row.getChildAt(i2);
+                            ViewGroup.LayoutParams rawLp = child.getLayoutParams();
+                            if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
+                            ((LinearLayout.LayoutParams) rawLp).weight = FINAL_WEIGHTS[i2];
+                            child.setLayoutParams(rawLp);
+                        }
+
+                        row.setTag(BW_VIEW_TAG_KEY, bwView);
                     }
-
-                    // ---- First injection path ----
-                    // BandColumnHook already ran → 7 children.
-                    if (childCount != 7) return result;
-
-                    String bwDisplay = (bwText != null) ? bwText : "-";
-
-                    // Style from PCI column (child[3] after Band injection).
-                    View refRaw = row.getChildAt(3);
-                    if (!(refRaw instanceof TextView)) return result;
-                    TextView refView = (TextView) refRaw;
-
-                    TextView bwView = new TextView(rowView.getContext());
-                    bwView.setText(bwDisplay);
-                    bwView.setGravity(android.view.Gravity.CENTER);
-                    bwView.setMaxLines(1);
-                    bwView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
-                            refView.getTextSize());
-                    bwView.setTypeface(refView.getTypeface());
-                    if (bwText != null) {
-                        bwView.setTextColor(0xFFFFFFFF);
-                    } else {
-                        bwView.setTextColor(refView.getTextColors());
-                    }
-
-                    float density = rowView.getContext()
-                            .getResources().getDisplayMetrics().density;
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                            0, (int) (21 * density));
-                    lp.weight = FINAL_WEIGHTS[2];
-                    bwView.setLayoutParams(lp);
-
-                    row.addView(bwView, 3);
-
-                    for (int i = 0; i < 8 && i < row.getChildCount(); i++) {
-                        View child = row.getChildAt(i);
-                        ViewGroup.LayoutParams rawLp = child.getLayoutParams();
-                        if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
-                        ((LinearLayout.LayoutParams) rawLp).weight = FINAL_WEIGHTS[i];
-                        child.setLayoutParams(rawLp);
-                    }
-
-                    row.setTag(BW_VIEW_TAG_KEY, bwView);
-                    return result;
-                }
-            });
-            Log.i(TAG, "NrNsaBandwidthColumnHook: installed");
-        } catch (Exception e) {
-            Log.e(TAG, "NrNsaBandwidthColumnHook: hookGetView failed: " + e);
-        }
+                });
+        if (registered) Log.i(TAG, "NrNsaBandwidthColumnHook: installed");
     }
 
     // -----------------------------------------------------------------------

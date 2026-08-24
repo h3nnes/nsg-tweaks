@@ -169,22 +169,16 @@ public class BandColumnHook {
      * @param isServing true = serving bucket (PCell/SCells); false = detected/neighbour
      * @param intraRow  row index within the bucket (0-based)
      */
-    private String readArfcn(boolean isServing, int intraRow, long queryTime) {
+    private String readArfcn(Object ds, int modIdx, boolean isServing, int intraRow, long queryTime) {
         String key = isServing
                 ? "NR5G::Cell_Measurements::NR_Cells_ARFCN"
                 : "NR5G::Detected_Cells::NR_DetectedCells_ARFCN";
-        return readPropertyWithIndex(key, intraRow, queryTime);
+        return readPropertyWithIndex(ds, modIdx, key, intraRow, queryTime);
     }
 
-    private String readPropertyWithIndex(String key, int idx, long queryTime) {
+    private String readPropertyWithIndex(Object ds, int modIdx, String key, int idx, long queryTime) {
         try {
-            Object ws = wsSingleton.get(null);
-            if (ws == null) { Log.w(TAG, "Workspace null"); return null; }
-            int    moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
-            Object ds          = wsDataSource.get(ws);
-            if (ds == null) { Log.w(TAG, "DataSource null"); return null; }
-
-            Object prop = dsGetProperty.invoke(ds, key, moduleIndex);
+            Object prop = dsGetProperty.invoke(ds, key, modIdx);
             if (prop == null) return null;
 
             Object iter = propIterMethod.invoke(prop, queryTime);
@@ -245,168 +239,146 @@ public class BandColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.h$a.getView
+    // Hook: a8.h$a.getView — registered with the shared CellTableRowDispatcher
+    // (single interceptor per runtime getView method). The row context is
+    // resolved once per call and shared with the other cell-table features.
     // -----------------------------------------------------------------------
     private void hookGetView() {
-        try {
-            Class<?> adapterClass  = ClassMapping.loadClass("a8.h$a", loader);
-            if (adapterClass == null) {
-                Log.i(TAG, "BandColumnHook: a8.h$a not available, skipping getView hook");
-                return;
-            }
-            Method   getViewMethod = adapterClass.getMethod("getView",
-                    int.class, View.class, ViewGroup.class);
+        boolean registered =
+                CellTableRowDispatcher.register(xposed, loader, "a8.h$a", "BandColumnHook",
+                new CellTableRowDispatcher.RowProcessor() {
+                    @Override
+                    public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
+                        if (!SettingsToggleHook.cellModsEnabled()) return;
+                        if (!ctx.isAdapterType(ADAPTER_TYPE_NR_NSA)) return;
+                        View rowView = (View) result;
+                        if (rowView == null) return;
 
-            xposed.hook(getViewMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    // Let NSG handle convertView recycling normally.
-                    Object result = chain.proceed();
-                    if (!SettingsToggleHook.cellModsEnabled()) return result;
-                    if (adapterTypeField != null) {
-                        try {
-                            if (adapterTypeField.getInt(chain.getThisObject()) != ADAPTER_TYPE_NR_NSA)
-                                return result;
-                        } catch (Exception ignored) {}
-                    }
-                    View rowView = (View) result;
-                    if (rowView == null) return result;
+                        // Only handle vertical outer-LL (nr_cell_list_row_double_nsa).
+                        if (!(rowView instanceof LinearLayout)) return;
+                        LinearLayout outerVert = (LinearLayout) rowView;
+                        if (outerVert.getOrientation() != LinearLayout.VERTICAL) return;
+                        if (outerVert.getChildCount() < 1) return;
 
-                    // Only handle vertical outer-LL (nr_cell_list_row_double_nsa).
-                    if (!(rowView instanceof LinearLayout)) return result;
-                    LinearLayout outerVert = (LinearLayout) rowView;
-                    if (outerVert.getOrientation() != LinearLayout.VERTICAL) return result;
-                    if (outerVert.getChildCount() < 1) return result;
+                        View firstChild = outerVert.getChildAt(0);
+                        if (!(firstChild instanceof LinearLayout)) return;
+                        LinearLayout mainRow = (LinearLayout) firstChild;
+                        if (mainRow.getOrientation() != LinearLayout.HORIZONTAL) return;
 
-                    View firstChild = outerVert.getChildAt(0);
-                    if (!(firstChild instanceof LinearLayout)) return result;
-                    LinearLayout mainRow = (LinearLayout) firstChild;
-                    if (mainRow.getOrientation() != LinearLayout.HORIZONTAL) return result;
-
-                    if (outerVert.getChildCount() >= 2) {
-                        View subRow = outerVert.getChildAt(1);
-                        if (subRow instanceof ViewGroup) {
-                            ViewGroup subRowVg = (ViewGroup) subRow;
-                            boolean hasData = false;
-                            if (isNrCellDbLoaded()) {
-                                String pkg = "com.qtrun.QuickTest";
-                                int cellNameId = subRowVg.getResources().getIdentifier("tvRowCellName", "id", pkg);
-                                int cellIdId = subRowVg.getResources().getIdentifier("tvRowCellID", "id", pkg);
-                                if (cellNameId != 0 && cellIdId != 0) {
-                                    View cn = subRowVg.findViewById(cellNameId);
-                                    View ci = subRowVg.findViewById(cellIdId);
-                                    if (cn instanceof TextView && ci instanceof TextView) {
-                                        CharSequence cnText = ((TextView) cn).getText();
-                                        CharSequence ciText = ((TextView) ci).getText();
-                                        hasData = (cnText != null && cnText.length() > 0)
-                                                || (ciText != null && ciText.length() > 0);
+                        if (outerVert.getChildCount() >= 2) {
+                            View subRow = outerVert.getChildAt(1);
+                            if (subRow instanceof ViewGroup) {
+                                ViewGroup subRowVg = (ViewGroup) subRow;
+                                boolean hasData = false;
+                                int[] ids = CellTableRowDispatcher.cellRowIds(
+                                        subRowVg.getResources());
+                                if (isNrCellDbLoaded()) {
+                                    int cellNameId = ids[CellTableRowDispatcher.ROW_ID_CELL_NAME];
+                                    int cellIdId   = ids[CellTableRowDispatcher.ROW_ID_CELL_ID];
+                                    if (cellNameId != 0 && cellIdId != 0) {
+                                        View cn = subRowVg.findViewById(cellNameId);
+                                        View ci = subRowVg.findViewById(cellIdId);
+                                        if (cn instanceof TextView && ci instanceof TextView) {
+                                            CharSequence cnText = ((TextView) cn).getText();
+                                            CharSequence ciText = ((TextView) ci).getText();
+                                            hasData = (cnText != null && cnText.length() > 0)
+                                                    || (ciText != null && ciText.length() > 0);
+                                        }
                                     }
                                 }
-                            }
-                            if (hasData) {
-                                subRow.setVisibility(View.VISIBLE);
-                                int rfidId = subRowVg.getResources().getIdentifier("tvRowRFID", "id", "com.qtrun.QuickTest");
-                                if (rfidId != 0) {
-                                    View rfid = subRowVg.findViewById(rfidId);
-                                    if (rfid != null) rfid.setVisibility(View.GONE);
+                                if (hasData) {
+                                    subRow.setVisibility(View.VISIBLE);
+                                    int rfidId = ids[CellTableRowDispatcher.ROW_ID_RF_ID];
+                                    if (rfidId != 0) {
+                                        View rfid = subRowVg.findViewById(rfidId);
+                                        if (rfid != null) rfid.setVisibility(View.GONE);
+                                    }
+                                } else {
+                                    subRow.setVisibility(View.GONE);
                                 }
                             } else {
                                 subRow.setVisibility(View.GONE);
                             }
-                        } else {
-                            subRow.setVisibility(View.GONE);
                         }
-                    }
 
-                    // Resolve serving/intraRow via adapter reflection.
-                    int     position  = (int) chain.getArg(0);
-                    boolean isServing = false;
-                    int     intraRow  = position;
-                    // queryTime: use f5509c (adapter's own sample key) when > 0, otherwise
-                    // fall back to Long.MAX_VALUE. f5509c is set by a8.b$b.g() before
-                    // notifyDataSetChanged(), so it is valid by the time getView fires.
-                    // Do NOT use Workspace.g — it is frozen at the first post-event dispatch
-                    // and never advances; new ticks land at sk > wsG and Property.b(wsG)
-                    // cannot see them. Long.MAX_VALUE fallback handles reset state (f5509c=-1).
-                    long    queryTime = Long.MAX_VALUE;
-                    if (reflectionReady) {
-                        try {
-                            Object   adapter = chain.getThisObject();
-                            Object[] sources = (Object[]) eField.get(adapter);
-                            android.util.Pair<?, ?> pair =
-                                    (android.util.Pair<?, ?>) hMethod.invoke(adapter, position);
-                            if (pair != null && pair.second != null) {
-                                intraRow  = (int) pair.second;
-                                isServing = (pair.first != null && sources != null
-                                        && sources.length > 0 && pair.first == sources[0]);
-                            }
-                            if (f5509cField != null && sources != null && sources.length > 0) {
-                                long sk = f5509cField.getLong(sources[0]);
-                                if (sk > 0) queryTime = sk;
-                            }
-                        } catch (Exception e) {
-                            Log.w(TAG, "h(position) failed: " + e);
+                        // Resolve serving/intraRow via the shared row context.
+                        int     position  = ctx.position();
+                        boolean isServing = false;
+                        int     intraRow  = position;
+                        // queryTime: use f5509c (adapter's own sample key) when > 0, otherwise
+                        // fall back to Long.MAX_VALUE. f5509c is set by a8.b$b.g() before
+                        // notifyDataSetChanged(), so it is valid by the time getView fires.
+                        // Do NOT use Workspace.g — it is frozen at the first post-event dispatch
+                        // and never advances; new ticks land at sk > wsG and Property.b(wsG)
+                        // cannot see them. Long.MAX_VALUE fallback handles reset state (f5509c=-1).
+                        long    queryTime = Long.MAX_VALUE;
+                        if (reflectionReady) {
+                            intraRow  = ctx.intraRow();
+                            isServing = ctx.isSource0();
+                            long sk = ctx.sampleKey();
+                            if (sk > 0) queryTime = sk;
                         }
-                    }
 
-                    // Read ARFCN using adapter-aligned sample key (not Workspace.g).
-                    String arfcn = readArfcn(isServing, intraRow, queryTime);
-                    String arfcnText = (arfcn != null) ? arfcn : "-";
+                        // Read ARFCN using adapter-aligned sample key (not Workspace.g).
+                        // DataSource/moduleIndex resolved once per getView call and
+                        // shared with NrNsaBandwidthColumnHook via RowContext.
+                        Object ds = ctx.dataSource();
+                        int modIdx = ctx.moduleIndex();
+                        String arfcn = (ds != null)
+                                ? readArfcn(ds, modIdx, isServing, intraRow, queryTime)
+                                : null;
+                        String arfcnText = (arfcn != null) ? arfcn : "-";
 
-                    // ---- Already-injected fast path (recycled view) ----
-                    Object arfcnTag = mainRow.getTag(ARFCN_VIEW_TAG_KEY);
-                    if (arfcnTag instanceof TextView) {
-                        TextView arfcnView = (TextView) arfcnTag;
+                        // ---- Already-injected fast path (recycled view) ----
+                        Object arfcnTag = mainRow.getTag(ARFCN_VIEW_TAG_KEY);
+                        if (arfcnTag instanceof TextView) {
+                            TextView arfcnView = (TextView) arfcnTag;
+                            arfcnView.setText(arfcnText);
+                            // Re-read color from PCI (child[2] after injection) each time.
+                            android.content.res.ColorStateList color = pciColor(mainRow);
+                            if (color != null) arfcnView.setTextColor(color);
+                            return;
+                        }
+
+                        // ---- First-injection path (fresh inflated view, 6-child main row) ----
+                        if (mainRow.getChildCount() != 6) return;
+
+                        View refRaw = mainRow.getChildAt(1); // PCI column
+                        if (!(refRaw instanceof TextView)) return;
+                        TextView refView = (TextView) refRaw;
+
+                        TextView arfcnView = new TextView(rowView.getContext());
                         arfcnView.setText(arfcnText);
-                        // Re-read color from PCI (child[2] after injection) each time.
-                        android.content.res.ColorStateList color = pciColor(mainRow);
-                        if (color != null) arfcnView.setTextColor(color);
-                        return result;
+                        arfcnView.setGravity(android.view.Gravity.CENTER);
+                        arfcnView.setMaxLines(1);
+                        arfcnView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
+                                refView.getTextSize());
+                        arfcnView.setTypeface(refView.getTypeface());
+                        arfcnView.setTextColor(refView.getTextColors());
+
+                        float density = rowView.getContext().getResources().getDisplayMetrics().density;
+                        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                                0, (int) (21 * density));
+                        lp.weight = 0.12f;
+                        arfcnView.setLayoutParams(lp);
+
+                        mainRow.addView(arfcnView, 1);
+
+                        // Redistribute 7 columns. NrNsaBandwidthColumnHook redistributes to 8.
+                        float[] weights = {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f};
+                        for (int i2 = 0; i2 < 7 && i2 < mainRow.getChildCount(); i2++) {
+                            View child = mainRow.getChildAt(i2);
+                            ViewGroup.LayoutParams rawLp = child.getLayoutParams();
+                            if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
+                            ((LinearLayout.LayoutParams) rawLp).weight = weights[i2];
+                            child.setLayoutParams(rawLp);
+                        }
+
+                        mainRow.setTag(ARFCN_VIEW_TAG_KEY, arfcnView);
+                        mainRow.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
                     }
-
-                    // ---- First-injection path (fresh inflated view, 6-child main row) ----
-                    if (mainRow.getChildCount() != 6) return result;
-
-                    View refRaw = mainRow.getChildAt(1); // PCI column
-                    if (!(refRaw instanceof TextView)) return result;
-                    TextView refView = (TextView) refRaw;
-
-                    TextView arfcnView = new TextView(rowView.getContext());
-                    arfcnView.setText(arfcnText);
-                    arfcnView.setGravity(android.view.Gravity.CENTER);
-                    arfcnView.setMaxLines(1);
-                    arfcnView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX,
-                            refView.getTextSize());
-                    arfcnView.setTypeface(refView.getTypeface());
-                    arfcnView.setTextColor(refView.getTextColors());
-
-                    float density = rowView.getContext().getResources().getDisplayMetrics().density;
-                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                            0, (int) (21 * density));
-                    lp.weight = 0.12f;
-                    arfcnView.setLayoutParams(lp);
-
-                    mainRow.addView(arfcnView, 1);
-
-                    // Redistribute 7 columns. NrNsaBandwidthColumnHook redistributes to 8.
-                    float[] weights = {0.03f, 0.12f, 0.10f, 0.09f, 0.22f, 0.22f, 0.22f};
-                    for (int i = 0; i < 7 && i < mainRow.getChildCount(); i++) {
-                        View child = mainRow.getChildAt(i);
-                        ViewGroup.LayoutParams rawLp = child.getLayoutParams();
-                        if (!(rawLp instanceof LinearLayout.LayoutParams)) continue;
-                        ((LinearLayout.LayoutParams) rawLp).weight = weights[i];
-                        child.setLayoutParams(rawLp);
-                    }
-
-                    mainRow.setTag(ARFCN_VIEW_TAG_KEY, arfcnView);
-                    mainRow.setTag(BAND_TAG_KEY, TAG_BAND_INJECTED);
-                    return result;
-                }
-            });
-            Log.i(TAG, "BandColumnHook: installed");
-        } catch (Exception e) {
-            Log.e(TAG, "BandColumnHook: hookGetView failed: " + e);
-        }
+                });
+        if (registered) Log.i(TAG, "BandColumnHook: installed");
     }
 
     // -----------------------------------------------------------------------

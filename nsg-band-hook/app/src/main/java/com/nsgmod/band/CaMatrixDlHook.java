@@ -11,114 +11,163 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Adds an "RSRP" row immediately below the "Band/Width" row (above "SINR") on the
- * NR-NSA EUTRA CA Matrix DL page (g8.i), showing the RSRP value for PCell and each SCell.
+ * Adds an "RSRP" row immediately below the "Band/Width" row (above "SINR") on both
+ * CA Matrix DL pages — LTE CA Matrix DL (e8.b) and NR-NSA EUTRA CA Matrix DL (g8.i) —
+ * showing the RSRP value for PCell and each SCell.
  *
- * g8.i is a parallel class to e8.b (LTE CA Matrix DL) with identical row geometry and
- * method/field names. Only the class name differs.
+ * g8.i is a parallel class to e8.b with identical row geometry and method/field
+ * names; only the class name differs, so a single hook serves both pages. g8.i may
+ * be absent on some flavors and is then skipped gracefully.
  *
- * Architecture mirrors LteRsrpRowHook exactly:
- *   Hook g8.i.n0() to set a ThreadLocal<Integer> with the carrier count (field g8.i.Z).
- *   Hook static v6.b.k0(k2.a) — when ThreadLocal is set, inject the RSRP row.
+ * LTE has a single RSRP value per cell (no SS-RSRP / CSI-RSRP distinction).
  *
- * Row geometry per carrier path (identical to LteRsrpRowHook):
+ * Architecture mirrors SACAMatrixDLHook / NrSaCsiSnrRowHook:
+ *   e8.b.n0() / g8.i.n0() dispatch to k0(d1.g) [Z==1/2], inline code [Z==3], or
+ *   l0(d1.g) [Z>=4], all paths end with v6.b.k0(k2.a).
+ *
+ * Strategy:
+ *   Hook e8.b.n0() and g8.i.n0() to set a shared ThreadLocal<Integer> with the
+ *   carrier count (field Z on the respective page class).
+ *   Hook static v6.b.k0(k2.a) once — when the ThreadLocal is set, inject the rows.
+ *
+ * Row geometry per carrier path:
  *
  *   Path A  Z==1 or Z==2  (1 SCell, k0())  — single-height rows (h=1.0)
  *     Band/Width at row 10.  SINR at row 11.
- *     → Insert RSRP at row 11, shift ≥11 by +1.0.
+ *     → Insert RSRP at row 11, shift ≥11 by +2.0.
+ *     Label  col=0  w=27
+ *     PCell  col=30 w=34  key=LTE_RSRP_PCell     index=-1
+ *     SCell1 col=65 w=34  key=LTE_RSRP_SCell1    index=-1
  *
  *   Path B  Z==3  (2 SCells, inline n0())  — double-height rows (h=2.0)
  *     Band/Width at row 11 (h=2).  SINR at row 13 (h=2).
- *     → Insert RSRP at row 13, shift ≥13 by +2.0.
+ *     → Insert RSRP at row 13, shift ≥13 by +2.0 (one logical h=2 row).
+ *     Label      row=13  h=2.0  col=0  w=27
+ *     PCell bar  row=13.3 h=1.4  col=30 w=34  key=LTE_RSRP_PCell  index=-1
+ *     SCell1 bar row=13.0 h=1.0  col=65 w=34  key=LTE_RSRP_SCell1 index=-1
+ *     SCell2 bar row=14.0 h=1.0  col=65 w=34  key=LTE_RSRP_SCell2 index=-1
  *
- *   Path C  Z>=4  (3 SCells, l0())  — double-height label (h=2.0), single-height bars (h=1.0)
- *     Band/Width label at row 11 (h=2.0), bars at rows 11/12.  SINR label at row 13 (h=2.0), bars at rows 13/14.
- *     → Insert RSRP at row 13, shift ≥13 by +2.0.
+ *   Path C  Z>=4  (3 SCells, l0())  — single-height rows (h=1.0)
+ *     Band/Width at rows 11–12 (h=1 each).  SINR at rows 13–14 (h=1 each).
+ *     → Insert RSRP at row 13, shift ≥13 by +2.0 (two h=1 sub-rows).
+ *     Label      row=13  h=2.0  col=0  w=27
+ *     PCell  bar row=13  h=1.0  col=30 w=34  key=LTE_RSRP_PCell  index=-1
+ *     SCell1 bar row=14  h=1.0  col=30 w=34  key=LTE_RSRP_SCell1 index=-1
+ *     SCell2 bar row=13  h=1.0  col=65 w=34  key=LTE_RSRP_SCell2 index=-1
+ *     SCell3 bar row=14  h=1.0  col=65 w=34  key=LTE_RSRP_SCell3 index=-1
  *
- * Property keys: identical to LteRsrpRowHook (same LTE RSRP keys).
+ * Property keys:
+ *   PCell : LTE::Downlink_Measurements::LTE_RSRP_PCell            index=-1  format="%.1f dBm"
+ *   SCell1: LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1      index=-1  format="%.1f dBm"
+ *   SCell2: LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2      index=-1  format="%.1f dBm"
+ *   SCell3: LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3      index=-1  format="%.1f dBm"
  */
-public class EutraRsrpRowHook {
+public class CaMatrixDlHook {
 
     private static final String TAG = "NSGBandHook";
 
-    private static final int   DEEP_BLUE        = 0xff1080e0;
-    private static final float RANK_ROW         = 25.0f;
-    private static final float RANK_SHIFT_AMOUNT = 4.0f;
-    private static final float RANK_BAR_MAX     = 100.0f;
-    private static final float MCS_BAR_MAX     = 32.0f;
-
-    /** Set by the g8.i.n0() flag hook while n0() executes; null otherwise. */
+    /** Set by the e8.b/g8.i n0() flag hooks while n0() executes; null otherwise. */
     static final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
+
+    /** NSG R.color.color_deep_blue = #ff1080e0 (ARGB), used for Rank3/Rank4 bars. */
+    private static final int DEEP_BLUE = 0xff1080e0;
+    /** Row at which Rank3/Rank4 usage rows are inserted (after the RSRP shift). */
+    private static final float RANK_ROW = 25.0f;
+    /** Rank3/Rank4 insertion shifts existing rows >= RANK_ROW by this amount
+     *  (two rowspan-2 logical rows = 4 sub-rows). */
+    private static final float RANK_SHIFT_AMOUNT = 4.0f;
+    /** Max value for Rank usage bars (percentage). */
+    private static final float RANK_BAR_MAX = 100.0f;
+    private static final float MCS_BAR_MAX = 32.0f;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // k2.a builder methods
-    private Method k2aRMethod;
-    private Method k2aSMethod;
-    private Method k2aTMethod;
+    // Shared static reflection context — initialized exactly once (both pages use
+    // the same obfuscated runtime names via ClassMapping).
 
-    // v6.e label fields
-    private Field veF;
-    private Field veG;
-    private Field veH;
+    // k2.a builder methods
+    private static Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e  (label)
+    private static Method k2aSMethod; // s(float row, float h, float col, float w) → v6.f  (bar)
+    private static Method k2aTMethod; // t(float row, float h, float col, float w) → v6.g  (text)
+
+    // v6.e label fields (actual bytecode names)
+    private static Field veF; // text   (JADX: f8116f)
+    private static Field veG; // align  (JADX: f8117g)
+    private static Field veH; // span
 
     // v6.f bar data-binding field
-    private Field vfF8120g;
+    private static Field vfF8120g; // g (JADX: f8120g) — data binding
 
     // v6.f bar color/max/fixed fields (flavor-dependent)
-    private Field barFixedField;
-    private Field barColorField;
-    private Field barMaxField;
+    private static Field barFixedField;
+    private static Field barColorField;
+    private static Field barMaxField;
 
-    // v6.f bar color/max setter: f(int color, float max)
-    private Method vfFMethod;
+    // v6.f bar color/max setter: f(int color, float max) enables fixed-color bar mode
+    private static Method vfFMethod;
 
     // v6.g (eh0) fields for cloning
-    private Field vgBindingsField;
-    private Field vgColorField;
-    private Field vgSepField;
-    private Field vgAppField;
-    private Field vgGravField;
+    private static Field vgBindingsField;
+    private static Field vgColorField;
+    private static Field vgSepField;
+    private static Field vgAppField;
+    private static Field vgGravField;
 
     // v00 (d7.i$k) class and case field
-    private Class<?> v00Class;
-    private Field v00CaseField;
+    private static Class<?> v00Class;
+    private static Field v00CaseField;
 
     // com.qtrun.sys.b / a — property binding
-    private Class<?> sysBClass;
-    private Field sysAFieldA;
-    private Field sysAFieldB;
-    private Field sysAFieldC;
+    private static Class<?> sysBClass;
+    private static Field sysAFieldA; // final String key
+    private static Field sysAFieldB; // final String format
+    private static Field sysAFieldC; // int index
 
-    // Unsafe for allocateInstance
-    private Object unsafe;
-    private Method unsafeAllocateInstance;
+    // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
+    private static Object unsafe;
+    private static Method unsafeAllocateInstance;
 
-    // g8.i carrier count field — bytecode name "Z"
-    private Field g8iCarrierCountField;
+    // Page carrier count fields — actual bytecode name "Z"; null when the page
+    // class is unavailable on this flavor.
+    private static Field e8bCarrierCountField;
+    private static Field g8iCarrierCountField;
 
     // k2.a list + v6.a fields
-    private Field k2aListField;
-    private Field vaRowField;
-    private Field vaHeightField;
-    private Field vaColField;
-    private Field vaWidthField;
+    private static Field k2aListField;
+    private static Field vaRowField;
+    private static Field vaHeightField;
+    private static Field vaColField;
+    private static Field vaWidthField;
 
     // Element type classes for instanceof checks
-    private Class<?> ch0Class;
-    private Class<?> dh0Class;
-    private Class<?> eh0Class;
+    private static Class<?> ch0Class;
+    private static Class<?> dh0Class;
+    private static Class<?> eh0Class;
 
-    private boolean ready = false;
+    /** Binding-class field cache for cloneBinding: flattened, pre-accessible,
+     *  non-static instance fields (including superclass fields) per binding class. */
+    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, Field[]>
+            BINDING_FIELDS_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
-    public EutraRsrpRowHook(XposedInterface xposed, ClassLoader loader) {
+    private static final Object INIT_LOCK = new Object();
+    private static volatile boolean ready = false;
+
+    public CaMatrixDlHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
         this.loader = loader;
-        initReflection();
+        initReflectionOnce(loader);
     }
 
-    private void initReflection() {
+    private static void initReflectionOnce(ClassLoader loader) {
+        if (ready) return;
+        synchronized (INIT_LOCK) {
+            if (ready) return;
+            initReflection(loader);
+        }
+    }
+
+    private static void initReflection(ClassLoader loader) {
         try {
             Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
             Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
@@ -189,21 +238,13 @@ public class EutraRsrpRowHook {
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
             java.lang.reflect.Field unsafeField;
             try {
-                unsafeField = unsafeClass.getDeclaredField("THE_ONE");
+                unsafeField = unsafeClass.getDeclaredField("THE_ONE");   // Android/Dalvik
             } catch (NoSuchFieldException e2) {
-                unsafeField = unsafeClass.getDeclaredField("theUnsafe");
+                unsafeField = unsafeClass.getDeclaredField("theUnsafe"); // OpenJDK fallback
             }
             unsafeField.setAccessible(true);
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
-
-            Class<?> g8iClass = ClassMapping.loadClass("g8.i", loader);
-            if (g8iClass == null) {
-                Log.i(TAG, "EutraRsrpRowHook: g8.i not available on this flavor, skipping");
-                return;
-            }
-            g8iCarrierCountField = g8iClass.getDeclaredField(ClassMapping.runtimeFieldName("g8.i", "Z", loader));
-            g8iCarrierCountField.setAccessible(true);
 
             k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
             k2aListField.setAccessible(true);
@@ -221,9 +262,28 @@ public class EutraRsrpRowHook {
             dh0Class = vfClass;
             eh0Class = vgClass;
 
+            // Page carrier-count fields — resolved independently; a page class may
+            // be absent on some flavors (null → page skipped at install time).
+            e8bCarrierCountField = resolveCarrierCountField("e8.b", loader);
+            g8iCarrierCountField = resolveCarrierCountField("g8.i", loader);
+
             ready = true;
         } catch (Exception e) {
             Log.e(TAG, "initReflection failed: " + e);
+        }
+    }
+
+    private static Field resolveCarrierCountField(String logicalClass, ClassLoader loader) {
+        try {
+            Class<?> pageClass = ClassMapping.loadClass(logicalClass, loader);
+            if (pageClass == null) return null;
+            Field f = pageClass.getDeclaredField(
+                    ClassMapping.runtimeFieldName(logicalClass, "Z", loader));
+            f.setAccessible(true);
+            return f;
+        } catch (Exception e) {
+            Log.w(TAG, "could not resolve carrier count field for " + logicalClass + ": " + e);
+            return null;
         }
     }
 
@@ -232,30 +292,43 @@ public class EutraRsrpRowHook {
             Log.w(TAG, "skipping install — reflection not ready");
             return;
         }
-        installN0FlagHook();
+        boolean anyPage = false;
+        anyPage |= installN0FlagHook("e8.b", e8bCarrierCountField);
+        anyPage |= installN0FlagHook("g8.i", g8iCarrierCountField);
+        if (!anyPage) {
+            Log.i(TAG, "CaMatrixDlHook: neither e8.b nor g8.i available, skipping install");
+            return;
+        }
         installV6bK0Hook();
-        Log.i(TAG, "EutraRsrpRowHook: installed");
+        Log.i(TAG, "CaMatrixDlHook: installed");
     }
 
     // -----------------------------------------------------------------------
-    // Hook 1: g8.i.n0() — set/clear ThreadLocal flag around execution
+    // Hook 1: e8.b.n0() / g8.i.n0() — set/clear ThreadLocal flag around execution
     // -----------------------------------------------------------------------
 
-    private void installN0FlagHook() {
+    private boolean installN0FlagHook(String logicalClass, Field carrierCountField) {
+        if (carrierCountField == null) {
+            Log.i(TAG, "CaMatrixDlHook: " + logicalClass
+                    + " not available on this flavor, skipping n0 hook");
+            return false;
+        }
         try {
-            Class<?> g8iClass = ClassMapping.loadClass("g8.i", loader);
-            if (g8iClass == null) {
-                Log.i(TAG, "EutraRsrpRowHook: g8.i not available, skipping n0 hook");
-                return;
+            Class<?> pageClass = ClassMapping.loadClass(logicalClass, loader);
+            if (pageClass == null) {
+                Log.i(TAG, "CaMatrixDlHook: " + logicalClass
+                        + " not available, skipping n0 hook");
+                return false;
             }
-            Method   n0Method = ClassMapping.getMethod(g8iClass, "g8.i", "n0", loader);
+            Method   n0Method = ClassMapping.getMethod(pageClass, logicalClass, "n0", loader);
+            final Field carrierField = carrierCountField;
 
             xposed.hook(n0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     int carriers = -1;
                     try {
-                        carriers = (int) g8iCarrierCountField.get(chain.getThisObject());
+                        carriers = (int) carrierField.get(chain.getThisObject());
                     } catch (Exception e) {
                         Log.w(TAG, "could not read carrier count: " + e);
                     }
@@ -267,13 +340,15 @@ public class EutraRsrpRowHook {
                     }
                 }
             });
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "n0 flag hook failed: " + e);
+            return false;
         }
     }
 
     // -----------------------------------------------------------------------
-    // Hook 2: static v6.b.k0(k2.a) — inject RSRP row when called from g8.i.n0()
+    // Hook 2: static v6.b.k0(k2.a) — inject rows when called from either page's n0()
     // -----------------------------------------------------------------------
 
     private void installV6bK0Hook() {
@@ -333,30 +408,11 @@ public class EutraRsrpRowHook {
                 shiftAmount = 2.0f;
             }
 
-            java.util.ArrayList<?> list =
-                    (java.util.ArrayList<?>) k2aListField.get(k2aObj);
-            if (list != null) {
-                for (Object elem : list) {
-                    float elemRow = (float) vaRowField.get(elem);
-                    if (elemRow >= shiftFrom) {
-                        vaRowField.set(elem, elemRow + shiftAmount);
-                    }
-                }
-            }
-
             float rankRow = RANK_ROW;
             float rankShift = RANK_SHIFT_AMOUNT;
             if (isPathDE) {
                 rankRow = 33.0f;
                 rankShift = 6.0f;
-            }
-            if (!isPathA && list != null) {
-                for (Object elem : list) {
-                    float elemRow = (float) vaRowField.get(elem);
-                    if (elemRow >= rankRow) {
-                        vaRowField.set(elem, elemRow + rankShift);
-                    }
-                }
             }
 
             float mcsRow;
@@ -375,12 +431,20 @@ public class EutraRsrpRowHook {
                 mcsShiftFrom  = 37.0f;
                 mcsShiftAmount = 2.0f;
             }
+
+            java.util.ArrayList<?> list =
+                    (java.util.ArrayList<?>) k2aListField.get(k2aObj);
             if (list != null) {
+                // Single pass: each threshold is checked against the running
+                // (already shifted) row value, preserving the original 3-loop
+                // semantics. Rank shifting is skipped entirely on path A.
                 for (Object elem : list) {
-                    float elemRow = (float) vaRowField.get(elem);
-                    if (elemRow >= mcsShiftFrom) {
-                        vaRowField.set(elem, elemRow + mcsShiftAmount);
-                    }
+                    float origRow = (float) vaRowField.get(elem);
+                    float row = origRow;
+                    if (row >= shiftFrom) row += shiftAmount;
+                    if (!isPathA && row >= rankRow) row += rankShift;
+                    if (row >= mcsShiftFrom) row += mcsShiftAmount;
+                    if (row != origRow) vaRowField.set(elem, row);
                 }
             }
 
@@ -423,6 +487,14 @@ public class EutraRsrpRowHook {
         }
     }
 
+    /**
+     * Path A: Z==1 or Z==2 (1 SCell), single-height rows (h=1.0).
+     *
+     * RSRP row at rsrpRow:
+     *   label col=0 w=27
+     *   PCell bar col=30 w=34  key=LTE_RSRP_PCell  index=-1
+     *   SCell1 bar col=65 w=34  key=LTE_RSRP_SCell1 index=-1
+     */
     private void injectRsrpRowPathA(Object k2aObj, float rsrpRow) throws Exception {
         final float h = 1.0f;
 
@@ -446,6 +518,15 @@ public class EutraRsrpRowHook {
         }
     }
 
+    /**
+     * Path B: Z==3 (2 SCells), double-height rows (label h=2.0, PCell barOffset=+0.3 h=1.4).
+     * SCell bars stack at rsrpRow and rsrpRow+1 in col=65.
+     *
+     * RSRP label row=rsrpRow h=2.0 col=0 w=27
+     * PCell bar  row=rsrpRow+0.3 h=1.4 col=30 w=34
+     * SCell1 bar row=rsrpRow     h=1.0 col=65 w=34
+     * SCell2 bar row=rsrpRow+1   h=1.0 col=65 w=34
+     */
     private void injectRsrpRowPathB(Object k2aObj, float rsrpRow) throws Exception {
         final float labelH    = 2.0f;
         final float pcellBarH = 1.4f;
@@ -478,6 +559,17 @@ public class EutraRsrpRowHook {
         }
     }
 
+    /**
+     * Path C: Z>=4 (3 SCells), single-height rows (h=1.0).
+     * Left panel (col=30): PCell at rsrpRow, SCell1 at rsrpRow+1.
+     * Right panel (col=65): SCell2 at rsrpRow, SCell3 at rsrpRow+1.
+     *
+     * RSRP label row=rsrpRow h=2.0 col=0 w=27
+     * PCell  bar row=rsrpRow   h=1.0 col=30 w=34
+     * SCell1 bar row=rsrpRow+1 h=1.0 col=30 w=34
+     * SCell2 bar row=rsrpRow   h=1.0 col=65 w=34
+     * SCell3 bar row=rsrpRow+1 h=1.0 col=65 w=34
+     */
     private void injectRsrpRowPathC(Object k2aObj, float rsrpRow) throws Exception {
         final float labelH = 2.0f;
         final float barH   = 1.0f;
@@ -511,6 +603,175 @@ public class EutraRsrpRowHook {
         if (sCell3Bar != null) {
             vfF8120g.set(sCell3Bar, makeProp(
                     "LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3", -1));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Rank3/Rank4 usage row injection (Path B and Path C only)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Path B: Z==3 (2 SCells), double-height rows (label h=2.0, PCell barOffset=+0.3 h=1.4).
+     * SCell bars stack at startRow and startRow+1 in col=65.  Rank4 at startRow+2.
+     *
+     * Rank3 Usage label row=startRow     h=2.0 col=0  w=27
+     * Rank3 PCell bar  row=startRow+0.3  h=1.4 col=30 w=34  key=LTE_Rank3_Usage_PCell
+     * Rank3 SCell1 bar row=startRow      h=1.0 col=65 w=34  key=LTE_Rank3_Usage_SCell1
+     * Rank3 SCell2 bar row=startRow+1    h=1.0 col=65 w=34  key=LTE_Rank3_Usage_SCell2
+     *
+     * Rank4 Usage label row=startRow+2   h=2.0 col=0  w=27
+     * Rank4 PCell bar  row=startRow+2.3  h=1.4 col=30 w=34  key=LTE_Rank4_Usage_PCell
+     * Rank4 SCell1 bar row=startRow+2    h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell1
+     * Rank4 SCell2 bar row=startRow+3    h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell2
+     *
+     * Bars use v6.f.f(DEEP_BLUE, 100.0f) for fixed-color percentage bars.
+     */
+    private void injectRankUsageRowPathB(Object k2aObj, float startRow) throws Exception {
+        final float labelH    = 2.0f;
+        final float pcellBarH = 1.4f;
+        final float pcellOff  = 0.3f;
+        final float scellBarH = 1.0f;
+
+        // Rank3 Usage
+        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) {
+            veF.set(rank3Label, "Rank3 Usage");
+            veG.set(rank3Label, 0);
+            veH.set(rank3Label, 1);
+        }
+        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow + pcellOff, pcellBarH, 30.0f, 34.0f);
+        if (rank3PCell != null) {
+            vfF8120g.set(rank3PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow, scellBarH, 65.0f, 34.0f);
+        if (rank3SCell1 != null) {
+            vfF8120g.set(rank3SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, scellBarH, 65.0f, 34.0f);
+        if (rank3SCell2 != null) {
+            vfF8120g.set(rank3SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+
+        // Rank4 Usage at startRow + 2
+        float rank4Row = startRow + 2.0f;
+        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) {
+            veF.set(rank4Label, "Rank4 Usage");
+            veG.set(rank4Label, 0);
+            veH.set(rank4Label, 1);
+        }
+        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row + pcellOff, pcellBarH, 30.0f, 34.0f);
+        if (rank4PCell != null) {
+            vfF8120g.set(rank4PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row, scellBarH, 65.0f, 34.0f);
+        if (rank4SCell1 != null) {
+            vfF8120g.set(rank4SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, scellBarH, 65.0f, 34.0f);
+        if (rank4SCell2 != null) {
+            vfF8120g.set(rank4SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+    }
+
+    /**
+     * Path C: Z>=4 (3 SCells), single-height rows (h=1.0).
+     * Left panel (col=30): PCell at startRow, SCell1 at startRow+1.
+     * Right panel (col=65): SCell2 at startRow, SCell3 at startRow+1.  Rank4 at startRow+2.
+     *
+     * Rank3 Usage label row=startRow   h=2.0 col=0  w=27
+     * Rank3 PCell bar  row=startRow    h=1.0 col=30 w=34  key=LTE_Rank3_Usage_PCell
+     * Rank3 SCell1 bar row=startRow+1  h=1.0 col=30 w=34  key=LTE_Rank3_Usage_SCell1
+     * Rank3 SCell2 bar row=startRow    h=1.0 col=65 w=34  key=LTE_Rank3_Usage_SCell2
+     * Rank3 SCell3 bar row=startRow+1  h=1.0 col=65 w=34  key=LTE_Rank3_Usage_SCell3
+     *
+     * Rank4 Usage label row=startRow+2 h=2.0 col=0  w=27
+     * Rank4 PCell bar  row=startRow+2  h=1.0 col=30 w=34  key=LTE_Rank4_Usage_PCell
+     * Rank4 SCell1 bar row=startRow+3  h=1.0 col=30 w=34  key=LTE_Rank4_Usage_SCell1
+     * Rank4 SCell2 bar row=startRow+2  h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell2
+     * Rank4 SCell3 bar row=startRow+3  h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell3
+     *
+     * Bars use v6.f.f(DEEP_BLUE, 100.0f) for fixed-color percentage bars.
+     */
+    private void injectRankUsageRowPathC(Object k2aObj, float startRow) throws Exception {
+        final float labelH = 2.0f;
+        final float barH   = 1.0f;
+
+        // Rank3 Usage
+        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) {
+            veF.set(rank3Label, "Rank3 Usage");
+            veG.set(rank3Label, 0);
+            veH.set(rank3Label, 1);
+        }
+        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow, barH, 30.0f, 34.0f);
+        if (rank3PCell != null) {
+            vfF8120g.set(rank3PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 30.0f, 34.0f);
+        if (rank3SCell1 != null) {
+            vfF8120g.set(rank3SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow, barH, 65.0f, 34.0f);
+        if (rank3SCell2 != null) {
+            vfF8120g.set(rank3SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank3SCell3 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f);
+        if (rank3SCell3 != null) {
+            vfF8120g.set(rank3SCell3, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL", -1));
+            vfFMethod.invoke(rank3SCell3, DEEP_BLUE, RANK_BAR_MAX);
+        }
+
+        // Rank4 Usage at startRow + 2
+        float rank4Row = startRow + 2.0f;
+        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) {
+            veF.set(rank4Label, "Rank4 Usage");
+            veG.set(rank4Label, 0);
+            veH.set(rank4Label, 1);
+        }
+        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row, barH, 30.0f, 34.0f);
+        if (rank4PCell != null) {
+            vfF8120g.set(rank4PCell, makeRankProp(
+                    "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
+            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 30.0f, 34.0f);
+        if (rank4SCell1 != null) {
+            vfF8120g.set(rank4SCell1, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
+            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row, barH, 65.0f, 34.0f);
+        if (rank4SCell2 != null) {
+            vfF8120g.set(rank4SCell2, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
+            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
+        }
+        Object rank4SCell3 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f);
+        if (rank4SCell3 != null) {
+            vfF8120g.set(rank4SCell3, makeRankProp(
+                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL", -1));
+            vfFMethod.invoke(rank4SCell3, DEEP_BLUE, RANK_BAR_MAX);
         }
     }
 
@@ -625,132 +886,6 @@ public class EutraRsrpRowHook {
         return prop;
     }
 
-    private void injectRankUsageRowPathB(Object k2aObj, float startRow) throws Exception {
-        final float labelH    = 2.0f;
-        final float pcellBarH = 1.4f;
-        final float pcellOff  = 0.3f;
-        final float scellBarH = 1.0f;
-
-        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
-        if (rank3Label != null) {
-            veF.set(rank3Label, "Rank3 Usage");
-            veG.set(rank3Label, 0);
-            veH.set(rank3Label, 1);
-        }
-        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow + pcellOff, pcellBarH, 30.0f, 34.0f);
-        if (rank3PCell != null) {
-            vfF8120g.set(rank3PCell, makeRankProp(
-                    "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
-            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow, scellBarH, 65.0f, 34.0f);
-        if (rank3SCell1 != null) {
-            vfF8120g.set(rank3SCell1, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
-            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, scellBarH, 65.0f, 34.0f);
-        if (rank3SCell2 != null) {
-            vfF8120g.set(rank3SCell2, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
-            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
-        }
-
-        float rank4Row = startRow + 2.0f;
-        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
-        if (rank4Label != null) {
-            veF.set(rank4Label, "Rank4 Usage");
-            veG.set(rank4Label, 0);
-            veH.set(rank4Label, 1);
-        }
-        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row + pcellOff, pcellBarH, 30.0f, 34.0f);
-        if (rank4PCell != null) {
-            vfF8120g.set(rank4PCell, makeRankProp(
-                    "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
-            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row, scellBarH, 65.0f, 34.0f);
-        if (rank4SCell1 != null) {
-            vfF8120g.set(rank4SCell1, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
-            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, scellBarH, 65.0f, 34.0f);
-        if (rank4SCell2 != null) {
-            vfF8120g.set(rank4SCell2, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
-            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
-        }
-    }
-
-    private void injectRankUsageRowPathC(Object k2aObj, float startRow) throws Exception {
-        final float labelH = 2.0f;
-        final float barH   = 1.0f;
-
-        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
-        if (rank3Label != null) {
-            veF.set(rank3Label, "Rank3 Usage");
-            veG.set(rank3Label, 0);
-            veH.set(rank3Label, 1);
-        }
-        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow, barH, 30.0f, 34.0f);
-        if (rank3PCell != null) {
-            vfF8120g.set(rank3PCell, makeRankProp(
-                    "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
-            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 30.0f, 34.0f);
-        if (rank3SCell1 != null) {
-            vfF8120g.set(rank3SCell1, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
-            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow, barH, 65.0f, 34.0f);
-        if (rank3SCell2 != null) {
-            vfF8120g.set(rank3SCell2, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
-            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank3SCell3 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f);
-        if (rank3SCell3 != null) {
-            vfF8120g.set(rank3SCell3, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL", -1));
-            vfFMethod.invoke(rank3SCell3, DEEP_BLUE, RANK_BAR_MAX);
-        }
-
-        float rank4Row = startRow + 2.0f;
-        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
-        if (rank4Label != null) {
-            veF.set(rank4Label, "Rank4 Usage");
-            veG.set(rank4Label, 0);
-            veH.set(rank4Label, 1);
-        }
-        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row, barH, 30.0f, 34.0f);
-        if (rank4PCell != null) {
-            vfF8120g.set(rank4PCell, makeRankProp(
-                    "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
-            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 30.0f, 34.0f);
-        if (rank4SCell1 != null) {
-            vfF8120g.set(rank4SCell1, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
-            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row, barH, 65.0f, 34.0f);
-        if (rank4SCell2 != null) {
-            vfF8120g.set(rank4SCell2, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
-            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
-        }
-        Object rank4SCell3 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f);
-        if (rank4SCell3 != null) {
-            vfF8120g.set(rank4SCell3, makeRankProp(
-                    "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL", -1));
-            vfFMethod.invoke(rank4SCell3, DEEP_BLUE, RANK_BAR_MAX);
-        }
-    }
-
     @SuppressWarnings("unchecked")
     private void transformGrid(Object k2aObj, int carriers) throws Exception {
         java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
@@ -761,45 +896,33 @@ public class EutraRsrpRowHook {
 
         java.util.ArrayList<Object> originals = new java.util.ArrayList<>(list);
 
-        if (isPathE) {
-            for (Object elem : originals) {
-                float row = (float) vaRowField.get(elem);
-                if (row < 9.0f) continue;
-                float col = (float) vaColField.get(elem);
-                if (col < 50.0f) continue;
-                int oldRowInt = (int) row;
-                boolean isFirstSubRow = ((oldRowInt - 9) % 2) == 0;
+        // Single pass over the originals: PathE in-place SCell binding rewrite,
+        // template collection, and repositioning. Each element's row/col is read
+        // once into locals before any write to that element, and elements are
+        // independent of each other.
+        Object[][] templates = new Object[13][4];
+        for (Object elem : originals) {
+            float row = (float) vaRowField.get(elem);
+            if (row < 9.0f) continue;
+            float col = (float) vaColField.get(elem);
+            int oldRowInt = (int) row;
+            int l = (oldRowInt - 9) / 2;
+            boolean isFirstSubRow = ((oldRowInt - 9) % 2) == 0;
+
+            if (isPathE && col >= 50.0f) {
                 if (isFirstSubRow) {
                     replaceScellInElement(elem, 2, 3);
                 } else {
                     replaceScellInElement(elem, 3, 4);
                 }
             }
-        }
 
-        Object[][] templates = new Object[13][4];
-        for (Object elem : originals) {
-            float row = (float) vaRowField.get(elem);
-            if (row < 9.0f) continue;
-            int oldRowInt = (int) row;
-            int l = (oldRowInt - 9) / 2;
-            boolean isFirstSubRow = ((oldRowInt - 9) % 2) == 0;
-            if (isFirstSubRow) continue;
-            if (l < 0 || l >= 13) continue;
-            float col = (float) vaColField.get(elem);
-            if (Math.abs(col - 30.0f) < 0.1f) templates[l][0] = elem;
-            else if (Math.abs(col - 47.0f) < 0.1f) templates[l][1] = elem;
-            else if (Math.abs(col - 65.0f) < 0.1f) templates[l][2] = elem;
-            else if (Math.abs(col - 82.0f) < 0.1f) templates[l][3] = elem;
-        }
-
-        for (Object elem : originals) {
-            float row = (float) vaRowField.get(elem);
-            if (row < 9.0f) continue;
-            float col = (float) vaColField.get(elem);
-            int oldRowInt = (int) row;
-            int l = (oldRowInt - 9) / 2;
-            boolean isFirstSubRow = ((oldRowInt - 9) % 2) == 0;
+            if (!isFirstSubRow && l >= 0 && l < 13) {
+                if (Math.abs(col - 30.0f) < 0.1f) templates[l][0] = elem;
+                else if (Math.abs(col - 47.0f) < 0.1f) templates[l][1] = elem;
+                else if (Math.abs(col - 65.0f) < 0.1f) templates[l][2] = elem;
+                else if (Math.abs(col - 82.0f) < 0.1f) templates[l][3] = elem;
+            }
 
             float newRow;
             if (isPathE) {
@@ -931,26 +1054,40 @@ public class EutraRsrpRowHook {
     private Object cloneBinding(Object binding, String oldStr, String newStr) throws Exception {
         Class<?> bindingClass = binding.getClass();
         Object newBinding = unsafeAllocateInstance.invoke(unsafe, bindingClass);
+        for (Field f : cachedInstanceFields(bindingClass)) {
+            Object value = f.get(binding);
+            if (value instanceof String) {
+                String s = (String) value;
+                if (s.contains(oldStr)) {
+                    s = s.replace(oldStr, newStr);
+                }
+                f.set(newBinding, s);
+            } else {
+                f.set(newBinding, value);
+            }
+        }
+        return newBinding;
+    }
+
+    /** Flattened, pre-accessible, non-static instance fields of the binding class
+     *  (including superclass fields), cached per class. */
+    private static Field[] cachedInstanceFields(Class<?> bindingClass) {
+        Field[] cached = BINDING_FIELDS_CACHE.get(bindingClass);
+        if (cached != null) return cached;
+        java.util.ArrayList<Field> fields = new java.util.ArrayList<>();
         Class<?> c = bindingClass;
         while (c != null && c != Object.class) {
             for (Field f : c.getDeclaredFields()) {
                 int mods = f.getModifiers();
                 if (java.lang.reflect.Modifier.isStatic(mods)) continue;
                 f.setAccessible(true);
-                Object value = f.get(binding);
-                if (value instanceof String) {
-                    String s = (String) value;
-                    if (s.contains(oldStr)) {
-                        s = s.replace(oldStr, newStr);
-                    }
-                    f.set(newBinding, s);
-                } else {
-                    f.set(newBinding, value);
-                }
+                fields.add(f);
             }
             c = c.getSuperclass();
         }
-        return newBinding;
+        Field[] arr = fields.toArray(new Field[0]);
+        Field[] prev = BINDING_FIELDS_CACHE.putIfAbsent(bindingClass, arr);
+        return prev != null ? prev : arr;
     }
 
     private void updateHeaderText(java.util.ArrayList<?> list, float col, String text) throws Exception {

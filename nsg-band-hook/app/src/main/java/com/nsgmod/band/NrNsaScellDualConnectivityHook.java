@@ -16,6 +16,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -131,6 +132,19 @@ public class NrNsaScellDualConnectivityHook {
 
     private Method v6aUpdateMethod;     // v6.a.a(long, DataSource, short)
     private Method v6aResetMethod;      // v6.a.b()
+
+    // Cached handles for the per-tick fragment.Y / k2a.c lookups (were resolved
+    // via ClassMapping.loadClass + getField on EVERY data tick).
+    private Field v6bYField;            // v6.b.Y -> k2.a grid builder
+    private Field k2aGridField;         // k2.a.c -> View (v6.d grid)
+
+    // Cached handles for isScellPresent (were resolved via ClassMapping on EVERY tick).
+    private Method  scellGetProperty;   // DataSource.getProperty(String, int)
+    private Method  scellIteratorB;     // Property.b(long)
+    private Method  scellIterEnd;       // Property$Iterator.end()
+    private Method  scellIterValue;     // Property$Iterator.value()
+    private Method  scellIterKey;       // Property$Iterator.key()
+    private boolean scellReflectionReady = false;
     private Class<?> v6eClass;
     private Class<?> v6fClass;
     private Class<?> v6gClass;
@@ -144,6 +158,8 @@ public class NrNsaScellDualConnectivityHook {
 
     // Bindings for every row that has an NR column cell.
     private final List<RowBinding> rowBindings = new ArrayList<>();
+    // Identity-keyed lookup for findBinding (replaces the per-render linear scan).
+    private final Map<Object, RowBinding> bindingsByNrCell = new IdentityHashMap<>();
     // Original geometry for every cell we might stretch, so we can restore it.
     private final Map<Object, float[]> originalGeometry = new HashMap<>();
     // Tracks whether the grid is currently in stretched mode.
@@ -296,6 +312,44 @@ v6aUpdateMethod = ClassMapping.getMethod(v6aClass, V6_A_CLASS, "a", loader,
             progressTextViewCtor = progressTextViewClass.getConstructor(Context.class, AttributeSet.class);
             progressTextViewCtor.setAccessible(true);
 
+            // --- Cached per-tick handles: fragment.Y (v6.b) and k2a.c (grid view) ---
+            try {
+                Class<?> v6bCls = ClassMapping.loadClass(V6_B_CLASS, loader);
+                if (v6bCls != null) {
+                    v6bYField = v6bCls.getField(
+                            ClassMapping.runtimeFieldName(V6_B_CLASS, "Y", loader));
+                }
+                k2aGridField = k2aClass.getField(
+                        ClassMapping.runtimeFieldName(K2A_CLASS, "c", loader));
+            } catch (Exception e) {
+                Log.w(TAG, "NrNsaScellDualConnectivityHook: per-tick field cache incomplete, "
+                        + "falling back to per-call resolution: " + e);
+            }
+
+            // --- Cached isScellPresent handles: DataSource/Property/Iterator ---
+            try {
+                Class<?> dsCls   = ClassMapping.loadClass(DATA_SOURCE_CLASS, loader);
+                Class<?> propCls = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+                Class<?> iterCls = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+                if (dsCls != null && propCls != null && iterCls != null) {
+                    scellGetProperty = ClassMapping.getMethod(dsCls, DATA_SOURCE_CLASS,
+                            "getProperty", loader, String.class, int.class);
+                    scellIteratorB   = ClassMapping.getMethod(propCls, "com.qtrun.sys.Property",
+                            "b", loader, long.class);
+                    scellIterEnd     = ClassMapping.getMethod(iterCls,
+                            "com.qtrun.sys.Property$Iterator", "end", loader);
+                    scellIterValue   = ClassMapping.getMethod(iterCls,
+                            "com.qtrun.sys.Property$Iterator", "value", loader);
+                    scellIterKey     = ClassMapping.getMethod(iterCls,
+                            "com.qtrun.sys.Property$Iterator", "key", loader);
+                    scellReflectionReady = true;
+                } else {
+                    Log.w(TAG, "isScellPresent: missing Property/Iterator classes");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "NrNsaScellDualConnectivityHook: isScellPresent reflection failed: " + e);
+            }
+
             reflectionReady = true;
             Log.i(TAG, "NrNsaScellDualConnectivityHook: reflection ready");
         } catch (Exception e) {
@@ -384,10 +438,11 @@ if (match) {
     @SuppressWarnings("unchecked")
     private void buildBindings(Object fragment) {
         rowBindings.clear();
+        bindingsByNrCell.clear();
         originalGeometry.clear();
         currentlyStretched = false;
 
-        Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
+        Object k2a = getFieldCached(fragment, v6bYField, V6_B_CLASS, "Y");
         if (k2a == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: fragment.Y is null");
             return;
@@ -439,6 +494,7 @@ return;
             RowBinding binding = new RowBinding(row, rc.label, rc.lte, rc.nr);
             preparePcellFormatters(binding, rc.nr, row);
             rowBindings.add(binding);
+            bindingsByNrCell.put(rc.nr, binding);
 }
 }
 
@@ -454,12 +510,12 @@ return;
 
     @SuppressWarnings("unchecked")
     private boolean wrapAllRows(Object fragment) {
-Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
+Object k2a = getFieldCached(fragment, v6bYField, V6_B_CLASS, "Y");
         if (k2a == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, fragment.Y is null");
             return false;
         }
-        View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
+        View gridView = (View) getFieldCached(k2a, k2aGridField, K2A_CLASS, "c");
         if (gridView == null) {
             Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot wrap, grid is null");
             return false;
@@ -481,7 +537,6 @@ List<Object> gridCells;
             if (binding.wrapped) continue;
             int index = gridCells.indexOf(binding.nrCell);
             if (index < 0 || index >= gridGroup.getChildCount()) {
-                Log.w(TAG, "NrNsaScellDualConnectivityHook: cannot find grid child for row " + binding.originalRow);
                 return false;
             }
             View originalView = gridGroup.getChildAt(index);
@@ -567,9 +622,9 @@ return (TextView) fontTextViewCtor.newInstance(ctx, (AttributeSet) null);
 
     @SuppressWarnings("unchecked")
     private void unwrapAllRows(Object fragment) {
-        Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
+        Object k2a = getFieldCached(fragment, v6bYField, V6_B_CLASS, "Y");
         if (k2a == null) return;
-        View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
+        View gridView = (View) getFieldCached(k2a, k2aGridField, K2A_CLASS, "c");
         if (gridView == null) return;
 
         List<Object> gridCells;
@@ -640,9 +695,9 @@ xposed.hook(bMethod).intercept(new Hooker() {
     }
 
     private void onDataUpdate(Object fragment, Object dataSource, long sampleKey, short moduleIndex) {
-        Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
+        Object k2a = getFieldCached(fragment, v6bYField, V6_B_CLASS, "Y");
         if (k2a == null) return;
-        View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
+        View gridView = (View) getFieldCached(k2a, k2aGridField, K2A_CLASS, "c");
         if (gridView == null || !gridView.isAttachedToWindow()) return;
 
         lastDataSource = dataSource;
@@ -657,10 +712,18 @@ boolean layoutNeeded = false;
                 if (!wrapAllRows(fragment)) return;
                 layoutNeeded = true;
             }
-            // Always re-apply stretched geometry while an SCell is present.
-            stretchGrid(true);
-            currentlyStretched = true;
-            layoutNeeded = true;
+            // Re-apply stretched geometry only on transitions. NSG's per-tick
+            // update path (v6.b.b -> k2.a.j -> v6.a.a()/e()) only touches cell
+            // VALUES, never the row/height geometry fields (verified in the
+            // decompiled qtrun v4.8.9 zg0/t31/yg0 and gplay v4.8.8 e5/b6/e5.a
+            // code paths), and view rebuilds reset currentlyStretched via
+            // resetAndRebuild(), so the stretched geometry persists between
+            // ticks and re-applying it every tick was redundant work.
+            if (!currentlyStretched) {
+                stretchGrid(true);
+                currentlyStretched = true;
+                layoutNeeded = true;
+            }
         } else {
             if (anyWrapped() || currentlyStretched) {
                 stretchGrid(false);
@@ -744,9 +807,9 @@ setGeometry(binding.lteCell, newRow + 0.3f, 1.4f);
 
     private void requestGridLayout(Object fragment) {
         try {
-            Object k2a = getFieldValue(fragment, V6_B_CLASS, "Y");
+            Object k2a = getFieldCached(fragment, v6bYField, V6_B_CLASS, "Y");
             if (k2a == null) return;
-            View gridView = (View) getFieldValue(k2a, K2A_CLASS, "c");
+            View gridView = (View) getFieldCached(k2a, k2aGridField, K2A_CLASS, "c");
             if (gridView != null) {
                 gridView.requestLayout();
             }
@@ -802,12 +865,9 @@ setGeometry(binding.lteCell, newRow + 0.3f, 1.4f);
     }
 
     private RowBinding findBinding(Object nrCell) {
-        for (RowBinding binding : rowBindings) {
-            if (binding.nrCell == nrCell) {
-                return binding;
-            }
-        }
-        return null;
+        // Identity-keyed map — same result as the legacy linear scan over
+        // rowBindings comparing binding.nrCell == nrCell.
+        return bindingsByNrCell.get(nrCell);
     }
 
     // -------------------------------------------------------------------------
@@ -1145,36 +1205,27 @@ if (Boolean.TRUE.equals(changed)) {
     // -------------------------------------------------------------------------
     private boolean isScellPresent(Object dataSource, long sampleKey, short moduleIndex) {
         try {
-            Class<?> dsClass = ClassMapping.loadClass(DATA_SOURCE_CLASS, loader);
-            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
-            if (dsClass == null || propClass == null || iterClass == null) {
+            if (!scellReflectionReady) {
                 Log.w(TAG, "isScellPresent: missing Property/Iterator classes");
                 return false;
             }
             Object ds = dataSource;
-            Method getProperty = ClassMapping.getMethod(dsClass, DATA_SOURCE_CLASS, "getProperty", loader,
-                    String.class, int.class);
-            Method iteratorB = ClassMapping.getMethod(propClass, "com.qtrun.sys.Property", "b", loader, long.class);
-            Method end = ClassMapping.getMethod(iterClass, "com.qtrun.sys.Property$Iterator", "end", loader);
-            Method value = ClassMapping.getMethod(iterClass, "com.qtrun.sys.Property$Iterator", "value", loader);
-            Method key = ClassMapping.getMethod(iterClass, "com.qtrun.sys.Property$Iterator", "key", loader);
 
-            Object property = getProperty.invoke(ds, KEY_SCELL_PCI, (int) moduleIndex);
+            Object property = scellGetProperty.invoke(ds, KEY_SCELL_PCI, (int) moduleIndex);
             if (property == null) {
 return false;
             }
-            Object it = iteratorB.invoke(property, sampleKey);
-            if (it == null || (boolean) end.invoke(it)) {
+            Object it = scellIteratorB.invoke(property, sampleKey);
+            if (it == null || (boolean) scellIterEnd.invoke(it)) {
 return false;
             }
-            Object val = value.invoke(it);
+            Object val = scellIterValue.invoke(it);
             if (val == null) {
-                long actual = (long) key.invoke(it);
+                long actual = (long) scellIterKey.invoke(it);
                 if (actual > 0) {
-                    it = iteratorB.invoke(property, actual - 1);
-                    if (it == null || (boolean) end.invoke(it)) return false;
-                    val = value.invoke(it);
+                    it = scellIteratorB.invoke(property, actual - 1);
+                    if (it == null || (boolean) scellIterEnd.invoke(it)) return false;
+                    val = scellIterValue.invoke(it);
                 }
             }
             if (!(val instanceof Object[])) {
@@ -1217,6 +1268,22 @@ return pci >= 0;
             field.set(obj, value);
         } catch (Exception ignored) {
         }
+    }
+
+    /**
+     * Cached-field fast path for the hot fragment.Y / k2a.c lookups. Falls back
+     * to the original per-call ClassMapping resolution when the cached handle
+     * could not be resolved at init (identical result, identical null-on-error).
+     */
+    private Object getFieldCached(Object obj, Field cached, String className, String fieldName) {
+        if (cached != null) {
+            try {
+                return cached.get(obj);
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+        return getFieldValue(obj, className, fieldName);
     }
 
     private Object getFieldValue(Object obj, String className, String fieldName) {
