@@ -5,33 +5,30 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
-import androidx.annotation.NonNull;
-
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
-
 import io.github.libxposed.api.XposedInterface;
-import io.github.libxposed.api.XposedInterface.Hooker;
 
+/**
+ * Collapses the CSV info sub-row of LTE cell-table rows when no cell name /
+ * cell ID text is available.
+ *
+ * Registered with the shared CellTableRowDispatcher (single interceptor per
+ * runtime getView method). This feature is the LAST getView feature registered
+ * in MainHook, so in the legacy interceptor chain it was the innermost hook:
+ * its pre-proceed checks ran right before the original getView and its
+ * adjustRowHeight ran first after the original returned. The dispatcher
+ * reproduces this exactly (beforeProceed in registration order, afterProceed
+ * in reverse registration order).
+ */
 public class CellRowHeightHook {
     private static final String TAG = "NSGBandHook";
     private static final int ADAPTER_TYPE_LTE = 4;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
-    private Field adapterTypeField;
 
     public CellRowHeightHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
         this.loader = loader;
-        try {
-            Class<?> bbClass = ClassMapping.loadClass("a8.b$b", loader);
-            if (bbClass != null) {
-                adapterTypeField = bbClass.getDeclaredField("f");
-                adapterTypeField.setAccessible(true);
-            }
-        } catch (Exception ignored) {
-        }
     }
 
     public void install() {
@@ -39,47 +36,37 @@ public class CellRowHeightHook {
     }
 
     private void installLteHook() {
-        try {
-            // a8.f$a extends b.AbstractC0008b
-            Class<?> adapterClass = ClassMapping.loadClass("a8.f$a", loader);
-            if (adapterClass == null) {
-                Log.i(TAG, "CellRowHeightHook: a8.f$a not available, skipping LTE hook");
-                return;
-            }
-            Method getViewMethod = adapterClass.getDeclaredMethod(
-                    "getView", int.class, View.class, ViewGroup.class);
-            getViewMethod.setAccessible(true);
+        // a8.f$a extends b.AbstractC0008b
+        boolean registered =
+                CellTableRowDispatcher.register(xposed, loader, "a8.f$a", "CellRowHeightHook",
+                new CellTableRowDispatcher.RowProcessor() {
+                    /** Set by beforeProceed; consumed by afterProceed for the same call. */
+                    private boolean active;
 
-            xposed.hook(getViewMethod).intercept(new Hooker() {
-                @Override
-                public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    // Check toggle first
-                    if (!SettingsToggleHook.cellRowHeightEnabled()) {
-                        return chain.proceed();
+                    @Override
+                    public void beforeProceed(CellTableRowDispatcher.RowContext ctx) {
+                        // Adapter-type check first (cheap volatile/field read),
+                        // then the toggle.
+                        active = ctx.isAdapterType(ADAPTER_TYPE_LTE)
+                                && SettingsToggleHook.cellRowHeightEnabled();
                     }
-                    if (adapterTypeField != null) {
-                        try {
-                            if (adapterTypeField.getInt(chain.getThisObject()) != ADAPTER_TYPE_LTE)
-                                return chain.proceed();
-                        } catch (Exception ignored) {}
+
+                    @Override
+                    public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
+                        if (!active) return;
+                        View resultView = (View) result;
+                        if (resultView == null) return;
+                        adjustRowHeight(resultView, "LTE");
                     }
-                    View resultView = (View) chain.proceed();
-                    if (resultView == null) return null;
-                    adjustRowHeight(resultView, "LTE");
-                    return resultView;
-                }
-            });
-            Log.i(TAG, "CellRowHeightHook: installed (LTE)");
-        } catch (Exception e) {
-            Log.e(TAG, "LTE hook failed: " + e);
-        }
+                });
+        if (registered) Log.i(TAG, "CellRowHeightHook: installed (LTE)");
     }
 
     private void adjustRowHeight(View rowView, String rat) {
         try {
-            String pkg = "com.qtrun.QuickTest";
-            int cellNameId = rowView.getResources().getIdentifier("tvRowCellName", "id", pkg);
-            int cellIdId = rowView.getResources().getIdentifier("tvRowCellID", "id", pkg);
+            int[] ids = CellTableRowDispatcher.cellRowIds(rowView.getResources());
+            int cellNameId = ids[CellTableRowDispatcher.ROW_ID_CELL_NAME];
+            int cellIdId = ids[CellTableRowDispatcher.ROW_ID_CELL_ID];
 
             if (cellNameId == 0 || cellIdId == 0) {
                 // Not a double-height row layout

@@ -130,36 +130,79 @@ public class CellIdMatchHook {
      *
      * Returns -1 if the value is unavailable or cannot be read.
      */
+    // Cached reflection handles — resolved once (lazy, retried until success).
+    // Only handles are cached; every Workspace/Property VALUE read below stays
+    // fresh per call (new wrapper, live bind, new Iterator over the live data).
+    private volatile boolean eciHandlesReady = false;
+    private Class<?>                attrCls;
+    private java.lang.reflect.Constructor<?> attrCtor;
+    private Field                   attrDField;
+    private Field                   wsSingletonField;
+    private Method                  wsHMethod;
+    private java.lang.reflect.Constructor<?> iterCtor;
+    private Method                  iterReverseMethod;
+    private Method                  iterEndMethod;
+    private Method                  iterValueMethod;
+
+    private synchronized void resolveEciHandles() {
+        if (eciHandlesReady) return;
+        try {
+            Class<?> a = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            Class<?> ws = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> prop = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> iter = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            if (a == null || ws == null || prop == null || iter == null) return; // retry next call
+
+            java.lang.reflect.Constructor<?> aCtor = a.getDeclaredConstructor(String.class);
+            Field d = a.getDeclaredField("d");
+            d.setAccessible(true);
+            Field wsField = ws.getDeclaredField(
+                    ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader));
+            wsField.setAccessible(true);
+            Method h = ClassMapping.getDeclaredMethod(ws, "com.qtrun.sys.Workspace", "h",
+                    loader, a, int.class);
+            h.setAccessible(true);
+            java.lang.reflect.Constructor<?> itCtor = iter.getDeclaredConstructor(prop);
+
+            attrCls           = a;
+            attrCtor          = aCtor;
+            attrDField        = d;
+            wsSingletonField  = wsField;
+            wsHMethod         = h;
+            iterCtor          = itCtor;
+            iterReverseMethod = iter.getDeclaredMethod("reverse");
+            iterEndMethod     = iter.getDeclaredMethod("end");
+            iterValueMethod   = iter.getDeclaredMethod("value");
+            eciHandlesReady   = true;
+        } catch (Throwable ignored) {
+            // retry next call — legacy behavior resolved everything per call
+        }
+    }
+
     private long readLteEci() {
         try {
-            // --- 1. Create com.qtrun.sys.a wrapper for the signal path ---
-            Class<?> attrCls = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            Object aVar = attrCls.getDeclaredConstructor(String.class)
-                    .newInstance(SIGNAL_LTE_ECI);
+            resolveEciHandles();
+            if (!eciHandlesReady) {
+                Log.w(TAG, "readLteEci handles unavailable");
+                return -1;
+            }
 
-            // Field "d" holds the Property handle (set by Workspace.h())
-            Field dField = attrCls.getDeclaredField("d");
-            dField.setAccessible(true);
+            // --- 1. Create com.qtrun.sys.a wrapper for the signal path (fresh) ---
+            Object aVar = attrCtor.newInstance(SIGNAL_LTE_ECI);
 
-            // --- 2. Get Workspace singleton (static field "j") ---
-            Class<?> wsCls = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            Field wsField = wsCls.getDeclaredField(ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader));
-            wsField.setAccessible(true);
-            Object workspace = wsField.get(null);
+            // --- 2. Get Workspace singleton (fresh read) ---
+            Object workspace = wsSingletonField.get(null);
             if (workspace == null) {
                 Log.w(TAG, "Workspace singleton is null");
                 return -1;
             }
 
-            // h(com.qtrun.sys.a, int) — binds the Property if the signal is live
-            Method hMethod = ClassMapping.getDeclaredMethod(wsCls, "com.qtrun.sys.Workspace", "h", loader, attrCls, int.class);
-            hMethod.setAccessible(true);
-
-            // Try module indices 0..3
+            // Try module indices 0..3 — h(com.qtrun.sys.a, int) binds the
+            // Property (field "d") if the signal is live. Fresh bind per call.
             boolean bound = false;
             for (int moduleIdx = 0; moduleIdx <= 3; moduleIdx++) {
-                Boolean ok = (Boolean) hMethod.invoke(workspace, aVar, moduleIdx);
-                if (Boolean.TRUE.equals(ok) && dField.get(aVar) != null) {
+                Boolean ok = (Boolean) wsHMethod.invoke(workspace, aVar, moduleIdx);
+                if (Boolean.TRUE.equals(ok) && attrDField.get(aVar) != null) {
                     bound = true;
                     break;
                 }
@@ -169,21 +212,19 @@ public class CellIdMatchHook {
                 return -1;
             }
 
-            // --- 3. Read the latest value via Property.Iterator ---
-            Object property = dField.get(aVar);
-            Class<?> propCls = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iterCls = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            // --- 3. Read the latest value via a fresh Property.Iterator ---
+            Object property = attrDField.get(aVar);
 
-            Object iter = iterCls.getDeclaredConstructor(propCls).newInstance(property);
-            iterCls.getDeclaredMethod("reverse").invoke(iter);
+            Object iter = iterCtor.newInstance(property);
+            iterReverseMethod.invoke(iter);
 
-            boolean end = (Boolean) iterCls.getDeclaredMethod("end").invoke(iter);
+            boolean end = (Boolean) iterEndMethod.invoke(iter);
             if (end) {
                 Log.w(TAG, "ECI Property has no samples yet");
                 return -1;
             }
 
-            Object val = iterCls.getDeclaredMethod("value").invoke(iter);
+            Object val = iterValueMethod.invoke(iter);
             if (val == null) return -1;
             if (val instanceof Long)    return (Long) val;
             if (val instanceof Integer) return ((Integer) val).longValue();

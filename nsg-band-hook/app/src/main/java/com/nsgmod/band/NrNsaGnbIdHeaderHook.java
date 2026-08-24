@@ -50,6 +50,7 @@ public class NrNsaGnbIdHeaderHook {
     private Field widthField;
     private Field wsSingletonField;
     private Field wsRatField;
+    private Field wsModuleSlotField;   // Workspace.a (module index; slot nibble)
     private Field sdSingletonField;
     private Method sdEMethod;
     private Method sdIMethod;
@@ -72,6 +73,18 @@ public class NrNsaGnbIdHeaderHook {
     private float origEcellCol;
     private float origEcellWidth;
     private boolean loggedCellDb = false;
+
+    // Identity of the header cell objects the adjusted geometry was last
+    // applied to. NSG's per-tick b() path never rewrites the col/width fields
+    // (verified against decompiled HeaderCGIFragment on qtrun v4.8.9 and gplay
+    // v4.8.8: per-tick it only updates cell texts/values via h0 -> k2.a.j ->
+    // v6.a.e(); geometry fields are only assigned at grid build time), so the
+    // 8 setFloat + forceOnLayout sequence only needs to run when the target
+    // cell instances change (view rebuild) or after restoreGeometry() ran.
+    private Object appliedTacLabel;
+    private Object appliedTacValue;
+    private Object appliedEcellLabel;
+    private Object appliedEcellValue;
 
     public NrNsaGnbIdHeaderHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
@@ -157,6 +170,10 @@ public class NrNsaGnbIdHeaderHook {
             wsRatField = wsClass.getDeclaredField(
                     ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "d", loader));
             wsRatField.setAccessible(true);
+
+            wsModuleSlotField = wsClass.getDeclaredField(
+                    ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader));
+            wsModuleSlotField.setAccessible(true);
 
             Class<?> sdClass = ClassMapping.loadClass("f7.b", loader);
             for (Field f : sdClass.getDeclaredFields()) {
@@ -277,27 +294,49 @@ public class NrNsaGnbIdHeaderHook {
 
     private String readPref(String prefsName, String key) {
         try {
-            Context ctx = getAppContext();
-            if (ctx == null) return null;
-            return ctx.getSharedPreferences(prefsName, Context.MODE_PRIVATE).getString(key, null);
+            SharedPreferences p = getPrefs(prefsName);
+            if (p == null) return null;
+            // Value read stays fresh: SharedPreferences.getString reads the live
+            // in-memory map of the shared process-wide instance.
+            return p.getString(key, null);
         } catch (Throwable t) {
             return null;
         }
     }
 
+    // SharedPreferences instances are process-wide singletons per name —
+    // resolved once, values always read fresh.
+    private static volatile SharedPreferences mainPrefs;
+    private static volatile SharedPreferences backupPrefs;
+
+    private static SharedPreferences getPrefs(String prefsName) {
+        Context ctx = getAppContext();
+        if (ctx == null) return null;
+        if (MAIN_PREFS.equals(prefsName)) {
+            if (mainPrefs == null) {
+                synchronized (NrNsaGnbIdHeaderHook.class) {
+                    if (mainPrefs == null)
+                        mainPrefs = ctx.getSharedPreferences(MAIN_PREFS, Context.MODE_PRIVATE);
+                }
+            }
+            return mainPrefs;
+        }
+        if (backupPrefs == null) {
+            synchronized (NrNsaGnbIdHeaderHook.class) {
+                if (backupPrefs == null)
+                    backupPrefs = ctx.getSharedPreferences(BACKUP_PREFS, Context.MODE_PRIVATE);
+            }
+        }
+        return backupPrefs;
+    }
+
     private int getActiveSimSlot() {
         try {
-            Class<?> wsCls = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            if (wsCls == null) return -1;
-            String singletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            Field singletonField = wsCls.getDeclaredField(singletonName);
-            singletonField.setAccessible(true);
-            Object wsInstance = singletonField.get(null);
+            // Fresh reads through handles cached at initReflection.
+            if (wsSingletonField == null || wsModuleSlotField == null) return -1;
+            Object wsInstance = wsSingletonField.get(null);
             if (wsInstance == null) return -1;
-            String modName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
-            Field modField = wsCls.getDeclaredField(modName);
-            modField.setAccessible(true);
-            short moduleShort = modField.getShort(wsInstance);
+            short moduleShort = wsModuleSlotField.getShort(wsInstance);
             int nsgSlot = moduleShort >> 4;
             int defaultPhysicalSlot = getDefaultDataPhysicalSlot();
             if (defaultPhysicalSlot < 0) return nsgSlot;
@@ -308,37 +347,75 @@ public class NrNsaGnbIdHeaderHook {
         }
     }
 
+    // SubscriptionManager class/method handles — resolved once (lazy, retried
+    // until success). All VALUES (subscription ids, slot indices, service
+    // state) are still read fresh on every call through the cached handles.
+    private static volatile boolean smResolved = false;
+    private static Class<?> smClass;
+    private static Method   smGetDefaultDataSubId;
+    private static Method   smGetDefaultSubId;
+    private static Method   smGetActiveSubInfo;
+    private static Method   subInfoGetSimSlotIndex;
+    private static Object   smService;
+
+    private static synchronized void resolveSubscriptionHandles() {
+        if (smResolved) return;
+        try {
+            smClass = Class.forName("android.telephony.SubscriptionManager");
+            smGetDefaultDataSubId = smClass.getMethod("getDefaultDataSubscriptionId");
+            smGetDefaultSubId     = smClass.getMethod("getDefaultSubscriptionId");
+            smGetActiveSubInfo    = smClass.getMethod("getActiveSubscriptionInfo", int.class);
+            Context ctx = getAppContext();
+            if (ctx == null) return; // retry next call
+            smService = ctx.getSystemService("telephony_subscription_service");
+            if (smService == null) return; // retry next call
+            smResolved = true;
+        } catch (Throwable ignored) {
+            // retry next call
+        }
+    }
+
     private int getDefaultDataPhysicalSlot() {
         try {
-            Context ctx = getAppContext();
-            if (ctx == null) return -1;
-            Object sm = ctx.getSystemService("telephony_subscription_service");
-            if (sm == null) return -1;
-            Class<?> smCls = Class.forName("android.telephony.SubscriptionManager");
+            resolveSubscriptionHandles();
+            if (!smResolved) return -1;
             int subId = -1;
             try {
-                subId = (Integer) smCls.getMethod("getDefaultDataSubscriptionId").invoke(null);
+                subId = (Integer) smGetDefaultDataSubId.invoke(null);
             } catch (Throwable ignored) {}
             if (subId < 0) {
                 try {
-                    subId = (Integer) smCls.getMethod("getDefaultSubscriptionId").invoke(null);
+                    subId = (Integer) smGetDefaultSubId.invoke(null);
                 } catch (Throwable ignored) {}
             }
             if (subId < 0) return -1;
-            Object info = smCls.getMethod("getActiveSubscriptionInfo", int.class).invoke(sm, subId);
+            Object info = smGetActiveSubInfo.invoke(smService, subId);
             if (info == null) return -1;
-            return (Integer) info.getClass().getMethod("getSimSlotIndex").invoke(info);
+            if (subInfoGetSimSlotIndex == null) {
+                subInfoGetSimSlotIndex = info.getClass().getMethod("getSimSlotIndex");
+            }
+            return (Integer) subInfoGetSimSlotIndex.invoke(info);
         } catch (Throwable t) {
             return -1;
         }
     }
 
+    // The Application instance is constant for the process lifetime —
+    // resolved once, retried until available.
+    private static volatile Context appContext;
+
     private static Context getAppContext() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            return (Context) atCls.getMethod("currentApplication").invoke(null);
-        } catch (Throwable t) {
-            return null;
+        if (appContext != null) return appContext;
+        synchronized (NrNsaGnbIdHeaderHook.class) {
+            if (appContext != null) return appContext;
+            try {
+                Class<?> atCls = Class.forName("android.app.ActivityThread");
+                Context ctx = (Context) atCls.getMethod("currentApplication").invoke(null);
+                if (ctx != null) appContext = ctx;
+                return ctx;
+            } catch (Throwable t) {
+                return null;
+            }
         }
     }
 
@@ -426,6 +503,12 @@ public class NrNsaGnbIdHeaderHook {
         Object ecellIdValue = ecellIdValueField.get(fragment);
         if (tacLabel == null || tacValue == null || ecellIdLabel == null || ecellIdValue == null)
             return;
+        // Already applied to these exact cell instances — the geometry fields
+        // are write-once (nothing rewrites them between ticks), so skip the
+        // redundant 8x setFloat + requestLayout + posted onLayout work.
+        if (tacLabel == appliedTacLabel && tacValue == appliedTacValue
+                && ecellIdLabel == appliedEcellLabel && ecellIdValue == appliedEcellValue)
+            return;
         if (!originalsSaved) {
             origTacCol = colField.getFloat(tacLabel);
             origTacWidth = widthField.getFloat(tacLabel);
@@ -442,9 +525,16 @@ public class NrNsaGnbIdHeaderHook {
         colField.setFloat(ecellIdValue, 55.0f);
         widthField.setFloat(ecellIdValue, 44.0f);
         cacheLayoutAndRequest(fragment, tacLabel, tacValue, ecellIdLabel, ecellIdValue);
+        appliedTacLabel   = tacLabel;
+        appliedTacValue   = tacValue;
+        appliedEcellLabel = ecellIdLabel;
+        appliedEcellValue = ecellIdValue;
     }
 
     private void restoreGeometry(Object fragment) throws Throwable {
+        // Forget what the adjusted geometry was applied to so the next NR-NSA
+        // tick re-applies it (legacy behaviour re-applied unconditionally).
+        appliedTacLabel = appliedTacValue = appliedEcellLabel = appliedEcellValue = null;
         if (!originalsSaved) return;
         Object tacLabel = tacLabelField.get(fragment);
         Object tacValue = tacValueField.get(fragment);
