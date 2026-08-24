@@ -72,8 +72,11 @@ public class NrNsaExtCellsHook {
             dField = kcClass.getField(dFieldName); // public int f5510d
 
             try {
-                adapterTypeField = bbClass.getDeclaredField("f");
-                adapterTypeField.setAccessible(true);
+                Field f = bbClass.getDeclaredField("f");
+                if (f.getType() == int.class) {
+                    adapterTypeField = f;
+                    adapterTypeField.setAccessible(true);
+                }
             } catch (NoSuchFieldException ignored) {
             }
 
@@ -109,7 +112,8 @@ public class NrNsaExtCellsHook {
                             isNrNsa = (type == ADAPTER_TYPE_NR_NSA);
                             isLte   = (type == ADAPTER_TYPE_LTE);
                         } catch (Exception e) {
-                            return chain.proceed();
+                            isNrNsa = nrNsaAdapterClass.isInstance(thisObj);
+                            isLte   = !isNrNsa && lteAdapterClass.isInstance(thisObj);
                         }
                     } else {
                         isNrNsa = nrNsaAdapterClass.isInstance(thisObj);
