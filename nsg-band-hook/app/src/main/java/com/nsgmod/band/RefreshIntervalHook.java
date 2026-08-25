@@ -38,6 +38,7 @@ public class RefreshIntervalHook {
     private static final String TAG = "NSGBandHook";
     private static final long NORMAL_INTERVAL_MS = 880L;
     private static final long FAST_INTERVAL_MS   = 440L;
+    private static final String PREFS_NAME = "com.qtrun.QuickTest_preferences";
 
     private final XposedInterface xposed;
     private final ClassLoader     loader;
@@ -52,6 +53,14 @@ public class RefreshIntervalHook {
     private Field    e0CaseField;      // e0: int case-selector field (found by type)
 
     private boolean ready = false;
+
+    // NOTE: must be strong static references — SharedPreferencesImpl keeps
+    // listeners in a WeakHashMap. The hook instance is held in sInstance so
+    // the listener (an instance field) stays strongly reachable. Same pattern
+    // as SettingsToggleHook.PREF_LISTENER.
+    private static volatile RefreshIntervalHook sInstance;
+    private static volatile boolean sListenerRegistered = false;
+    private static final Object PREF_LOCK = new Object();
 
     private SharedPreferences prefs;
     private SharedPreferences.OnSharedPreferenceChangeListener prefListener;
@@ -129,8 +138,9 @@ public class RefreshIntervalHook {
             Log.w(TAG, "Not ready — skipping install");
             return;
         }
+        sInstance = this;
         installEHook();
-        registerPrefListener();
+        ensurePrefListener();
         Log.i(TAG, "RefreshIntervalHook: installed");
     }
 
@@ -148,38 +158,62 @@ public class RefreshIntervalHook {
                         Log.w(TAG, "reschedule after E() failed: " + t);
                     }
                 }
+                // Retry listener registration in case the Application wasn't
+                // ready at install time (mirrors SettingsToggleHook.ensurePrefs()).
+                ensurePrefListener();
                 return result;
             }
         });
     }
 
-    /** Register a SharedPreferences listener so mid-test toggle changes take effect. */
-    private void registerPrefListener() {
-        try {
-            Class<?> atCls = Class.forName("android.app.ActivityThread");
-            Application app =
-                    (Application) atCls.getMethod("currentApplication").invoke(null);
-            if (app == null) return;
+    /**
+     * Lazily register the SharedPreferences listener with retry.
+     *
+     * Mirrors SettingsToggleHook.ensurePrefs(): if the Application isn't ready
+     * yet (common during early package load), returns silently and retries on
+     * the next call — e.g. from the E() after-hook when a test starts.
+     *
+     * The listener and prefs are stored as instance fields, kept alive by the
+     * static sInstance reference so SharedPreferencesImpl's WeakHashMap cannot
+     * GC them (same fix as SettingsToggleHook.PREF_LISTENER).
+     */
+    private static void ensurePrefListener() {
+        if (sListenerRegistered) return;
+        synchronized (PREF_LOCK) {
+            if (sListenerRegistered) return;
+            RefreshIntervalHook hook = sInstance;
+            if (hook == null) return;
+            try {
+                Class<?> atCls = Class.forName("android.app.ActivityThread");
+                Application app =
+                        (Application) atCls.getMethod("currentApplication").invoke(null);
+                if (app == null) return; // not ready — retry on next E() call
 
-            prefs = app.getSharedPreferences(
-                    "com.qtrun.QuickTest_preferences", Context.MODE_PRIVATE);
+                SharedPreferences p = app.getSharedPreferences(
+                        PREFS_NAME, Context.MODE_PRIVATE);
 
-            prefListener = (sharedPreferences, key) -> {
-                if (!SettingsToggleHook.PREF_KEY_FAST_REFRESH.equals(key)) return;
-                try {
-                    Class<?> testServiceCls = ClassMapping.loadClass("com.qtrun.sys.TestService", loader);
-                    Method oMethod = testServiceCls.getDeclaredMethod("o");
-                    Object testService = oMethod.invoke(null);
-                    if (testService != null && g0Class.isInstance(testService)) {
-                        rescheduleIfNeeded(testService);
+                hook.prefListener = (sharedPreferences, key) -> {
+                    if (!SettingsToggleHook.PREF_KEY_FAST_REFRESH.equals(key)) return;
+                    RefreshIntervalHook h = sInstance;
+                    if (h == null) return;
+                    try {
+                        Class<?> testServiceCls =
+                                ClassMapping.loadClass("com.qtrun.sys.TestService", h.loader);
+                        Method oMethod = testServiceCls.getDeclaredMethod("o");
+                        Object testService = oMethod.invoke(null);
+                        if (testService != null && h.g0Class.isInstance(testService)) {
+                            h.rescheduleIfNeeded(testService);
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "pref change reschedule failed: " + t);
                     }
-                } catch (Throwable t) {
-                    Log.w(TAG, "pref change reschedule failed: " + t);
-                }
-            };
-            prefs.registerOnSharedPreferenceChangeListener(prefListener);
-        } catch (Throwable t) {
-            Log.w(TAG, "Failed to register preference listener: " + t);
+                };
+                p.registerOnSharedPreferenceChangeListener(hook.prefListener);
+                hook.prefs = p;
+                sListenerRegistered = true;
+            } catch (Throwable t) {
+                Log.w(TAG, "Failed to register preference listener: " + t);
+            }
         }
     }
 
