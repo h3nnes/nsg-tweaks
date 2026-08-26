@@ -104,17 +104,18 @@ public class CellRowHeightHook {
             CharSequence cellNameText = cellNameView.getText();
             CharSequence cellIdText = cellIdView.getText();
 
-            boolean hasCellName = cellNameText != null && cellNameText.length() > 0;
-            boolean hasCellId = cellIdText != null && cellIdText.length() > 0;
-
-            if (!hasCellName && !hasCellId) {
-                // No CSV data for this cell — collapse the entire second row
-                secondRow.setVisibility(View.GONE);
-            } else {
-                // Has CSV data — ensure the second row is visible
+            boolean hasData = false;
+            if (BandColumnHook.isLteCellDbLoaded()) {
+                boolean hasCellName = cellNameText != null && cellNameText.length() > 0;
+                boolean hasCellId = cellIdText != null && cellIdText.length() > 0;
+                hasData = hasCellName || hasCellId;
+            }
+            if (hasData) {
                 secondRow.setVisibility(View.VISIBLE);
                 cellNameView.setVisibility(View.VISIBLE);
                 cellIdView.setVisibility(View.VISIBLE);
+            } else {
+                secondRow.setVisibility(View.GONE);
             }
         } catch (Exception e) {
             Log.w(TAG, "adjustRowHeight failed: " + e);
