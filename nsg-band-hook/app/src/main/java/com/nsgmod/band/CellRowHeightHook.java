@@ -3,31 +3,13 @@ package com.nsgmod.band;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import io.github.libxposed.api.XposedInterface;
 
-/**
- * Collapses the CSV info sub-row of LTE cell-table rows when no cell name /
- * cell ID text is available.
- *
- * Registered with the shared CellTableRowDispatcher (single interceptor per
- * runtime getView method). This feature is the LAST getView feature registered
- * in MainHook, so in the legacy interceptor chain it was the innermost hook:
- * its pre-proceed checks ran right before the original getView and its
- * adjustRowHeight ran first after the original returned. The dispatcher
- * reproduces this exactly (beforeProceed in registration order, afterProceed
- * in reverse registration order).
- */
 public class CellRowHeightHook {
     private static final String TAG = "NSGBandHook";
-    private static final int ADAPTER_TYPE_LTE = 4;
-
-    // Tag slots on the recycled row view for the NSG sub-row TextViews — avoids
-    // a full findViewById traversal on every getView (row recycling reuses the
-    // same view instance, so the cached references stay valid).
-    private static final int CELL_NAME_TAG_KEY = "nsg_crh_cellname".hashCode();
-    private static final int CELL_ID_TAG_KEY   = "nsg_crh_cellid".hashCode();
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -38,83 +20,71 @@ public class CellRowHeightHook {
     }
 
     public void install() {
-        installLteHook();
+        installHook();
     }
 
-    private void installLteHook() {
-        // a8.f$a extends b.AbstractC0008b
-        boolean registered =
-                CellTableRowDispatcher.register(xposed, loader, "a8.f$a", "CellRowHeightHook",
-                new CellTableRowDispatcher.RowProcessor() {
-                    /** Set by beforeProceed; consumed by afterProceed for the same call. */
-                    private boolean active;
-
-                    @Override
-                    public void beforeProceed(CellTableRowDispatcher.RowContext ctx) {
-                        // Adapter-type check first (cheap volatile/field read),
-                        // then the toggle.
-                        active = ctx.isAdapterType(ADAPTER_TYPE_LTE)
-                                && SettingsToggleHook.cellRowHeightEnabled();
-                    }
-
-                    @Override
-                    public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
-                        if (!active) return;
-                        View resultView = (View) result;
-                        if (resultView == null) return;
-                        adjustRowHeight(resultView, "LTE");
-                    }
-                });
-        if (registered) Log.i(TAG, "CellRowHeightHook: installed (LTE)");
+    private void installHook() {
+        boolean lte = CellTableRowDispatcher.register(xposed, loader, "a8.f$a",
+                "CellRowHeightHook-LTE", newProcessor());
+        boolean nrnsa = CellTableRowDispatcher.register(xposed, loader, "a8.h$a",
+                "CellRowHeightHook-NRNSA", newProcessor());
+        if (lte || nrnsa)
+            Log.i(TAG, "CellRowHeightHook: installed (LTE=" + lte + ", NRNSA=" + nrnsa + ")");
     }
 
-    private void adjustRowHeight(View rowView, String rat) {
+    private CellTableRowDispatcher.RowProcessor newProcessor() {
+        return new CellTableRowDispatcher.RowProcessor() {
+            private boolean active;
+
+            @Override
+            public void beforeProceed(CellTableRowDispatcher.RowContext ctx) {
+                active = SettingsToggleHook.cellRowHeightEnabled();
+            }
+
+            @Override
+            public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
+                if (!active) return;
+                View resultView = (View) result;
+                if (resultView == null) return;
+                adjustRowHeight(resultView);
+            }
+        };
+    }
+
+    private void adjustRowHeight(View rowView) {
         try {
-            int[] ids = CellTableRowDispatcher.cellRowIds(rowView.getResources());
-            int cellNameId = ids[CellTableRowDispatcher.ROW_ID_CELL_NAME];
-            int cellIdId = ids[CellTableRowDispatcher.ROW_ID_CELL_ID];
+            if (!(rowView instanceof LinearLayout)) return;
+            LinearLayout outerVert = (LinearLayout) rowView;
+            if (outerVert.getOrientation() != LinearLayout.VERTICAL) return;
+            if (outerVert.getChildCount() < 2) return;
 
-            if (cellNameId == 0 || cellIdId == 0) {
-                // Not a double-height row layout
+            View subRow = outerVert.getChildAt(1);
+            if (!(subRow instanceof ViewGroup)) {
+                subRow.setVisibility(View.GONE);
                 return;
             }
+            ViewGroup subRowVg = (ViewGroup) subRow;
 
-            TextView cellNameView = (TextView) rowView.getTag(CELL_NAME_TAG_KEY);
-            if (cellNameView == null) {
-                cellNameView = rowView.findViewById(cellNameId);
-                if (cellNameView != null) rowView.setTag(CELL_NAME_TAG_KEY, cellNameView);
+            boolean hasData = false;
+            int[] ids = CellTableRowDispatcher.cellRowIds(subRowVg.getResources());
+            if (BandColumnHook.isLteCellDbLoaded() || BandColumnHook.isNrCellDbLoaded()) {
+                int cellNameId = ids[CellTableRowDispatcher.ROW_ID_CELL_NAME];
+                int cellIdId   = ids[CellTableRowDispatcher.ROW_ID_CELL_ID];
+                if (cellNameId != 0 && cellIdId != 0) {
+                    View cn = subRowVg.findViewById(cellNameId);
+                    View ci = subRowVg.findViewById(cellIdId);
+                    if (cn instanceof TextView && ci instanceof TextView) {
+                        CharSequence cnText = ((TextView) cn).getText();
+                        CharSequence ciText = ((TextView) ci).getText();
+                        hasData = (cnText != null && cnText.length() > 0)
+                                || (ciText != null && ciText.length() > 0);
+                    }
+                }
             }
-            TextView cellIdView = (TextView) rowView.getTag(CELL_ID_TAG_KEY);
-            if (cellIdView == null) {
-                cellIdView = rowView.findViewById(cellIdId);
-                if (cellIdView != null) rowView.setTag(CELL_ID_TAG_KEY, cellIdView);
-            }
-
-            if (cellNameView == null || cellIdView == null) {
-                return;
-            }
-
-            // Get the parent LinearLayout that contains both cell name and cell ID
-            // This is the second row of the double-height layout
-            ViewGroup secondRow = (ViewGroup) cellNameView.getParent();
-            if (secondRow == null) {
-                return;
-            }
-
-            CharSequence cellNameText = cellNameView.getText();
-            CharSequence cellIdText = cellIdView.getText();
-
-            boolean hasCellName = cellNameText != null && cellNameText.length() > 0;
-            boolean hasCellId = cellIdText != null && cellIdText.length() > 0;
-
-            if (!hasCellName && !hasCellId) {
-                // No CSV data for this cell — collapse the entire second row
-                secondRow.setVisibility(View.GONE);
+            if (hasData) {
+                subRow.setVisibility(View.VISIBLE);
             } else {
-                // Has CSV data — ensure the second row is visible
-                secondRow.setVisibility(View.VISIBLE);
-                cellNameView.setVisibility(View.VISIBLE);
-                cellIdView.setVisibility(View.VISIBLE);
+                subRow.setVisibility(View.GONE);
             }
         } catch (Exception e) {
             Log.w(TAG, "adjustRowHeight failed: " + e);

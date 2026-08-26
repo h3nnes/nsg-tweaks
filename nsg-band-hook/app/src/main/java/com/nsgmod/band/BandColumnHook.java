@@ -70,6 +70,7 @@ public class BandColumnHook {
 
     private boolean reflectionReady = false;
     private static volatile boolean nrCellDbLoaded = false;
+    private static volatile boolean lteCellDbLoaded = false;
     private static boolean cellDbHookInstalled = false;
     private Class<?> f7bClass;
     private Method  f7bEMethod;
@@ -149,6 +150,8 @@ public class BandColumnHook {
                     String tech = (String) chain.getArg(0);
                     if ("NR5G".equals(tech)) {
                         nrCellDbLoaded = (result != null);
+                    } else if ("LTE".equals(tech)) {
+                        lteCellDbLoaded = (result != null);
                     }
                     return result;
                 }
@@ -470,8 +473,12 @@ public class BandColumnHook {
         return ((TextView) v).getTextColors();
     }
 
-    private boolean isNrCellDbLoaded() {
+    public static boolean isNrCellDbLoaded() {
         return nrCellDbLoaded;
+    }
+
+    public static boolean isLteCellDbLoaded() {
+        return lteCellDbLoaded;
     }
 
     private int resolveColor(android.content.Context ctx, int attr) {
