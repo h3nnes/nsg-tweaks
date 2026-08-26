@@ -473,7 +473,7 @@ public class BandColumnHook {
         return ((TextView) v).getTextColors();
     }
 
-    private boolean isNrCellDbLoaded() {
+    public static boolean isNrCellDbLoaded() {
         return nrCellDbLoaded;
     }
 
