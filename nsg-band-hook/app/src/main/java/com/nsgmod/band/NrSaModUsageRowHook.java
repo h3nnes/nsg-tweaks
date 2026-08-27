@@ -27,8 +27,8 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *
  * Property keys:
  *   PCell:
- *     16QAM DL : NR5G::Downlink_Measurements::NR_ModUsage_16QAM_DL    index=-1
- *     QPSK DL  : NR5G::Downlink_Measurements::NR_ModUsage_QPSK_DL     index=-1
+ *     16QAM DL : NR5G::Downlink_Measurements::PCell::NR_PCell_ModUsage_16QAM_DL  index=-1
+ *     QPSK DL  : NR5G::Downlink_Measurements::PCell::NR_PCell_ModUsage_QPSK_DL   index=-1
  *   SCells (0-based SCell index in sysAFieldC):
  *     16QAM DL : NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_16QAM_DL
  *     QPSK DL  : NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_QPSK_DL
@@ -40,9 +40,9 @@ public class NrSaModUsageRowHook {
     private static final String TAG = "NSGBandHook";
 
     private static final String KEY_16QAM_PCELL =
-            "NR5G::Downlink_Measurements::NR_ModUsage_16QAM_DL";
+            "NR5G::Downlink_Measurements::PCell::NR_PCell_ModUsage_16QAM_DL";
     private static final String KEY_QPSK_PCELL =
-            "NR5G::Downlink_Measurements::NR_ModUsage_QPSK_DL";
+            "NR5G::Downlink_Measurements::PCell::NR_PCell_ModUsage_QPSK_DL";
     private static final String KEY_16QAM_SCELL =
             "NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_16QAM_DL";
     private static final String KEY_QPSK_SCELL =
