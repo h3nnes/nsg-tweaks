@@ -47,6 +47,14 @@ public class MapDotColorHook {
         HashMap<String, String> lteTput = new HashMap<>();
         lteTput.put("LTE_Throughput_DL", "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL");
         INJECTED_OPTIONS.put("LTE_Throughput_DL", lteTput);
+
+        HashMap<String, String> nrTputUl = new HashMap<>();
+        nrTputUl.put("NR_Throughput_UL", "NR5G::Uplink_Measurements::NR_Physical_Throughput_UL");
+        INJECTED_OPTIONS.put("NR_Throughput_UL", nrTputUl);
+
+        HashMap<String, String> lteTputUl = new HashMap<>();
+        lteTputUl.put("LTE_Throughput_UL", "LTE::Uplink_Measurements::LTE_Physical_Throughput_UL");
+        INJECTED_OPTIONS.put("LTE_Throughput_UL", lteTputUl);
     }
 
     private final XposedInterface xposed;
@@ -194,6 +202,22 @@ public class MapDotColorHook {
         try { sf0D.setBoolean(lteThroughput, true); } catch (Throwable ignored) {}
         singlesList.add(lteThroughput);
 
+        Object nrThroughputUl = sf0CtorSingles != null ? sf0CtorSingles.newInstance(0) : sf0Ctor.newInstance();
+        sf0A.set(nrThroughputUl, "NR Throughput UL");
+        sf0B.set(nrThroughputUl, "NR_Throughput_UL");
+        HashMap<String, String> nrTputUlMap = (HashMap<String, String>) sf0C.get(nrThroughputUl);
+        nrTputUlMap.put("NR_Throughput_UL", "NR5G::Uplink_Measurements::NR_Physical_Throughput_UL");
+        try { sf0D.setBoolean(nrThroughputUl, true); } catch (Throwable ignored) {}
+        singlesList.add(nrThroughputUl);
+
+        Object lteThroughputUl = sf0CtorSingles != null ? sf0CtorSingles.newInstance(0) : sf0Ctor.newInstance();
+        sf0A.set(lteThroughputUl, "LTE Throughput UL");
+        sf0B.set(lteThroughputUl, "LTE_Throughput_UL");
+        HashMap<String, String> lteTputUlMap = (HashMap<String, String>) sf0C.get(lteThroughputUl);
+        lteTputUlMap.put("LTE_Throughput_UL", "LTE::Uplink_Measurements::LTE_Physical_Throughput_UL");
+        try { sf0D.setBoolean(lteThroughputUl, true); } catch (Throwable ignored) {}
+        singlesList.add(lteThroughputUl);
+
         injectLegendEntries();
     }
 
@@ -288,6 +312,36 @@ public class MapDotColorHook {
                 e20A, e20B, e20C, e20D, or0ListField,
                 "LTE::Downlink_Measurements::LTE_Physical_Throughput_DL", "LTE_Throughput_DL",
                 tputThresholds, tputColors, 2000, 0);
+
+        double[] ulTputThresholds = {0, 5, 10, 20, 30, 40, 50, 60, 80, 100, 120, 140, 160, 180, 200, 250, 300, 500};
+        int[] ulTputColors = {
+                0xFF6B0000,
+                0xFF8B0000,
+                0xFFB03030,
+                0xFFD04030,
+                0xFFE05020,
+                0xFFF06010,
+                0xFFF08020,
+                0xFFF0A020,
+                0xFFF0C020,
+                0xFFF0E020,
+                0xFFE0E020,
+                0xFFC0E020,
+                0xFFA0D020,
+                0xFF80C020,
+                0xFF60B020,
+                0xFF40A030,
+                0xFF2E9030,
+                0xFF1B5E20
+        };
+        injectLegend(attrMap, defMap, e20Ctor, e20UnsafeAlloc, e20Class, or0Ctor, oi0Ctor,
+                e20A, e20B, e20C, e20D, or0ListField,
+                "NR5G::Uplink_Measurements::NR_Physical_Throughput_UL", "NR_Throughput_UL",
+                ulTputThresholds, ulTputColors, 600, 0);
+        injectLegend(attrMap, defMap, e20Ctor, e20UnsafeAlloc, e20Class, or0Ctor, oi0Ctor,
+                e20A, e20B, e20C, e20D, or0ListField,
+                "LTE::Uplink_Measurements::LTE_Physical_Throughput_UL", "LTE_Throughput_UL",
+                ulTputThresholds, ulTputColors, 600, 0);
     }
 
     @SuppressWarnings("unchecked")
@@ -371,6 +425,9 @@ public class MapDotColorHook {
                             }
                             if (isThroughputKey(key)) {
                                 return throughputColor(value);
+                            }
+                            if (isUplinkThroughputKey(key)) {
+                                return uplinkThroughputColor(value);
                             }
                         }
                     }
@@ -500,6 +557,11 @@ public class MapDotColorHook {
                 || "NR5G::Downlink_Measurements::NR_Physical_Throughput_DL".equals(key);
     }
 
+    private static boolean isUplinkThroughputKey(String key) {
+        return "NR5G::Uplink_Measurements::NR_Physical_Throughput_UL".equals(key)
+                || "LTE::Uplink_Measurements::LTE_Physical_Throughput_UL".equals(key);
+    }
+
     private static int headroomColor(double value) {
         if (value > 35.0) return 0xFF1B5E20;
         if (value > 25.0) return 0xFF2E7D32;
@@ -521,5 +583,26 @@ public class MapDotColorHook {
         if (value >= 10.0) return 0xFFE06030;
         if (value >= 5.0) return 0xFFC03030;
         return 0xFF8B0000;
+    }
+
+    private static int uplinkThroughputColor(double value) {
+        if (value >= 500.0) return 0xFF1B5E20;
+        if (value >= 300.0) return 0xFF2E9030;
+        if (value >= 250.0) return 0xFF40A030;
+        if (value >= 200.0) return 0xFF60B020;
+        if (value >= 180.0) return 0xFF80C020;
+        if (value >= 160.0) return 0xFFA0D020;
+        if (value >= 140.0) return 0xFFC0E020;
+        if (value >= 120.0) return 0xFFE0E020;
+        if (value >= 100.0) return 0xFFF0E020;
+        if (value >= 80.0)  return 0xFFF0C020;
+        if (value >= 60.0)  return 0xFFF0A020;
+        if (value >= 50.0)  return 0xFFF08020;
+        if (value >= 40.0)  return 0xFFF06010;
+        if (value >= 30.0)  return 0xFFE05020;
+        if (value >= 20.0)  return 0xFFD04030;
+        if (value >= 10.0)  return 0xFFB03030;
+        if (value >= 5.0)   return 0xFF8B0000;
+        return 0xFF6B0000;
     }
 }
