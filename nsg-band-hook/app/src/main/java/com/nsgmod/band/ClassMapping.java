@@ -240,6 +240,8 @@ public final class ClassMapping {
         fieldMap.put("com.qtrun.legend.LegendManager|b", "c");
         fieldMap.put("com.qtrun.legend.LegendManager|c", "d");
         fieldMap.put("or0|b", "c");
+        // HeaderCGIFragment PLMN value cell: qtrun Z0 -> gplay a1
+        fieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|plmnValue", "a1");
         GPLAY_FIELD_OVERRIDES = Collections.unmodifiableMap(fieldMap);
 
         Map<String, Integer> constantMap = new HashMap<>();
@@ -343,6 +345,8 @@ public final class ClassMapping {
         qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|X0", "W0");
         qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|Y0", "X0");
         qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|Z0", "Y0");
+        // Binary-compatible logical alias for the PLMN value cell (runtime Z0).
+        qtrunFieldMap.put("com.qtrun.udv.header.HeaderCGIFragment|plmnValue", "Z0");
         QTRUN_FIELD_OVERRIDES = Collections.unmodifiableMap(qtrunFieldMap);
 
         Map<String, String> qtrunMethodMap = new HashMap<>();
