@@ -29,6 +29,8 @@ public class NrNsaGnbIdHeaderHook {
     private static final String CGI_FRAGMENT = "com.qtrun.udv.header.HeaderCGIFragment";
     private static final String KEY_NR_ARFCN = "NR5G::Serving_Cell::NR_ARFCN_SSB";
     private static final String KEY_NR_PCI = "NR5G::Serving_Cell::NR_PCI";
+    private static final String KEY_LOCATION_LATITUDE = "Common::Location::Location_Latitude";
+    private static final String KEY_LOCATION_LONGITUDE = "Common::Location::Location_Longitude";
     private static final String NR5G_TECH = "NR5G";
     private static final String MAIN_PREFS = "com.qtrun.QuickTest_preferences";
     private static final String BACKUP_PREFS = "nsg_tweaks_per_sim_formats";
@@ -60,6 +62,8 @@ public class NrNsaGnbIdHeaderHook {
     private Method iterEndMethod;
     private Method iterValueMethod;
     private Field ydGCellIdField;
+    private Field ydLonField;   // h7.b "a" = cell longitude (double)
+    private Field ydLatField;   // h7.b "b" = cell latitude (double)
     private Field settingsSingletonField;
     private Field gnbLengthField;
     private Method onLayoutMethod;
@@ -67,6 +71,10 @@ public class NrNsaGnbIdHeaderHook {
     private int cachedArfcn = -1;
     private int cachedPci = -1;
     private long cachedGCellId = -1;
+    // NaN = no geo fix observed yet this session; allows null->value transitions
+    // to invalidate the cache.
+    private double cachedLatitude = Double.NaN;
+    private double cachedLongitude = Double.NaN;
     private boolean originalsSaved = false;
     private float origTacCol;
     private float origTacWidth;
@@ -217,6 +225,14 @@ public class NrNsaGnbIdHeaderHook {
             Class<?> ydClass = ClassMapping.loadClass("h7.e", loader);
             ydGCellIdField = ydClass.getDeclaredField("g");
             ydGCellIdField.setAccessible(true);
+
+            // Coordinate fields live on the base row class h7.b ("a"=lon, "b"=lat),
+            // so they must be looked up with getDeclaredField on h7.b, not h7.e.
+            Class<?> ydBaseClass = ClassMapping.loadClass("h7.b", loader);
+            ydLonField = ydBaseClass.getDeclaredField("a");
+            ydLonField.setAccessible(true);
+            ydLatField = ydBaseClass.getDeclaredField("b");
+            ydLatField.setAccessible(true);
 
             try {
                 Class<?> settingsClass = ClassMapping.loadClass("d7.a", loader);
@@ -481,19 +497,74 @@ public class NrNsaGnbIdHeaderHook {
             return null;
         }
 
-        if (arfcn != cachedArfcn || pci != cachedPci) {
+        Double lat = null;
+        Double lon = null;
+        for (int mi = 0; mi <= 3; mi++) {
+            lat = readDoubleProperty(dataSource, mi, timestamp, KEY_LOCATION_LATITUDE);
+            lon = readDoubleProperty(dataSource, mi, timestamp, KEY_LOCATION_LONGITUDE);
+            if (lat != null && lon != null) break;
+        }
+        if (lat == null || lon == null) {
+            int miUsed = moduleIndex & 0xFFFF;
+            lat = readDoubleProperty(dataSource, miUsed, timestamp, KEY_LOCATION_LATITUDE);
+            lon = readDoubleProperty(dataSource, miUsed, timestamp, KEY_LOCATION_LONGITUDE);
+        }
+
+        boolean locationChanged = (lat == null) != Double.isNaN(cachedLatitude)
+                || (lon == null) != Double.isNaN(cachedLongitude)
+                || (lat != null && lon != null
+                        && (Math.abs(lat - cachedLatitude) > 0.002
+                                || Math.abs(lon - cachedLongitude) > 0.002));
+
+        if (arfcn != cachedArfcn || pci != cachedPci || locationChanged) {
             cachedArfcn = arfcn;
             cachedPci = pci;
+            cachedLatitude = (lat == null) ? Double.NaN : lat;
+            cachedLongitude = (lon == null) ? Double.NaN : lon;
             cachedGCellId = -1;
-            String where = "nr_arfcn=" + arfcn + " and nr_pci=" + pci;
-            Object result = sdIMethod.invoke(sdInstance, nrTable, where);
-            if (result instanceof List && !((List<?>) result).isEmpty()) {
-                Object row = ((List<Object>) result).get(0);
-                cachedGCellId = ydGCellIdField.getLong(row);
+            if (lat != null && lon != null) {
+                // Geo-filtered query, matching NSG's native subrow lookup exactly.
+                String where = String.format(java.util.Locale.US,
+                        "nr_arfcn=%d and nr_pci=%d and Longitude between %.2f and %.2f"
+                                + " and Latitude between %.2f and %.2f",
+                        arfcn, pci, lon - 0.2, lon + 0.2, lat - 0.2, lat + 0.2);
+                Object result = sdIMethod.invoke(sdInstance, nrTable, where);
+                if (result instanceof List) {
+                    double bestDist = 50000.0;
+                    Object bestRow = null;
+                    for (Object row : (List<Object>) result) {
+                        if (row == null) continue;
+                        double dist = haversine(lat, lon,
+                                ydLatField.getDouble(row), ydLonField.getDouble(row));
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            bestRow = row;
+                        }
+                    }
+                    if (bestRow != null) {
+                        cachedGCellId = ydGCellIdField.getLong(bestRow);
+                    }
+                }
+            } else {
+                // Legacy fallback (no geo fix): first row, identical to before.
+                String where = "nr_arfcn=" + arfcn + " and nr_pci=" + pci;
+                Object result = sdIMethod.invoke(sdInstance, nrTable, where);
+                if (result instanceof List && !((List<?>) result).isEmpty()) {
+                    Object row = ((List<Object>) result).get(0);
+                    cachedGCellId = ydGCellIdField.getLong(row);
+                }
             }
         }
         if (cachedGCellId <= 0) return null;
         return cachedGCellId;
+    }
+
+    // Exact copy of NSG's ce.a(lat1, lon1, lat2, lon2) haversine distance (meters).
+    private static double haversine(double lat1, double lon1, double lat2, double lon2) {
+        double d5 = lat1 * Math.PI / 180.0;
+        double d6 = lat2 * Math.PI / 180.0;
+        return Math.asin(Math.sqrt(Math.pow(Math.sin(((lon1 * Math.PI / 180.0) - (lon2 * Math.PI / 180.0)) / 2.0), 2.0)
+                * Math.cos(d6) * Math.cos(d5) + Math.pow(Math.sin((d5 - d6) / 2.0), 2.0))) * 2.0 * 6378137.0;
     }
 
     private void adjustGeometry(Object fragment) throws Throwable {
@@ -653,6 +724,13 @@ public class NrNsaGnbIdHeaderHook {
         if (value == null) return null;
         if (value instanceof Integer) return (Integer) value;
         if (value instanceof Number) return ((Number) value).intValue();
+        return null;
+    }
+
+    private Double readDoubleProperty(Object dataSource, int moduleIndex, long timestamp, String key) {
+        Object value = readProperty(dataSource, moduleIndex, timestamp, key);
+        if (value == null) return null;
+        if (value instanceof Number) return ((Number) value).doubleValue();
         return null;
     }
 
