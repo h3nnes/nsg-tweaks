@@ -19,29 +19,36 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * Default NSG behaviour (PCI matching):
  *   earfcn=<EARFCN> and pci=<PCI> and Longitude between <lon±0.2> and Latitude between <lat±0.2>
  *
- * With this hook enabled (ECellID matching):
+ * With this hook enabled, ECellID matching is applied ONLY to the row that is the live serving
+ * LTE cell (same EARFCN and PCI as the serving cell):
  *   earfcn=<EARFCN> and ECellID=<ECellID> and Longitude between <lon±0.2> and Latitude between <lat±0.2>
+ * Neighbor/SCell rows keep NSG's native PCI-based matching unchanged, so their cell-DB info
+ * is no longer blanked by a single serving-cell ECellID.
  *
- * The live LTE serving-cell ECellID is read via NSG's Property/Workspace system:
- *   - A com.qtrun.sys.a wrapper is created for "LTE::Serving_Cell::LTE_Uu_RRC_ECI"
+ * The live LTE serving-cell signals are read via NSG's Property/Workspace system:
+ *   - A com.qtrun.sys.a wrapper is created for the signal path
  *   - Workspace.j.h(aVar, moduleIndex) binds it to the live Property (field "d")
  *   - Property.Iterator.reverse() + value() reads the most recent value
- * If no valid ECellID is available (signal absent, value null/-1, or any error), the hook
- * falls back to the original PCI-based WHERE clause transparently.
+ * Serving PCI (LTE::Serving_Cell::LTE_PCI_PCell), DL EARFCN
+ * (LTE::Serving_Cell::LTE_EARFCN_PCell_DL) and ECellID (LTE::Serving_Cell::LTE_Uu_RRC_ECI)
+ * are read fresh per query. If any serving signal is unavailable, or the row is not the
+ * serving cell, the hook falls back to the original PCI-based WHERE clause transparently.
  *
  * In ma.a.j(): arg3 (d2) = Latitude (fVar.Z = Location_Latitude),
  *              arg4 (d10) = Longitude (fVar.Y = Location_Longitude).
  *
  * Only applies to LTE ("LTE" technology string). All other RATs are unaffected.
  * Controlled by the "NSGMod: Cell-ID matching" toggle in Settings → Experiments.
- * Default: OFF.
+ * Default: ON.
  */
 public class CellIdMatchHook {
 
     private static final String TAG = "NSGBandHook";
 
-    // Signal path for the live LTE serving-cell E-UTRAN Cell Identity (28-bit)
-    private static final String SIGNAL_LTE_ECI = "LTE::Serving_Cell::LTE_Uu_RRC_ECI";
+    // Signal paths for the live LTE serving cell (all 28/validity-checked at read time)
+    private static final String SIGNAL_LTE_ECI    = "LTE::Serving_Cell::LTE_Uu_RRC_ECI";
+    private static final String SIGNAL_LTE_PCI    = "LTE::Serving_Cell::LTE_PCI_PCell";
+    private static final String SIGNAL_LTE_EARFCN = "LTE::Serving_Cell::LTE_EARFCN_PCell_DL";
 
     private final XposedInterface xposed;
     private final ClassLoader     loader;
@@ -69,6 +76,7 @@ public class CellIdMatchHook {
                     List<Object> args = chain.getArgs();
                     String  tech  = (String)  args.get(0);
                     Integer arfcn = (Integer)  args.get(1);
+                    Integer pci   = (Integer)  args.get(2);
                     // arg3 = Latitude (fVar.Z), arg4 = Longitude (fVar.Y)
                     Double  lat   = (Double)   args.get(3);
                     Double  lon   = (Double)   args.get(4);
@@ -87,6 +95,24 @@ public class CellIdMatchHook {
 
                     if (arfcn == null || lon == null || lat == null) {
                         Log.w(TAG, "null EARFCN/lon/lat — falling back");
+                        return originalWhere;
+                    }
+
+                    long servingPci = readSignalLong(SIGNAL_LTE_PCI);
+                    if (servingPci < 0) {
+                        Log.w(TAG, "serving PCI unavailable (pci=" + servingPci + ") — falling back to PCI matching");
+                        return originalWhere;
+                    }
+                    if (pci == null || pci.intValue() != servingPci) {
+                        return originalWhere;
+                    }
+
+                    long servingArfcn = readSignalLong(SIGNAL_LTE_EARFCN);
+                    if (servingArfcn < 0) {
+                        Log.w(TAG, "serving EARFCN unavailable (arfcn=" + servingArfcn + ") — falling back to PCI matching");
+                        return originalWhere;
+                    }
+                    if (arfcn == null || arfcn.intValue() != servingArfcn) {
                         return originalWhere;
                     }
 
@@ -119,7 +145,8 @@ public class CellIdMatchHook {
     }
 
     /**
-     * Reads the live LTE serving-cell ECellID from NSG's Property/Workspace system.
+     * Reads the latest live value for an arbitrary NSG signal path from the
+     * Property/Workspace system.
      *
      * Approach:
      *   1. Create a com.qtrun.sys.a wrapper for the signal path string
@@ -128,7 +155,8 @@ public class CellIdMatchHook {
      *   3. Create a Property.Iterator, call reverse() to seek to the latest sample,
      *      then read value() — returns Integer or Long
      *
-     * Returns -1 if the value is unavailable or cannot be read.
+     * Returns -1 if the value is unavailable or cannot be read. Every call performs
+     * a fresh bind/read; only reflection handles are cached, never signal values.
      */
     // Cached reflection handles — resolved once (lazy, retried until success).
     // Only handles are cached; every Workspace/Property VALUE read below stays
@@ -180,15 +208,19 @@ public class CellIdMatchHook {
     }
 
     private long readLteEci() {
+        return readSignalLong(SIGNAL_LTE_ECI);
+    }
+
+    private long readSignalLong(String path) {
         try {
             resolveEciHandles();
             if (!eciHandlesReady) {
-                Log.w(TAG, "readLteEci handles unavailable");
+                Log.w(TAG, "readSignalLong handles unavailable");
                 return -1;
             }
 
             // --- 1. Create com.qtrun.sys.a wrapper for the signal path (fresh) ---
-            Object aVar = attrCtor.newInstance(SIGNAL_LTE_ECI);
+            Object aVar = attrCtor.newInstance(path);
 
             // --- 2. Get Workspace singleton (fresh read) ---
             Object workspace = wsSingletonField.get(null);
@@ -208,7 +240,7 @@ public class CellIdMatchHook {
                 }
             }
             if (!bound) {
-                Log.w(TAG, "ECI signal not live in Workspace");
+                Log.w(TAG, "signal not live in Workspace: " + path);
                 return -1;
             }
 
@@ -220,7 +252,7 @@ public class CellIdMatchHook {
 
             boolean end = (Boolean) iterEndMethod.invoke(iter);
             if (end) {
-                Log.w(TAG, "ECI Property has no samples yet");
+                Log.w(TAG, "signal Property has no samples yet: " + path);
                 return -1;
             }
 
@@ -234,7 +266,7 @@ public class CellIdMatchHook {
             return Long.parseLong(s);
 
         } catch (Throwable t) {
-            Log.w(TAG, "readLteEci failed: " + t);
+            Log.w(TAG, "readSignalLong failed: " + path + " — " + t);
             return -1;
         }
     }
