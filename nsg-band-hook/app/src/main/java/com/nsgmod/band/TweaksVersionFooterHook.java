@@ -42,7 +42,7 @@ public class TweaksVersionFooterHook {
     private static final String NORMAL_ACTIVITY = "com.qtrun.nsg.NormalActivity";
     private static final String ADVANCED_ACTIVITY = "com.qtrun.nsg.AdvancedActivity";
     private static final String ACTIVATED_MARKER = " *****";
-    private static final int FALLBACK_VERSION_CODE = 66;
+    private static final int FALLBACK_VERSION_CODE = 67;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
