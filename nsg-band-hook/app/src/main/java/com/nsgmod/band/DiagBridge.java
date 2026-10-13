@@ -83,6 +83,7 @@ public final class DiagBridge {
     private static volatile long lastHelperSpawnMs = 0;
     /** Module APK path from getModuleApplicationInfo(), for helper extraction. */
     private static volatile String moduleApkPath;
+    private static volatile boolean extractedThisSession = false;
 
     // Qualcomm prerequisite verdicts
     private static final int QC_UNKNOWN = 0;
@@ -260,7 +261,7 @@ public final class DiagBridge {
         if (ctx == null) throw new IllegalStateException("no application context");
 
         File bin = new File(ctx.getCacheDir(), "nsgmod-diagd");
-        if (!bin.exists() || bin.length() == 0) {
+        if (!extractedThisSession || !bin.exists() || bin.length() == 0) {
             String apkPath = moduleApkPath;
             if (apkPath == null || apkPath.isEmpty()) {
                 throw new IllegalStateException("module APK path unavailable");
@@ -272,13 +273,19 @@ public final class DiagBridge {
             try (ZipFile apk = new ZipFile(apkPath)) {
                 ZipEntry entry = apk.getEntry("assets/helper/" + abi + "/nsgmod-diagd");
                 if (entry == null) throw new IllegalStateException("helper binary missing from module APK");
-                try (InputStream in = apk.getInputStream(entry);
-                     FileOutputStream out = new FileOutputStream(bin)) {
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                // Re-extract unless the cached binary exactly matches the APK
+                // entry, so helper updates actually take effect (a stale
+                // binary from an earlier module version would keep running).
+                if (!bin.exists() || bin.length() != entry.getSize()) {
+                    try (InputStream in = apk.getInputStream(entry);
+                         FileOutputStream out = new FileOutputStream(bin)) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                    }
                 }
             }
+            extractedThisSession = true;
         }
 
         long now = SystemClock_UptimeMillis();
