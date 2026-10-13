@@ -81,6 +81,11 @@ public final class DiagBridge {
     private static volatile Thread readerThread;
     private static volatile long lastHelperSpawnMs = 0;
 
+    // Qualcomm prerequisite verdicts
+    private static final int QC_UNKNOWN = 0;
+    private static final int QC_YES     = 1;
+    private static final int QC_NO      = 2;
+
     /** (NSG sample key, wall clock) anchor pair captured at render time. */
     private static volatile long anchorKey = Long.MIN_VALUE;
     private static volatile long anchorWallMs;
@@ -92,9 +97,12 @@ public final class DiagBridge {
     // ------------------------------------------------------------------
 
     /**
-     * Starts the bridge if the device qualifies: an NSG-recognised Qualcomm
-     * diag environment. Non-Qualcomm targets (MTK, HiSilicon, Shannon/Exynos)
-     * never reach the helper spawn; DCI init failure disables it at runtime.
+     * Starts the bridge thread. The Qualcomm gate is evaluated lazily inside
+     * the loop: NSG's prerequisite detection (w40.q()) only runs after the
+     * app's own startup sequence, so the verdict may not exist yet when the
+     * module loads. Non-Qualcomm targets are detected as soon as NSG reports
+     * its prerequisite result and the thread then stays inactive; the
+     * helper's own DCI init failure is the runtime backstop.
      */
     public static void install(ClassLoader loader) {
         if (started) return;
@@ -102,11 +110,7 @@ public final class DiagBridge {
             if (started) return;
             started = true;
         }
-        if (!isQualcommTarget(loader)) {
-            Log.i(TAG, "DiagBridge: not a Qualcomm target, staying inactive");
-            return;
-        }
-        readerThread = new Thread(DiagBridge::runLoop, "NSGMod-DiagBridge");
+        readerThread = new Thread(() -> runLoop(loader), "NSGMod-DiagBridge");
         readerThread.setDaemon(true);
         readerThread.start();
     }
@@ -140,34 +144,6 @@ public final class DiagBridge {
         return ak == Long.MIN_VALUE ? null : ak;
     }
 
-    /** True when NSG's own prerequisite detection reports a Qualcomm modem. */
-    private static boolean isQualcommTarget(ClassLoader loader) {
-        try {
-            Class<?> appCls = ClassMapping.loadClass("com.qtrun.sys.Application", loader);
-            Object app = null;
-            try {
-                app = appCls.getMethod("h").invoke(null);
-            } catch (Exception ignored) {
-                for (java.lang.reflect.Field f : appCls.getDeclaredFields()) {
-                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
-                            && f.getType() == appCls) {
-                        f.setAccessible(true);
-                        app = f.get(null);
-                        break;
-                    }
-                }
-            }
-            if (app == null) return false;
-            String result = (String) appCls.getMethod("getString", String.class)
-                    .invoke(app, "prerequisite.result");
-            if (result == null) return false;
-            return findKey(new JSONObject(result), "qualcomm") != null;
-        } catch (Throwable t) {
-            Log.w(TAG, "DiagBridge: prerequisite check failed: " + t);
-            return false;
-        }
-    }
-
     /** Depth-first search for a JSON key anywhere in the object tree. */
     private static Object findKey(Object node, String key) {
         if (node instanceof JSONObject) {
@@ -192,21 +168,65 @@ public final class DiagBridge {
     // Connection loop
     // ------------------------------------------------------------------
 
-    private static void runLoop() {
+    private static void runLoop(ClassLoader loader) {
         android.content.Context ctx = appContext();
+        int failures = 0;
         while (!Thread.currentThread().isInterrupted()) {
             try {
+                int state = qualcommState(loader);
+                if (state == QC_NO) {
+                    Log.i(TAG, "DiagBridge: non-Qualcomm target, staying inactive");
+                    return;
+                }
+                if (state == QC_UNKNOWN) {
+                    // NSG has not finished its prerequisite detection yet.
+                    Thread.sleep(5000);
+                    continue;
+                }
                 ensureHelper(ctx);
                 connectAndRead();
+                failures = 0;
+            } catch (InterruptedException e) {
+                return;
             } catch (Throwable t) {
                 Log.w(TAG, "DiagBridge: " + t);
+                failures++;
             }
             dciAvailable = false;
+            long backoff = Math.min(3000L * (1L << Math.min(failures, 4)), 30000L);
             try {
-                Thread.sleep(3000);
+                Thread.sleep(backoff);
             } catch (InterruptedException e) {
                 return;
             }
+        }
+    }
+
+    /**
+     * Reads NSG's prerequisite verdict: w40.q() → {"prerequisite":{"result":
+     * {"qualcomm":{...},"mediatek":{...},"hisilicon":{...},"exynos":{...}}}}.
+     * Returns QC_UNKNOWN while NSG has not populated it.
+     */
+    private static int qualcommState(ClassLoader loader) {
+        try {
+            Class<?> w40 = Class.forName("w40", false, loader);
+            JSONObject root = (JSONObject) w40.getMethod("q").invoke(null);
+            if (root == null) return QC_UNKNOWN;
+            JSONObject prereq = root.optJSONObject("prerequisite");
+            JSONObject result = prereq == null ? null : prereq.optJSONObject("result");
+            if (result == null) return QC_UNKNOWN;
+            if (result.has("qualcomm")) return QC_YES;
+            if (result.has("mediatek") || result.has("hisilicon") || result.has("exynos")) {
+                return QC_NO;
+            }
+            return QC_UNKNOWN;
+        } catch (ClassNotFoundException e) {
+            // Flavor without the prerequisite class: fall back to the helper
+            // runtime check (DCI init fails on non-Qualcomm).
+            return QC_YES;
+        } catch (Throwable t) {
+            Log.w(TAG, "DiagBridge: prerequisite check failed: " + t);
+            return QC_UNKNOWN;
         }
     }
 
