@@ -38,7 +38,6 @@ import android.net.LocalSocketAddress;
 public final class DiagBridge {
 
     private static final String TAG = "NSGBandHook";
-    private static final String MODULE_PKG = "com.nsgmod.band";
     private static final String SOCKET_NAME = "nsgmod_diagd";
 
     /** Max age (ms) of a helper record considered valid for a query. */
@@ -80,6 +79,8 @@ public final class DiagBridge {
     private static volatile boolean dciAvailable = false;
     private static volatile Thread readerThread;
     private static volatile long lastHelperSpawnMs = 0;
+    /** Module APK path from getModuleApplicationInfo(), for helper extraction. */
+    private static volatile String moduleApkPath;
 
     // Qualcomm prerequisite verdicts
     private static final int QC_UNKNOWN = 0;
@@ -104,12 +105,13 @@ public final class DiagBridge {
      * its prerequisite result and the thread then stays inactive; the
      * helper's own DCI init failure is the runtime backstop.
      */
-    public static void install(ClassLoader loader) {
+    public static void install(ClassLoader loader, String apkPath) {
         if (started) return;
         synchronized (DiagBridge.class) {
             if (started) return;
             started = true;
         }
+        moduleApkPath = apkPath;
         readerThread = new Thread(() -> runLoop(loader), "NSGMod-DiagBridge");
         readerThread.setDaemon(true);
         readerThread.start();
@@ -257,13 +259,15 @@ public final class DiagBridge {
 
         File bin = new File(ctx.getCacheDir(), "nsgmod-diagd");
         if (!bin.exists() || bin.length() == 0) {
+            String apkPath = moduleApkPath;
+            if (apkPath == null || apkPath.isEmpty()) {
+                throw new IllegalStateException("module APK path unavailable");
+            }
             String abi = android.os.Build.SUPPORTED_ABIS != null
                     && android.os.Build.SUPPORTED_ABIS.length > 0
                     && android.os.Build.SUPPORTED_ABIS[0].contains("arm64")
                     ? "arm64-v8a" : "armeabi-v7a";
-            android.content.Context moduleCtx =
-                    ctx.createPackageContext(MODULE_PKG, android.content.Context.CONTEXT_IGNORE_SECURITY);
-            try (ZipFile apk = new ZipFile(moduleCtx.getApplicationInfo().sourceDir)) {
+            try (ZipFile apk = new ZipFile(apkPath)) {
                 ZipEntry entry = apk.getEntry("assets/helper/" + abi + "/nsgmod-diagd");
                 if (entry == null) throw new IllegalStateException("helper binary missing from module APK");
                 try (InputStream in = apk.getInputStream(entry);

@@ -43,7 +43,7 @@ public class MainHook extends XposedModule {
         new RenamePuschTxLabelHook(this, param.getClassLoader()).install();
         new NrSaMimoFormatHook(this, param.getClassLoader()).install();
         new NrSaRankFormatHook(this, param.getClassLoader()).install();
-        DiagBridge.install(param.getClassLoader());
+        DiagBridge.install(param.getClassLoader(), getModuleApplicationInfo().sourceDir);
         new DiagScellBarsHook(this, param.getClassLoader()).install();
         new NrSaBwpIdHook(this, param.getClassLoader()).install();
         new BwpUlBwDedicatedModeHook(this, param.getClassLoader()).install();
