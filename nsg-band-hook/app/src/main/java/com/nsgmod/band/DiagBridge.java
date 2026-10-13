@@ -293,8 +293,10 @@ public final class DiagBridge {
         if (!helperRunning && now - lastHelperSpawnMs > 5000) {
             lastHelperSpawnMs = now;
             int uid = android.os.Process.myUid();
+            String dump = new File(ctx.getCacheDir(), "b821-sample.log").getAbsolutePath();
             String cmd = "chmod 755 '" + bin.getAbsolutePath() + "'"
                     + " && exec setsid '" + bin.getAbsolutePath() + "' -uid " + uid
+                    + " -dump '" + dump + "'"
                     + " </dev/null >/dev/null 2>&1 &";
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
             p.waitFor();

@@ -388,8 +388,10 @@ public class NrSaCsiSnrRowHook {
                     injectScellBar(k2aObj, insertRow + 1.0f, barRowOffset, barHeight, 65.0f, 2);
                 } else if (carriers == 3) {
                     // Path B (2 SCells): the row is 2.0 high; stack both at col 65.
-                    injectScellBar(k2aObj, insertRow, barRowOffset, 1.0f, 65.0f, 0);
-                    injectScellBar(k2aObj, insertRow + 1.0f, barRowOffset, 1.0f, 65.0f, 1);
+                    // SCell bars sit on exact row slots (no PCell +0.3 offset),
+                    // matching the SS-RSRP Path B geometry.
+                    injectScellBar(k2aObj, insertRow, 0.0f, 1.0f, 65.0f, 0);
+                    injectScellBar(k2aObj, insertRow + 1.0f, 0.0f, 1.0f, 65.0f, 1);
                 } else {
                     // Path A (1 SCell): single bar at col 65.
                     injectScellBar(k2aObj, insertRow + barRowOffset, barRowOffset, barHeight, 65.0f, 0);

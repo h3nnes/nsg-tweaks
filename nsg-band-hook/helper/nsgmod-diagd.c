@@ -43,8 +43,14 @@
 
 #define STARTUP_GRACE_MS    8000
 
-static const uint16_t CODES[] = { 0xB8DD, 0xB8D8, 0xB825, 0xB823, 0xB8A7, 0xB97F };
+static const uint16_t CODES[] = { 0xB8DD, 0xB8D8, 0xB825, 0xB823, 0xB8A7, 0xB97F, 0xB821 };
 #define NCODES ((int)(sizeof(CODES) / sizeof(CODES[0])))
+
+/* Raw B821 sample dump for offline UPER decoder development: the first
+ * records received are written as one hex line each to -dump <file>. */
+#define B821_DUMP_MAX 200
+static const char *b821_dump_path = NULL;
+static int b821_dump_count = 0;
 
 typedef int (*lsm_init_t)(void *);
 typedef int (*reg_client_t)(int *, uint16_t *, int, void *);
@@ -198,6 +204,8 @@ static void emit(const char *line, int n)
     ssize_t r = write(out_fd, line, (size_t)n);
     (void)r;
 }
+
+static void decode_b821(const uint8_t *pl, int pn, uint64_t ts);
 
 /* ------------------------------------------------------------------ */
 /* Decoders                                                            */
@@ -380,6 +388,7 @@ static void on_log(unsigned char *ptr, int len)
     case 0xB823: decode_pcell(pl, pn, ts);     break;
     case 0xB8A7: decode_csf(pl, pn, ts);       break;
     case 0xB97F: decode_live(pl, pn, ts);      break;
+    case 0xB821: decode_b821(pl, pn, ts);      break;
     default: break;
     }
 }
@@ -388,6 +397,23 @@ static void on_event(unsigned char *ptr, int len)
 {
     (void)ptr;
     (void)len;
+}
+
+/* NR5G RRC OTA packet: kept raw for now; a minimal UPER decoder for
+ * CSI-RS port counts per serving cell is the next increment. Version word
+ * and payload sizes are dumped to -dump <file> for decoder development. */
+static void decode_b821(const uint8_t *pl, int pn, uint64_t ts)
+{
+    if (pn < 4 || !b821_dump_path || b821_dump_count >= B821_DUMP_MAX) return;
+
+    FILE *f = fopen(b821_dump_path, b821_dump_count ? "a" : "w");
+    if (!f) return;
+    fprintf(f, "{\"ts\":%llu,\"len\":%d,\"ver\":%u,\"hex\":\"",
+            (unsigned long long)ts, pn, nr_ver(pl));
+    for (int i = 0; i < pn; i++) fprintf(f, "%02x", pl[i]);
+    fprintf(f, "\"}\n");
+    fclose(f);
+    b821_dump_count++;
 }
 
 /* ------------------------------------------------------------------ */
@@ -468,8 +494,10 @@ static void on_term(int sig)
 
 int main(int argc, char **argv)
 {
-    for (int i = 1; i + 1 < argc; i += 2)
+    for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "-uid")) client_uid = atol(argv[i + 1]);
+        if (!strcmp(argv[i], "-dump")) b821_dump_path = argv[i + 1];
+    }
 
     signal(SIGTERM, on_term);
     signal(SIGINT, on_term);
