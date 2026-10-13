@@ -35,6 +35,7 @@ public class SettingsToggleHook {
     static final String  PREF_KEY_PATHLOSS_COLUMN = "nsgmod.pathloss_column_enabled";
     static final String  PREF_KEY_NR_PDSCH_SINR  = "nsgmod.nr_pdsch_snr_enabled";
     static final String  PREF_KEY_GNB_ID_HEADER  = "nsgmod.gnb_id_header_enabled";
+    static final String  PREF_KEY_DECIMAL_RANK   = "nsgmod.decimal_rank_enabled";
 
     // -----------------------------------------------------------------------
     // Cached toggle reads.
@@ -63,6 +64,7 @@ public class SettingsToggleHook {
     private static volatile boolean sPathlossColumn = false; // default OFF (fail closed)
     private static volatile boolean sNrPdschSnr     = false; // default OFF (fail closed)
     private static volatile boolean sGnbIdHeader    = true;  // default ON  (fail open)
+    private static volatile boolean sDecimalRank    = true;  // default ON  (fail open)
 
     // NOTE: must be a strong static reference — SharedPreferencesImpl keeps
     // listeners in a WeakHashMap.
@@ -91,6 +93,7 @@ public class SettingsToggleHook {
             case PREF_KEY_PATHLOSS_COLUMN: sPathlossColumn = p.getBoolean(key, false); break;
             case PREF_KEY_NR_PDSCH_SINR:   sNrPdschSnr     = p.getBoolean(key, false); break;
             case PREF_KEY_GNB_ID_HEADER:   sGnbIdHeader    = p.getBoolean(key, true);  break;
+            case PREF_KEY_DECIMAL_RANK:    sDecimalRank    = p.getBoolean(key, true);  break;
             default: break;
         }
     }
@@ -106,6 +109,7 @@ public class SettingsToggleHook {
         updateToggle(p, PREF_KEY_PATHLOSS_COLUMN);
         updateToggle(p, PREF_KEY_NR_PDSCH_SINR);
         updateToggle(p, PREF_KEY_GNB_ID_HEADER);
+        updateToggle(p, PREF_KEY_DECIMAL_RANK);
     }
 
     /** Resolves Application + SharedPreferences once; on failure retries next call. */
@@ -189,6 +193,12 @@ public class SettingsToggleHook {
     public static boolean gnbIdHeaderEnabled() {
         ensurePrefs();
         return sGnbIdHeader;
+    }
+
+    /** Returns true when the decimal rank indicator toggle is enabled (default: true). */
+    public static boolean decimalRankEnabled() {
+        ensurePrefs();
+        return sDecimalRank;
     }
 
     private static final String FRAGMENT_CLS = "t7.t";
@@ -481,6 +491,14 @@ public class SettingsToggleHook {
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
                     PREF_KEY_GNB_ID_HEADER, "NSGMod: NR-NSA gNB-ID in header",
                     "Show gNB-ID / sector next to ECellID in NR-NSA mode (requires cell DB)",
+                    true, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_DECIMAL_RANK) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_DECIMAL_RANK, "NSGMod: Decimal rank indicator",
+                    "Show NR Rank as decimal mean of scheduled layers (e.g. 2.7) instead of Rank N",
                     true, prefManager, prefScreen, children);
         }
 

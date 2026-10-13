@@ -38,7 +38,7 @@ public class NrSaMimoFormatHook {
     // which may differ from Workspace.g in replay/freeze mode.
     private static final ThreadLocal<FormatContext> formatContext = new ThreadLocal<>();
 
-    private static final class FormatContext {
+    static final class FormatContext {
         final long   sampleKey;
         final int    moduleIndex;
         final Object dataSource;
@@ -48,6 +48,11 @@ public class NrSaMimoFormatHook {
             this.moduleIndex = moduleIndex;
             this.dataSource = dataSource;
         }
+    }
+
+    /** Returns the v6.g.a render context captured on this thread, or null. */
+    static FormatContext currentFormatContext() {
+        return formatContext.get();
     }
 
     // Workspace / DataSource reflection (shared pattern)

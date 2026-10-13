@@ -42,6 +42,7 @@ public class MainHook extends XposedModule {
         new NrSaThputPerPrbHook(this, param.getClassLoader()).install();
         new RenamePuschTxLabelHook(this, param.getClassLoader()).install();
         new NrSaMimoFormatHook(this, param.getClassLoader()).install();
+        new NrSaRankFormatHook(this, param.getClassLoader()).install();
         new NrSaBwpIdHook(this, param.getClassLoader()).install();
         new BwpUlBwDedicatedModeHook(this, param.getClassLoader()).install();
         new NrSaHeaderPathlossHook(this, param.getClassLoader()).install();
