@@ -169,10 +169,15 @@ public final class DiagBridge {
     // ------------------------------------------------------------------
 
     private static void runLoop(ClassLoader loader) {
-        android.content.Context ctx = appContext();
         int failures = 0;
         while (!Thread.currentThread().isInterrupted()) {
             try {
+                android.content.Context ctx = appContext();
+                if (ctx == null) {
+                    // Application not fully created yet — retry shortly.
+                    Thread.sleep(3000);
+                    continue;
+                }
                 int state = qualcommState(loader);
                 if (state == QC_NO) {
                     Log.i(TAG, "DiagBridge: non-Qualcomm target, staying inactive");
@@ -224,6 +229,10 @@ public final class DiagBridge {
             // Flavor without the prerequisite class: fall back to the helper
             // runtime check (DCI init fails on non-Qualcomm).
             return QC_YES;
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            // w40.q() touches NSG state that does not exist until the app has
+            // finished initializing — normal for the first seconds.
+            return QC_UNKNOWN;
         } catch (Throwable t) {
             Log.w(TAG, "DiagBridge: prerequisite check failed: " + t);
             return QC_UNKNOWN;
@@ -233,7 +242,11 @@ public final class DiagBridge {
     private static android.content.Context appContext() {
         try {
             Class<?> at = Class.forName("android.app.ActivityThread");
-            return (android.content.Context) at.getMethod("currentApplication").invoke(null);
+            android.content.Context ctx =
+                    (android.content.Context) at.getMethod("currentApplication").invoke(null);
+            if (ctx != null) return ctx;
+            Class<?> globals = Class.forName("android.app.AppGlobals");
+            return (android.content.Context) globals.getMethod("getInitialApplication").invoke(null);
         } catch (Throwable t) {
             return null;
         }
