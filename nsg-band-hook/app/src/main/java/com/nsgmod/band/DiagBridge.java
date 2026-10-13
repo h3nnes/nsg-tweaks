@@ -73,6 +73,8 @@ public final class DiagBridge {
     private static final ArrayDeque<SnrRec> snrRecords = new ArrayDeque<>();
     private static final ArrayDeque<CsfRec> csfRecords = new ArrayDeque<>();
     private static final Map<Integer, CfgCell> cfgByCc = new ConcurrentHashMap<>();
+    /** B97F live map: cc → {pci, ssbArfcn}; present even mid-session. */
+    private static final Map<Integer, long[]> liveByCc = new ConcurrentHashMap<>();
     private static final ArrayDeque<long[]> pcellRecords = new ArrayDeque<>(); // {atMs, pci, dl}
 
     private static volatile boolean started = false;
@@ -355,7 +357,14 @@ public final class DiagBridge {
                     cc.band = cell.optInt("band", -1);
                     cc.bw = cell.optInt("bw", -1);
                     cc.maxLayers = cell.optInt("ml", -1);
-                    cfgByCc.put(i, cc);
+                    cfgByCc.put(cell.optInt("cc", i), cc);
+                }
+                break;
+            }
+            case "live": {
+                int cc = o.optInt("cc", -1);
+                if (cc >= 0) {
+                    liveByCc.put(cc, new long[]{o.optInt("pci", -1), o.optInt("arfcn", -1)});
                 }
                 break;
             }
@@ -434,13 +443,24 @@ public final class DiagBridge {
     }
 
     private static int ccForCell(int pci, long ssbArfcn) {
+        // 1. Live searcher map (B97F): freshest, works mid-session.
+        for (Map.Entry<Integer, long[]> e : liveByCc.entrySet()) {
+            long[] v = e.getValue();
+            if (v[0] == pci && (ssbArfcn <= 0 || v[1] == ssbArfcn)) {
+                return e.getKey();
+            }
+        }
+        // 2. RRC configuration (B825): PCI + SSB ARFCN.
         for (Map.Entry<Integer, CfgCell> e : cfgByCc.entrySet()) {
             CfgCell c = e.getValue();
             if (c.pci == pci && (ssbArfcn <= 0 || c.ssb == ssbArfcn)) {
                 return e.getKey();
             }
         }
-        // Fall back to PCI-only match (ARFCN may not be reported yet).
+        // 3. Fall back to PCI-only matches (ARFCN may not be reported yet).
+        for (Map.Entry<Integer, long[]> e : liveByCc.entrySet()) {
+            if (e.getValue()[0] == pci) return e.getKey();
+        }
         for (Map.Entry<Integer, CfgCell> e : cfgByCc.entrySet()) {
             if (e.getValue().pci == pci) return e.getKey();
         }
@@ -451,6 +471,16 @@ public final class DiagBridge {
         long now = System.currentTimeMillis();
         prune(now);
         long ref = sampleKey != null ? wallForSampleKey(sampleKey) : now;
+        Double best = bestSnrRec(cc, trs, ref);
+        if (best == null && trs) {
+            // Networks that do not configure TRS never produce CSI records:
+            // fall back to the SSB-based measurement.
+            best = bestSnrRec(cc, false, ref);
+        }
+        return best;
+    }
+
+    private static Double bestSnrRec(int cc, boolean trs, long ref) {
         synchronized (LOCK) {
             SnrRec best = null;
             long bestDist = Long.MAX_VALUE;

@@ -41,10 +41,9 @@
 #define DIAG_CON_MPSS (1 << 1)
 #define DCI_NO_ERROR  1001
 
-#define DISCONNECT_GRACE_MS 4000
 #define STARTUP_GRACE_MS    8000
 
-static const uint16_t CODES[] = { 0xB8DD, 0xB8D8, 0xB825, 0xB823, 0xB8A7 };
+static const uint16_t CODES[] = { 0xB8DD, 0xB8D8, 0xB825, 0xB823, 0xB8A7, 0xB97F };
 #define NCODES ((int)(sizeof(CODES) / sizeof(CODES[0])))
 
 typedef int (*lsm_init_t)(void *);
@@ -107,7 +106,8 @@ static const struct snr_layout SNR_B8DD[] = {
 };
 
 /* B825 RRC configuration: version, then count fields at fixed offsets, two
- * count-sized arrays, then byte-aligned cell records. */
+ * count-sized arrays, then byte-aligned cell records. Each cell names its
+ * modem carrier id (cc); cells are matched to SNR records through it. */
 struct cfg_layout {
     uint32_t ver;
     struct pos skip[2];     uint16_t skip_bits[2]; /* counts; element sizes in bits */
@@ -146,6 +146,28 @@ static const struct pcell_layout PCELL[] = {
     { 0x30002, { 56, 16 }, { 136, 32 } },
     { 0x30001, { 42, 16 }, { 122, 32 } },
     { 0x30000, { 32, 16 }, { 112, 32 } },
+};
+
+/* B97F ML1 searcher measurements: layers of (SSB NR-ARFCN, carrier id, cell
+ * list); the serving cell of each layer gives the live cc -> (PCI, ARFCN)
+ * map, present even when the helper starts mid-session (B825 only arrives on
+ * configuration changes). */
+struct live_layout {
+    uint32_t ver;
+    struct pos layer_count; uint16_t layers_at;
+    uint16_t layer_bytes, cell_bytes, beam_bytes;
+    struct pos arfcn, cc, ncell, spci;   /* in a layer */
+    struct pos pci, nbeam, rsrp, rsrq;   /* in a cell */
+};
+static const struct live_layout LIVE[] = {
+    { 0x30001, { 64, 8 }, 160,  20, 20, 84, { 0, 32 }, { 32, 8 }, { 40, 8 }, { 48, 16 },
+      { 0, 16 }, { 32, 8 }, { 64, 32 }, { 96, 32 } },
+    { 0x30000, { 64, 8 }, 160,  40, 16, 84, { 0, 32 }, { 32, 8 }, { 40, 8 }, { 48, 16 },
+      { 0, 16 }, { 32, 8 }, { 64, 32 }, { 96, 32 } },
+    { 0x2000a, { 64, 8 }, 160,  40, 16, 84, { 0, 32 }, { 32, 8 }, { 40, 8 }, { 48, 16 },
+      { 0, 16 }, { 32, 8 }, { 64, 32 }, { 96, 32 } },
+    { 0x20009, { 64, 8 }, 160,  40, 16, 84, { 0, 32 }, { 32, 8 }, { 40, 8 }, { 48, 16 },
+      { 0, 16 }, { 32, 8 }, { 64, 32 }, { 96, 32 } },
 };
 
 /* B8A7 MAC CSF report: one record; each report names its resource carrier and
@@ -236,16 +258,17 @@ static void decode_cfg(const uint8_t *pl, int pn, uint64_t ts)
     for (int i = 0; i < cc_n && n > 0 && n < (int)sizeof(line) - 96; i++, pos += stride) {
         if (pos + stride > pn) break;
         const uint8_t *c = pl + pos;
-        uint32_t pci  = at(c, t->pci);
-        uint32_t dlar = at(c, t->dl_arfcn);
-        uint32_t ssb  = at(c, t->ssb_arfcn);
-        uint32_t band = at(c, t->band);
-        uint32_t bwc  = at(c, t->bw);
-        uint32_t ml   = at(c, t->max_layers);
-        uint16_t bw   = (bwc < 17) ? BW_MHZ_V3[bwc] : 0;
+        uint32_t ccid  = at(c, t->cc);
+        uint32_t pci   = at(c, t->pci);
+        uint32_t dlar  = at(c, t->dl_arfcn);
+        uint32_t ssb   = at(c, t->ssb_arfcn);
+        uint32_t band  = at(c, t->band);
+        uint32_t bwc   = at(c, t->bw);
+        uint32_t ml    = at(c, t->max_layers);
+        uint16_t bw    = (bwc < 17) ? BW_MHZ_V3[bwc] : 0;
         n += snprintf(line + n, sizeof(line) - n,
-                      "%s{\"pci\":%u,\"dl\":%u,\"ssb\":%u,\"band\":%u,\"bw\":%u,\"ml\":%u}",
-                      i ? "," : "", pci, dlar, ssb, band, bw, ml);
+                      "%s{\"cc\":%u,\"pci\":%u,\"dl\":%u,\"ssb\":%u,\"band\":%u,\"bw\":%u,\"ml\":%u}",
+                      i ? "," : "", ccid, pci, dlar, ssb, band, bw, ml);
     }
     if (n > 0 && n < (int)sizeof(line) - 2) {
         line[n++] = ']';
@@ -302,6 +325,41 @@ static void decode_csf(const uint8_t *pl, int pn, uint64_t ts)
     }
 }
 
+static void decode_live(const uint8_t *pl, int pn, uint64_t ts)
+{
+    if (pn < 4) return;
+    const struct live_layout *t = NULL;
+    uint32_t ver = nr_ver(pl);
+    for (size_t i = 0; i < sizeof(LIVE) / sizeof(LIVE[0]); i++)
+        if (LIVE[i].ver == ver) { t = &LIVE[i]; break; }
+    if (!t) return;
+
+    int layers = (int)at(pl, t->layer_count);
+    if (layers > 8) layers = 8;
+    int pos = t->layers_at / 8;
+    for (int l = 0; l < layers && pos + t->layer_bytes <= pn; l++) {
+        const uint8_t *L = pl + pos;
+        uint32_t arfcn = at(L, t->arfcn);
+        int cc = t->cc.bits ? (int)at(L, t->cc) : -1;
+        int ncell = (int)at(L, t->ncell);
+        uint32_t spci = at(L, t->spci);
+        pos += t->layer_bytes;
+        for (int c = 0; c < ncell && pos + t->cell_bytes <= pn; c++) {
+            const uint8_t *C = pl + pos;
+            uint32_t pci = at(C, t->pci);
+            uint32_t beams = at(C, t->nbeam);
+            pos += t->cell_bytes + (int)beams * t->beam_bytes;
+            if (cc >= 0 && cc < 8 && spci != 0xFFFF && pci == spci) {
+                char line[128];
+                int n = snprintf(line, sizeof(line),
+                                 "{\"c\":\"live\",\"ts\":%llu,\"cc\":%d,\"pci\":%u,\"arfcn\":%u}\n",
+                                 (unsigned long long)ts, cc, pci, arfcn);
+                emit(line, n);
+            }
+        }
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* DCI callbacks                                                       */
 /* ------------------------------------------------------------------ */
@@ -321,6 +379,7 @@ static void on_log(unsigned char *ptr, int len)
     case 0xB825: decode_cfg(pl, pn, ts);       break;
     case 0xB823: decode_pcell(pl, pn, ts);     break;
     case 0xB8A7: decode_csf(pl, pn, ts);       break;
+    case 0xB97F: decode_live(pl, pn, ts);      break;
     default: break;
     }
 }
@@ -459,12 +518,14 @@ int main(int argc, char **argv)
     }
 
     /* Keep forwarding until the client disconnects or we are told to stop,
-     * then unsubscribe and exit so nothing is left behind. */
+     * then unsubscribe and exit so nothing is left behind. poll() reports
+     * POLLHUP/POLLERR regardless of the requested events; a timeout simply
+     * means the connection is still healthy. */
     while (!stopping) {
-        struct pollfd p = { .fd = out_fd, .events = POLLHUP };
-        int pr = poll(&p, 1, DISCONNECT_GRACE_MS);
-        if (pr <= 0) break; /* no event within grace: exit */
-        if (p.revents & (POLLHUP | POLLERR)) break;
+        struct pollfd p = { .fd = out_fd, .events = POLLIN | POLLHUP | POLLERR };
+        int pr = poll(&p, 1, 1000);
+        if (pr < 0) break;
+        if (pr > 0 && (p.revents & (POLLHUP | POLLERR))) break;
     }
 
     close(out_fd);
