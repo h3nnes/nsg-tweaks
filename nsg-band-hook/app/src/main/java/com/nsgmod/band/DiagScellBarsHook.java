@@ -125,10 +125,13 @@ public class DiagScellBarsHook {
             xposed.hook(aMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
+                    // Read the element identity before proceed(): some
+                    // libxposed implementations only expose this-object in
+                    // the before phase.
+                    Object bar = chain.getThisObject();
                     Object result = chain.proceed();
                     try {
-                        Object bar = chain.getThisObject();
-                        Integer scellIdx = barCells.get(bar);
+                        Integer scellIdx = bar != null ? barCells.get(bar) : null;
                         if (scellIdx != null) {
                             long sampleKey = ((Number) chain.getArg(0)).longValue();
                             patchValue(bar, scellIdx, sampleKey);
@@ -139,9 +142,20 @@ public class DiagScellBarsHook {
                     return result;
                 }
             });
+            Log.i(TAG, "DiagScellBarsHook: bar update hook installed");
         } catch (Exception e) {
             Log.e(TAG, "DiagScellBarsHook: bar update hook failed: " + e);
         }
+    }
+
+    /** Throttled one-line diagnostics (5 s) to make patch behaviour visible. */
+    private static volatile long lastDbgMs = 0;
+
+    private static void dbg(String msg) {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastDbgMs < 5000) return;
+        lastDbgMs = now;
+        Log.i(TAG, "DiagScellBarsHook: " + msg);
     }
 
     /**
@@ -157,27 +171,39 @@ public class DiagScellBarsHook {
             long[] arfcns = readLongArray(SCELL_ARFCN_KEY, sampleKey);
             if (pcis != null && scellIdx < pcis.length) pci = pcis[scellIdx];
             if (arfcns != null && scellIdx < arfcns.length) arfcn = arfcns[scellIdx];
-            if (pci < 0) return;
+            if (pci < 0) {
+                dbg("patch skip: pci unavailable (scell=" + scellIdx
+                        + ", pcisArray=" + (pcis == null ? "null" : java.util.Arrays.toString(pcis)) + ")");
+                return;
+            }
 
             Double snr = DiagBridge.csiSnr(pci, arfcn, sampleKey);
-            if (snr == null) return;
+            if (snr == null) {
+                dbg("patch skip: no helper value for pci=" + pci);
+                return;
+            }
+
+            int idx = bindingIndex(bar);
+            if (idx < 0) {
+                dbg("patch skip: no binding index");
+                return;
+            }
 
             Object raw = vfValueField.get(bar);
             Object[] arr;
             if (raw instanceof Object[]) {
                 Object[] old = (Object[]) raw;
-                int idx = bindingIndex(bar);
-                if (idx < 0) return;
                 arr = new Object[Math.max(old.length, idx + 1)];
                 System.arraycopy(old, 0, arr, 0, Math.min(old.length, arr.length));
                 arr[idx] = snr;
             } else {
-                int idx = bindingIndex(bar);
-                if (idx < 0) return;
                 arr = new Object[idx + 1];
                 arr[idx] = snr;
             }
             vfValueField.set(bar, arr);
+            dbg("patched scell=" + scellIdx + " idx=" + idx + " csi=" + snr
+                    + " (raw " + (raw == null ? "null" : raw.getClass().getSimpleName()
+                    + "[" + (raw instanceof Object[] ? ((Object[]) raw).length : -1) + "]") + ")");
         } catch (Throwable t) {
             Log.w(TAG, "DiagScellBarsHook: patchValue failed: " + t);
         }
