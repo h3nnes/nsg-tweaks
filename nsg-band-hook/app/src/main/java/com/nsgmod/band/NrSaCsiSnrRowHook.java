@@ -437,9 +437,10 @@ public class NrSaCsiSnrRowHook {
     }
 
     /**
-     * Creates one SCell CSI SNR bar. The binding reuses the PCell NR_CSI_SINR
-     * property so NSG renders the bar normally; DiagScellBarsHook overrides
-     * the displayed value with the per-SCell measurement from the helper.
+     * Creates one SCell CSI SNR bar. The binding uses NSG's real per-cell
+     * NR_Cells_SINR array (index = SCell number + 1) so the bar renders
+     * normally; DiagScellBarsHook patches the rendered value with the
+     * per-SCell CSI measurement from the helper.
      */
     private void injectScellBar(Object k2aObj, float row, float rowOffset,
                                 float height, float col, int scellIdx) {
@@ -447,11 +448,11 @@ public class NrSaCsiSnrRowHook {
             Object barElem = k2aSMethod.invoke(k2aObj, row + rowOffset, height, col, 34.0f);
             if (barElem == null) return;
             Object propBinding = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-            sysAFieldA.set(propBinding, DiagScellBarsHook.MARKER_KEY);
+            sysAFieldA.set(propBinding, DiagScellBarsHook.SINR_CELLS_KEY);
             sysAFieldB.set(propBinding, "%.1f dB");
-            sysAFieldC.set(propBinding, scellIdx);
+            sysAFieldC.set(propBinding, scellIdx + 1);
             vfF8120g.set(barElem, propBinding);
-            DiagScellBarsHook.registerBar(k2aObj, barElem, scellIdx);
+            DiagScellBarsHook.registerBar(barElem, scellIdx);
         } catch (Exception e) {
             Log.w(TAG, "NrSaCsiSnrRowHook: injectScellBar failed: " + e);
         }

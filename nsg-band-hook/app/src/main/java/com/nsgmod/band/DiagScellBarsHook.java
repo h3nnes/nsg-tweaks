@@ -1,20 +1,13 @@
 package com.nsgmod.band;
 
 import android.util.Log;
-import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
@@ -23,20 +16,23 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * Feeds the SCell CSI SNR bars injected by NrSaCsiSnrRowHook with live values
  * from the DiagBridge DCI helper.
  *
- * The bars are bound to a marker key (no such NSG property exists), tracked
- * here together with their SCell index. Once the page's views exist
- * (v6.b.I), the TextView inside each bar view is located and refreshed on a
- * short schedule from DiagBridge, matched by SCell PCI / SSB ARFCN arrays and
- * the NSG sample key currently being rendered.
+ * The bars are bound to NSG's real per-cell NR5G::Cell_Measurements::
+ * NR_Cells_SINR array (index = SCell number + 1), so NSG renders fill, color
+ * and text through its own pipeline. The bar update method (v6.f.a) stores
+ * the raw property value in field f; this hook runs after it and replaces
+ * that stored value with the CSI SNR measured by the helper for the same
+ * cell — matched by the NSG sample key being rendered. NSG's own renderer
+ * (v6.f.e) then shows the helper value for text, fill and color, without any
+ * flickering between data sources.
  */
 public class DiagScellBarsHook {
 
     private static final String TAG = "NSGBandHook";
 
-    /** Binding key marking an SCell CSI SNR bar (index = SCell number). */
-    public static final String MARKER_KEY = "NSGMod::SCell_CSI_SINR";
+    /** NSG's per-cell SINR array the SCell bars are bound to. */
+    public static final String SINR_CELLS_KEY =
+            "NR5G::Cell_Measurements::NR_Cells_SINR";
 
-    /** Marker key prefix shared with other diag-fed bindings. */
     private static final String SCELL_PCI_KEY =
             "NR5G::Serving_Cell::SCell::NR_SCell_PCI";
     private static final String SCELL_ARFCN_KEY =
@@ -45,75 +41,34 @@ public class DiagScellBarsHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // k2.a / v6.a / com.qtrun.sys reflection
-    private Field k2aListField;   // k2.a "d": ArrayList<v6.a>
-    private Field vaRowField;     // v6.a "b": float row
-    private Field vaColField;     // v6.a "d": float column
-    private Field vaViewField;    // v6.a "a": View
+    private Field vfValueField;   // v6.f "f": raw property value (Object[])
     private Field vfBindingField; // v6.f "g": binding
-    private Field sysAFieldA;     // com.qtrun.sys.a "a": key
     private Field sysAFieldC;     // com.qtrun.sys.a "c": index
-    private Field v6bYField;      // v6.b "Y": k2.a stored on the fragment
     private Field wsJ, wsG, wsModuleIndex, wsDataSource;
     private Method dsGetProperty, propBMethod, iterEndMethod, iterValueMethod;
 
-    /** k2.a builder → tracked (element, scellIdx) pairs for that page. */
-    private static final Map<Object, List<BarRef>> barsByBuilder =
-            new WeakHashMap<>();
-
-    private static final class BarRef {
-        Object element;
-        final int scellIdx;
-        TextView view; // resolved lazily after v6.b.I
-        BarRef(Object element, int scellIdx) {
-            this.element = element;
-            this.scellIdx = scellIdx;
-        }
-    }
-
-    private static final ScheduledExecutorService EXECUTOR =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "NSGMod-ScellBars");
-                t.setDaemon(true);
-                return t;
-            });
-
-    private static volatile DiagScellBarsHook instance;
+    /** v6.f bar element → SCell index (0-based). */
+    private static final Map<Object, Integer> barCells =
+            java.util.Collections.synchronizedMap(new WeakHashMap<>());
 
     private boolean ready = false;
 
     public DiagScellBarsHook(XposedInterface xposed, ClassLoader loader) {
         this.xposed = xposed;
         this.loader = loader;
-        instance = this;
         initReflection();
     }
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> v6aClass = ClassMapping.loadClass("v6.a", loader);
             Class<?> v6fClass = ClassMapping.loadClass("v6.f", loader);
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
             Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
 
-            k2aListField = k2aClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName("k2.a", "d", loader));
-            k2aListField.setAccessible(true);
-            vaRowField = v6aClass.getDeclaredField("b");
-            vaRowField.setAccessible(true);
-            vaColField = v6aClass.getDeclaredField("d");
-            vaColField.setAccessible(true);
-            vaViewField = v6aClass.getDeclaredField("a");
-            vaViewField.setAccessible(true);
+            vfValueField = findField(v6fClass, "f");
             vfBindingField = v6fClass.getDeclaredField("g");
             vfBindingField.setAccessible(true);
-            sysAFieldA = sysAClass.getField("a");
             sysAFieldC = sysAClass.getDeclaredField("c");
             sysAFieldC.setAccessible(true);
-            v6bYField = v6bClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName("v6.b", "Y", loader));
-            v6bYField.setAccessible(true);
 
             Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
             Class<?> dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
@@ -135,168 +90,113 @@ public class DiagScellBarsHook {
         }
     }
 
+    private static Field findField(Class<?> cls, String name) throws NoSuchFieldException {
+        for (Class<?> c = cls; c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                Field f = c.getDeclaredField(name);
+                f.setAccessible(true);
+                return f;
+            } catch (NoSuchFieldException ignored) {
+            }
+        }
+        throw new NoSuchFieldException(name);
+    }
+
     public void install() {
         if (!ready) {
             Log.w(TAG, "DiagScellBarsHook: skipping install");
             return;
         }
-        installViewHook();
-        EXECUTOR.scheduleWithFixedDelay(this::refreshBars, 2, 500, TimeUnit.MILLISECONDS);
+        installBarUpdateHook();
         Log.i(TAG, "DiagScellBarsHook: installed");
     }
 
     /** Called by NrSaCsiSnrRowHook when an SCell bar is created. */
-    static void registerBar(Object k2aBuilder, Object barElement, int scellIdx) {
-        synchronized (barsByBuilder) {
-            List<BarRef> refs = barsByBuilder.get(k2aBuilder);
-            if (refs == null) {
-                refs = new ArrayList<>();
-                barsByBuilder.put(k2aBuilder, refs);
-            }
-            for (BarRef r : refs) {
-                if (r.scellIdx == scellIdx) {
-                    r.element = barElement == null ? r.element : barElement;
-                    return;
-                }
-            }
-            refs.add(new BarRef(barElement, scellIdx));
-        }
+    static void registerBar(Object barElement, int scellIdx) {
+        barCells.put(barElement, scellIdx);
     }
 
-    // ------------------------------------------------------------------
-    // View resolution: hook v6.b.I(LayoutInflater, ViewGroup, Bundle) and
-    // bind TextViews to tracked bars once views exist.
-    // ------------------------------------------------------------------
-
-    private void installViewHook() {
+    private void installBarUpdateHook() {
         try {
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Method iMethod = ClassMapping.getMethod(v6bClass, "v6.b", "I", loader,
-                    android.view.LayoutInflater.class, android.view.ViewGroup.class, android.os.Bundle.class);
-            if (iMethod == null) {
-                Log.w(TAG, "DiagScellBarsHook: v6.b.I not found");
-                return;
-            }
-            xposed.hook(iMethod).intercept(new Hooker() {
+            Class<?> v6fClass = ClassMapping.loadClass("v6.f", loader);
+            Class<?> dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Method aMethod = v6fClass.getMethod("a", long.class, dsClass, short.class);
+
+            xposed.hook(aMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
                     try {
-                        resolveViews(chain.getThisObject());
+                        Object bar = chain.getThisObject();
+                        Integer scellIdx = barCells.get(bar);
+                        if (scellIdx != null) {
+                            long sampleKey = ((Number) chain.getArg(0)).longValue();
+                            patchValue(bar, scellIdx, sampleKey);
+                        }
                     } catch (Throwable t) {
-                        Log.w(TAG, "DiagScellBarsHook: resolveViews failed: " + t);
+                        Log.w(TAG, "DiagScellBarsHook: patch failed: " + t);
                     }
                     return result;
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "DiagScellBarsHook: view hook failed: " + e);
+            Log.e(TAG, "DiagScellBarsHook: bar update hook failed: " + e);
         }
     }
 
-    private void resolveViews(Object fragment) {
+    /**
+     * Replaces the raw SINR array value stored by v6.f.a with a copy whose
+     * element for this bar's SCell index carries the helper's CSI SNR, so
+     * NSG's renderer displays it like any native measurement.
+     */
+    private void patchValue(Object bar, int scellIdx, long sampleKey) {
         try {
-            Object k2a = v6bYField.get(fragment);
-            if (k2a == null) return;
-            List<BarRef> refs;
-            synchronized (barsByBuilder) {
-                refs = barsByBuilder.get(k2a);
-            }
-            if (refs == null || refs.isEmpty()) return;
+            int pci = -1;
+            long arfcn = -1;
+            int[] pcis = readIntArray(SCELL_PCI_KEY, sampleKey);
+            long[] arfcns = readLongArray(SCELL_ARFCN_KEY, sampleKey);
+            if (pcis != null && scellIdx < pcis.length) pci = pcis[scellIdx];
+            if (arfcns != null && scellIdx < arfcns.length) arfcn = arfcns[scellIdx];
+            if (pci < 0) return;
 
-            java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2a);
-            if (list == null) return;
+            Double snr = DiagBridge.csiSnr(pci, arfcn, sampleKey);
+            if (snr == null) return;
 
-            // Map element identity → view by scanning the builder list.
-            for (BarRef ref : refs) {
-                if (ref.view != null) continue;
-                for (Object elem : list) {
-                    if (elem != ref.element) continue;
-                    Object view = vaViewField.get(elem);
-                    if (view instanceof android.view.View) {
-                        ref.view = findTextView((android.view.View) view);
-                    }
-                    break;
-                }
+            Object raw = vfValueField.get(bar);
+            Object[] arr;
+            if (raw instanceof Object[]) {
+                Object[] old = (Object[]) raw;
+                int idx = bindingIndex(bar);
+                if (idx < 0) return;
+                arr = new Object[Math.max(old.length, idx + 1)];
+                System.arraycopy(old, 0, arr, 0, Math.min(old.length, arr.length));
+                arr[idx] = snr;
+            } else {
+                int idx = bindingIndex(bar);
+                if (idx < 0) return;
+                arr = new Object[idx + 1];
+                arr[idx] = snr;
             }
+            vfValueField.set(bar, arr);
         } catch (Throwable t) {
-            Log.w(TAG, "DiagScellBarsHook: resolveViews failed: " + t);
+            Log.w(TAG, "DiagScellBarsHook: patchValue failed: " + t);
         }
     }
 
-    /** Depth-first search for the first TextView inside a bar view. */
-    private static TextView findTextView(android.view.View v) {
-        if (v instanceof TextView) return (TextView) v;
-        if (v instanceof android.view.ViewGroup) {
-            android.view.ViewGroup g = (android.view.ViewGroup) v;
-            for (int i = 0; i < g.getChildCount(); i++) {
-                TextView t = findTextView(g.getChildAt(i));
-                if (t != null) return t;
-            }
-        }
-        return null;
-    }
-
-    // ------------------------------------------------------------------
-    // Periodic refresh
-    // ------------------------------------------------------------------
-
-    private void refreshBars() {
-        if (!SettingsToggleHook.scellDiagEnabled() || !DiagBridge.isAvailable()) return;
-
-        List<BarRef> active = new ArrayList<>();
-        synchronized (barsByBuilder) {
-            Iterator<Map.Entry<Object, List<BarRef>>> it = barsByBuilder.entrySet().iterator();
-            while (it.hasNext()) {
-                Map.Entry<Object, List<BarRef>> e = it.next();
-                List<BarRef> refs = e.getValue();
-                refs.removeIf(r -> r.view == null && !elementAlive(r));
-                if (refs.isEmpty()) {
-                    it.remove();
-                    continue;
-                }
-                active.addAll(refs);
-            }
-        }
-        if (active.isEmpty()) return;
-
-        Long sampleKey = DiagBridge.currentSampleKey();
-        int[] pcis = readIntArray(SCELL_PCI_KEY, sampleKey);
-        long[] arfcns = readLongArray(SCELL_ARFCN_KEY, sampleKey);
-
-        for (BarRef ref : active) {
-            if (ref.view == null) continue;
-            try {
-                int idx = ref.scellIdx;
-                int pci = pcis != null && idx < pcis.length ? pcis[idx] : -1;
-                long arfcn = arfcns != null && idx < arfcns.length ? arfcns[idx] : -1;
-                Double snr = pci >= 0 ? DiagBridge.csiSnr(pci, arfcn, sampleKey) : null;
-                ref.view.setText(snr != null
-                        ? String.format(java.util.Locale.US, "%.1f dB", snr)
-                        : "—");
-            } catch (Throwable t) {
-                Log.w(TAG, "DiagScellBarsHook: refresh failed: " + t);
-            }
-        }
-    }
-
-    private static boolean elementAlive(BarRef r) {
+    private int bindingIndex(Object bar) {
         try {
-            return vaViewField_get(r.element) != null;
+            Object binding = vfBindingField.get(bar);
+            return binding != null ? sysAFieldC.getInt(binding) : -1;
         } catch (Throwable t) {
-            return false;
+            return -1;
         }
     }
 
-    private static Object vaViewField_get(Object element) throws Exception {
-        return instance.vaViewField.get(element);
-    }
-
     // ------------------------------------------------------------------
-    // Array property readers (Workspace cursor values)
+    // Array property readers
     // ------------------------------------------------------------------
 
-    private int[] readIntArray(String key, Long sampleKey) {
+    private int[] readIntArray(String key, long sampleKey) {
         Object v = readProperty(key, sampleKey);
         if (v instanceof int[]) return (int[]) v;
         if (v instanceof Integer[]) {
@@ -317,7 +217,7 @@ public class DiagScellBarsHook {
         return null;
     }
 
-    private long[] readLongArray(String key, Long sampleKey) {
+    private long[] readLongArray(String key, long sampleKey) {
         int[] ints = readIntArray(key, sampleKey);
         if (ints == null) return null;
         long[] r = new long[ints.length];
@@ -325,17 +225,16 @@ public class DiagScellBarsHook {
         return r;
     }
 
-    private Object readProperty(String key, Long sampleKey) {
+    private Object readProperty(String key, long sampleKey) {
         try {
             Object ws = wsJ.get(null);
             if (ws == null) return null;
-            long sk = sampleKey != null ? sampleKey : wsG.getLong(ws);
             int module = ((Number) wsModuleIndex.get(ws)).intValue();
             Object ds = wsDataSource.get(ws);
             if (ds == null) return null;
             Object property = dsGetProperty.invoke(ds, key, module);
             if (property == null) return null;
-            Object iterator = propBMethod.invoke(property, sk);
+            Object iterator = propBMethod.invoke(property, sampleKey);
             if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
             return iterValueMethod.invoke(iterator);
         } catch (Throwable t) {
