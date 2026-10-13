@@ -367,6 +367,35 @@ public class NrSaCsiSnrRowHook {
                 vfF8120g.set(barElem, propBinding);
             }
 
+            // ── SCell CSI SNR bars (data from the DiagBridge DCI helper) ──
+            // Same column geometry as the SS-RSRP SCell bars: col 65 for
+            // SCell1.. (stacked sub-rows), SCell[0] in col 30 on Path C.
+            if (SettingsToggleHook.scellDiagEnabled() && carriers >= 2) {
+                int scells = carriers - 1;
+                if (carriers >= 4) {
+                    // Path C (3 SCells): SCell[0] col 30 row+1, SCell[1] col 65 row,
+                    // SCell[2] col 65 row+1 — needs one extra sub-row slot.
+                    if (list != null) {
+                        for (Object elem : list) {
+                            float elemRow = (float) vaRowField.get(elem);
+                            if (elemRow >= insertRow + labelHeight) {
+                                vaRowField.set(elem, elemRow + labelHeight);
+                            }
+                        }
+                    }
+                    injectScellBar(k2aObj, insertRow + 1.0f, barRowOffset, barHeight, 30.0f, 0);
+                    injectScellBar(k2aObj, insertRow, barRowOffset, barHeight, 65.0f, 1);
+                    injectScellBar(k2aObj, insertRow + 1.0f, barRowOffset, barHeight, 65.0f, 2);
+                } else if (carriers == 3) {
+                    // Path B (2 SCells): the row is 2.0 high; stack both at col 65.
+                    injectScellBar(k2aObj, insertRow, barRowOffset, 1.0f, 65.0f, 0);
+                    injectScellBar(k2aObj, insertRow + 1.0f, barRowOffset, 1.0f, 65.0f, 1);
+                } else {
+                    // Path A (1 SCell): single bar at col 65.
+                    injectScellBar(k2aObj, insertRow + barRowOffset, barRowOffset, barHeight, 65.0f, 0);
+                }
+            }
+
             // ── PDSCH SINR row (below CSI SNR, above RBs) — gated by toggle ──
             if (!pdschEnabled) {
                 return;
@@ -404,6 +433,27 @@ public class NrSaCsiSnrRowHook {
 
         } catch (Exception e) {
             Log.w(TAG, "NrSaCsiSnrRowHook: injectCsiSnrRow failed: " + e);
+        }
+    }
+
+    /**
+     * Creates one SCell CSI SNR bar. The binding reuses the PCell NR_CSI_SINR
+     * property so NSG renders the bar normally; DiagScellBarsHook overrides
+     * the displayed value with the per-SCell measurement from the helper.
+     */
+    private void injectScellBar(Object k2aObj, float row, float rowOffset,
+                                float height, float col, int scellIdx) {
+        try {
+            Object barElem = k2aSMethod.invoke(k2aObj, row + rowOffset, height, col, 34.0f);
+            if (barElem == null) return;
+            Object propBinding = unsafeAllocateInstance.invoke(unsafe, sysBClass);
+            sysAFieldA.set(propBinding, DiagScellBarsHook.MARKER_KEY);
+            sysAFieldB.set(propBinding, "%.1f dB");
+            sysAFieldC.set(propBinding, scellIdx);
+            vfF8120g.set(barElem, propBinding);
+            DiagScellBarsHook.registerBar(k2aObj, barElem, scellIdx);
+        } catch (Exception e) {
+            Log.w(TAG, "NrSaCsiSnrRowHook: injectScellBar failed: " + e);
         }
     }
 }

@@ -170,8 +170,10 @@ public class NrSaMimoFormatHook {
                     Object moduleIndexObj = chain.getArg(2);
 
                     if (sampleKeyObj instanceof Number && moduleIndexObj instanceof Number) {
+                        long sk = ((Number) sampleKeyObj).longValue();
+                        DiagBridge.noteSampleKey(sk);
                         formatContext.set(new FormatContext(
-                                ((Number) sampleKeyObj).longValue(),
+                                sk,
                                 ((Number) moduleIndexObj).intValue(),
                                 ds));
                     }
