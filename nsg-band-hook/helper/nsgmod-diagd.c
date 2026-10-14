@@ -33,7 +33,11 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
+
+#include "rrc_csi.h"        /* CSI-RS ports from B821 RRC reconfigurations (GPL-3,
+                             * vendored from qcom-band-menu-diag-dci) */
 
 #define LIBDIAG       "/vendor/lib64/libdiag.so"
 #define SOCKET_NAME   "nsgmod_diagd"
@@ -205,6 +209,72 @@ static void emit(const char *line, int n)
     (void)r;
 }
 
+/* ------------------------------------------------------------------ */
+/* CSI-RS ports (B821 -> rrc_csi.c)                                    */
+/* ------------------------------------------------------------------ */
+
+/* rrc_csi.c keeps the per-cell CSI configuration keyed by (PCI, SSB ARFCN)
+ * and answers point queries; it has no enumeration API, so the identities
+ * to query are remembered here from the other NR logs (B825 serving cells,
+ * B97F live searcher map, B823 PCell). Every known cell is re-queried after
+ * each B821 record and fully re-emitted every 10 s so a reconnecting client
+ * catches up. */
+struct ports_cell {
+    int      pci;
+    uint32_t arfcn;
+    int      pcell;       /* 1 = SpCell (rrc_csi SpCell fallback applies) */
+    int      last_ports;  /* -1 = never emitted */
+    long     last_emit_ms;
+};
+#define PORTS_CELLS_MAX 24
+#define PORTS_REEMIT_MS 10000
+static struct ports_cell ports_cells[PORTS_CELLS_MAX];
+static int n_ports_cells = 0;
+
+static long mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void remember_cell(int pci, uint32_t arfcn, int pcell)
+{
+    if (pci < 0 || pci > 1000) return;
+    for (int i = 0; i < n_ports_cells; i++) {
+        if (ports_cells[i].pci == pci && ports_cells[i].arfcn == arfcn) {
+            if (pcell) ports_cells[i].pcell = 1;
+            return;
+        }
+    }
+    if (n_ports_cells >= PORTS_CELLS_MAX) return;
+    ports_cells[n_ports_cells].pci = pci;
+    ports_cells[n_ports_cells].arfcn = arfcn;
+    ports_cells[n_ports_cells].pcell = pcell;
+    ports_cells[n_ports_cells].last_ports = -1;
+    ports_cells[n_ports_cells].last_emit_ms = 0;
+    n_ports_cells++;
+}
+
+static void emit_ports(int force)
+{
+    long now = mono_ms();
+    for (int i = 0; i < n_ports_cells; i++) {
+        struct ports_cell *c = &ports_cells[i];
+        int p = rrc_csi_ports(c->pci, c->arfcn, c->pcell);
+        if (p <= 0) continue;
+        if (!force && p == c->last_ports) continue;
+        if (!force && now - c->last_emit_ms < 1000) continue;
+        char line[128];
+        int n = snprintf(line, sizeof(line),
+                         "{\"c\":\"ports\",\"ts\":%llu,\"pci\":%d,\"arfcn\":%u,\"ports\":%d}\n",
+                         (unsigned long long)(uint64_t)(now), c->pci, c->arfcn, p);
+        emit(line, n);
+        c->last_ports = p;
+        c->last_emit_ms = now;
+    }
+}
+
 static void decode_b821(const uint8_t *pl, int pn, uint64_t ts);
 
 /* ------------------------------------------------------------------ */
@@ -274,6 +344,7 @@ static void decode_cfg(const uint8_t *pl, int pn, uint64_t ts)
         uint32_t bwc   = at(c, t->bw);
         uint32_t ml    = at(c, t->max_layers);
         uint16_t bw    = (bwc < 17) ? BW_MHZ_V3[bwc] : 0;
+        remember_cell((int)pci, ssb, 0);
         n += snprintf(line + n, sizeof(line) - n,
                       "%s{\"cc\":%u,\"pci\":%u,\"dl\":%u,\"ssb\":%u,\"band\":%u,\"bw\":%u,\"ml\":%u}",
                       i ? "," : "", ccid, pci, dlar, ssb, band, bw, ml);
@@ -300,6 +371,7 @@ static void decode_pcell(const uint8_t *pl, int pn, uint64_t ts)
                      "{\"c\":\"pcell\",\"ts\":%llu,\"pci\":%u,\"dl\":%u}\n",
                      (unsigned long long)ts, at(pl, t->pci), at(pl, t->dl_arfcn));
     emit(line, n);
+    remember_cell((int)at(pl, t->pci), at(pl, t->dl_arfcn), 1);
 }
 
 static void decode_csf(const uint8_t *pl, int pn, uint64_t ts)
@@ -358,6 +430,7 @@ static void decode_live(const uint8_t *pl, int pn, uint64_t ts)
             uint32_t beams = at(C, t->nbeam);
             pos += t->cell_bytes + (int)beams * t->beam_bytes;
             if (cc >= 0 && cc < 8 && spci != 0xFFFF && pci == spci) {
+                remember_cell((int)pci, arfcn, 0);
                 char line[128];
                 int n = snprintf(line, sizeof(line),
                                  "{\"c\":\"live\",\"ts\":%llu,\"cc\":%d,\"pci\":%u,\"arfcn\":%u}\n",
@@ -399,11 +472,14 @@ static void on_event(unsigned char *ptr, int len)
     (void)len;
 }
 
-/* NR5G RRC OTA packet: kept raw for now; a minimal UPER decoder for
- * CSI-RS port counts per serving cell is the next increment. Version word
- * and payload sizes are dumped to -dump <file> for decoder development. */
+/* NR5G RRC OTA packet: the raw first records are still dumped (offline
+ * debugging); the payload is fed to the vendored 38.331 decoder, and the
+ * per-cell CSI-RS port counts it learns are pushed as "ports" records. */
 static void decode_b821(const uint8_t *pl, int pn, uint64_t ts)
 {
+    rrc_csi_b821(pl, pn);
+    emit_ports(0);
+
     if (pn < 4 || !b821_dump_path || b821_dump_count >= B821_DUMP_MAX) return;
 
     FILE *f = fopen(b821_dump_path, b821_dump_count ? "a" : "w");
@@ -554,6 +630,14 @@ int main(int argc, char **argv)
         int pr = poll(&p, 1, 1000);
         if (pr < 0) break;
         if (pr > 0 && (p.revents & (POLLHUP | POLLERR))) break;
+        /* Periodic full re-emit so a reconnecting client catches up and
+         * late-learned cell identities are (re)queried. */
+        static long last_reemit = 0;
+        long now = mono_ms();
+        if (now - last_reemit > PORTS_REEMIT_MS) {
+            last_reemit = now;
+            emit_ports(1);
+        }
     }
 
     close(out_fd);

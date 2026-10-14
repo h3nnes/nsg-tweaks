@@ -36,6 +36,12 @@ public class NrSaRankFormatHook {
      *  ~1 s window used by external diag tools for mean-layer statistics. */
     private static final long WINDOW_MS = 1000;
 
+    /** Extended lookback (ms) used when the primary window holds no samples:
+     *  sparsely scheduled cells (light background traffic) produce layer
+     *  samples seconds apart; without the fallback the display would flip
+     *  back to the enum text most of the time. */
+    private static final long FALLBACK_MS = 5000;
+
     private final XposedInterface xposed;
     private final ClassLoader     loader;
 
@@ -195,22 +201,31 @@ public class NrSaRankFormatHook {
             }
 
             long windowStart = sampleKey - WINDOW_MS;
-            double sum = 0;
-            int n = 0;
+            long fallbackStart = sampleKey - FALLBACK_MS;
+            double sumWin = 0;
+            int nWin = 0;
+            double sumAll = 0;
+            int nAll = 0;
             int guard = 0;
             while (!(boolean) iterEndMethod.invoke(iterator) && guard++ < 4096) {
                 long k = ((Number) iterKeyMethod.invoke(iterator)).longValue();
-                if (k < windowStart) {
+                if (k < fallbackStart) {
                     break;
                 }
                 Number v = extractNumber(iterValueMethod.invoke(iterator), cellIndex);
                 if (v != null && v.doubleValue() > 0) {
-                    sum += v.doubleValue();
-                    n++;
+                    sumAll += v.doubleValue();
+                    nAll++;
+                    if (k >= windowStart) {
+                        sumWin += v.doubleValue();
+                        nWin++;
+                    }
                 }
                 iterPrevMethod.invoke(iterator);
             }
-            return n > 0 ? sum / n : null;
+            if (nWin > 0) return sumWin / nWin;
+            if (nAll > 0) return sumAll / nAll;
+            return null;
         } catch (Exception e) {
             Log.w(TAG, "NrSaRankFormatHook: meanScheduledLayers failed for "
                     + layersKey + " idx=" + cellIndex + ": " + e);
@@ -219,19 +234,21 @@ public class NrSaRankFormatHook {
     }
 
     /** Extracts the numeric layer count for the given cell index from a raw
-     *  property value (scalar, int[], Integer[], or Object[]). */
+     *  property value (scalar, int[], Integer[], or Object[]). A scalar
+     *  binding (index -1) reading an array property takes element 0. */
     private static Number extractNumber(Object value, int cellIndex) {
         if (value instanceof Number) {
             return (Number) value;
         }
-        if (value instanceof int[] && cellIndex >= 0 && cellIndex < ((int[]) value).length) {
-            return ((int[]) value)[cellIndex];
+        int idx = cellIndex >= 0 ? cellIndex : 0;
+        if (value instanceof int[] && idx < ((int[]) value).length) {
+            return ((int[]) value)[idx];
         }
-        if (value instanceof Integer[] && cellIndex >= 0 && cellIndex < ((Integer[]) value).length) {
-            return ((Integer[]) value)[cellIndex];
+        if (value instanceof Integer[] && idx < ((Integer[]) value).length) {
+            return ((Integer[]) value)[idx];
         }
-        if (value instanceof Object[] && cellIndex >= 0 && cellIndex < ((Object[]) value).length) {
-            Object v = ((Object[]) value)[cellIndex];
+        if (value instanceof Object[] && idx < ((Object[]) value).length) {
+            Object v = ((Object[]) value)[idx];
             return v instanceof Number ? (Number) v : null;
         }
         return null;

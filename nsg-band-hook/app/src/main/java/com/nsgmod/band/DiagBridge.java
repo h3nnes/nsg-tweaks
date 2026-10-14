@@ -75,6 +75,8 @@ public final class DiagBridge {
     private static final Map<Integer, CfgCell> cfgByCc = new ConcurrentHashMap<>();
     /** B97F live map: cc → {pci, ssbArfcn}; present even mid-session. */
     private static final Map<Integer, long[]> liveByCc = new ConcurrentHashMap<>();
+    /** B821-derived CSI-RS port counts per cell, key = (pci << 32) | ssbArfcn. */
+    private static final Map<Long, Integer> portsByCell = new ConcurrentHashMap<>();
     private static final ArrayDeque<long[]> pcellRecords = new ArrayDeque<>(); // {atMs, pci, dl}
 
     private static volatile boolean started = false;
@@ -377,6 +379,16 @@ public final class DiagBridge {
                 }
                 break;
             }
+            case "ports": {
+                int pci = o.optInt("pci", -1);
+                long arfcn = o.optLong("arfcn", 0);
+                int ports = o.optInt("ports", -1);
+                if (pci >= 0 && ports > 0) {
+                    if (arfcn < 0) arfcn = 0;
+                    portsByCell.put(((long) pci << 32) | arfcn, ports);
+                }
+                break;
+            }
             case "pcell": {
                 synchronized (LOCK) {
                     pcellRecords.addLast(new long[]{now, o.optInt("pci", -1), o.optInt("dl", -1)});
@@ -463,6 +475,24 @@ public final class DiagBridge {
         if (c == null) return null;
         if (c.maxLayers < 1 || c.maxLayers > 8) return null;
         return c.maxLayers;
+    }
+
+    /**
+     * B821-derived CSI-RS port count (the network Tx antenna configuration)
+     * for the cell identified by PCI and SSB ARFCN. Configuration data, so
+     * no sample-time matching is needed. Falls back to a PCI-only match when
+     * the ARFCN does not resolve (only unambiguous when one cell carries it).
+     */
+    public static Integer csiPorts(int pci, long ssbArfcn) {
+        long key = ((long) pci << 32) | (ssbArfcn > 0 ? ssbArfcn : 0);
+        Integer p = portsByCell.get(key);
+        if (p != null) return p;
+        if (ssbArfcn > 0) {
+            for (Map.Entry<Long, Integer> e : portsByCell.entrySet()) {
+                if ((e.getKey() >>> 32) == pci) return e.getValue();
+            }
+        }
+        return null;
     }
 
     private static int ccForCell(int pci, long ssbArfcn) {

@@ -533,8 +533,8 @@ public class SettingsToggleHook {
         if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_SCELL_MAXLAY) == null) {
             injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
-                    PREF_KEY_SCELL_MAXLAY, "NSGMod: SCell MIMO layers (diag)",
-                    "Show SCell network MIMO layers x Rx via DCI diag subscription (Qualcomm only)",
+                    PREF_KEY_SCELL_MAXLAY, "NSGMod: SCell MIMO Tx (diag)",
+                    "Show SCell gNB CSI ports x Rx via DCI diag subscription (Qualcomm only)",
                     true, prefManager, prefScreen, children);
         }
 

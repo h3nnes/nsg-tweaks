@@ -136,10 +136,15 @@ public class NrSaMimoFormatHook {
 
                     int rx = ((Number) value).intValue();
 
-                    // SCell: network MIMO layers from B825 diag when available,
-                    // otherwise RX count with a dash for the unknown TX side.
+                    // SCell: gNB CSI ports from B821 RRC (most accurate), then
+                    // B825 max layers, else RX count with a dash for the
+                    // unknown TX side.
                     if (key.contains("SCell_Num_Antenna_Rx")) {
-                        Integer layers = readScellMaxLayers(thisObj);
+                        Integer ports = readScellDiagValue(thisObj, true);
+                        if (ports != null) {
+                            return ports + " x " + rx;
+                        }
+                        Integer layers = readScellDiagValue(thisObj, false);
                         if (layers != null) {
                             return layers + " x " + rx;
                         }
@@ -205,11 +210,13 @@ public class NrSaMimoFormatHook {
             "NR5G::Serving_Cell::SCell::NR_SCell_ARFCN_SSB";
 
     /**
-     * B825-configured network MIMO layers for the SCell this formatter
-     * renders (binding index = 0-based SCell index). Gated on the Experiments
-     * toggle and a live diag helper connection (which only runs on Qualcomm).
+     * Network-side MIMO value for the SCell this formatter renders (binding
+     * index = 0-based SCell index): with {@code ports} the B821-derived
+     * CSI-RS port count, otherwise the B825-configured max layers. Gated on
+     * the Experiments toggle and a live diag helper connection (which only
+     * runs on Qualcomm).
      */
-    private Integer readScellMaxLayers(Object formatter) {
+    private Integer readScellDiagValue(Object formatter, boolean ports) {
         if (!SettingsToggleHook.scellMaxLayersEnabled() || !DiagBridge.isAvailable()) {
             return null;
         }
@@ -252,7 +259,8 @@ public class NrSaMimoFormatHook {
             }
             long[] arfcns = readScellLongArray(ds, moduleIndex, SCELL_ARFCN_KEY, sampleKey);
             long arfcn = (arfcns != null && scellIdx < arfcns.length) ? arfcns[scellIdx] : -1;
-            return DiagBridge.maxLayers(pci, arfcn);
+            return ports ? DiagBridge.csiPorts(pci, arfcn)
+                         : DiagBridge.maxLayers(pci, arfcn);
         } catch (Throwable t) {
             return null;
         }
