@@ -213,28 +213,12 @@ public class NrSaRankFormatHook {
                 if (arfcns != null && cellIndex < arfcns.length) arfcn = arfcns[cellIndex];
             }
             if (pci < 0) {
-                dbg("rank diag: no pci (idx=" + cellIndex + ", key=" + rankKey
-                        + ") | " + DiagBridge.layStats());
                 return null;
             }
-            Double mean = DiagBridge.rankMean(pci, arfcn);
-            dbg("rank diag: pci=" + pci + " arfcn=" + arfcn
-                    + " mean=" + (mean == null ? "none" : mean.toString())
-                    + " | " + DiagBridge.layStats());
-            return mean;
+            return DiagBridge.rankMean(pci, arfcn);
         } catch (Throwable t) {
             return null;
         }
-    }
-
-    /** Throttled one-line diagnostics (5 s) to make the rank source visible. */
-    private static volatile long lastDbgMs = 0;
-
-    private static void dbg(String msg) {
-        long now = android.os.SystemClock.uptimeMillis();
-        if (now - lastDbgMs < 5000) return;
-        lastDbgMs = now;
-        Log.i(TAG, "NrSaRankFormatHook: " + msg);
     }
 
     private Object readProperty(Object ds, int moduleIndex, String key, long sampleKey) {
