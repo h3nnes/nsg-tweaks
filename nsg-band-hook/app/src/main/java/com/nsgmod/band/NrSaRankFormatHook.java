@@ -130,7 +130,13 @@ public class NrSaRankFormatHook {
                         return chain.proceed();
                     }
 
-                    Double mean = meanScheduledLayers(thisObj, key);
+                    // Preferred: B887 MAC PDSCH grants via the diag helper
+                    // (per-TB mean scheduled layers, like external diag tools).
+                    Double mean = diagRankMean(thisObj, key);
+                    if (mean == null) {
+                        // Fallback: NSG's own scheduled-layer property walk.
+                        mean = meanScheduledLayers(thisObj, key);
+                    }
                     if (mean == null) {
                         return chain.proceed();
                     }
@@ -141,6 +147,108 @@ public class NrSaRankFormatHook {
         } catch (Exception e) {
             Log.e(TAG, "NrSaRankFormatHook: install d7.i$c failed: " + e);
         }
+    }
+
+    /**
+     * Mean scheduled layers from the diag helper's B887 stream (qbm-style
+     * per-TB mean). Resolves the cell identity the same way the MIMO hook
+     * does: PCell from the Serving_Cell scalars, SCell from the Serving_Cell
+     * SCell arrays at the binding's SCell index. Null when the helper is not
+     * connected or has no fresh report for the cell.
+     */
+    private Double diagRankMean(Object binding, String rankKey) {
+        if (!DiagBridge.isAvailable()) {
+            return null;
+        }
+
+        NrSaMimoFormatHook.FormatContext ctx = NrSaMimoFormatHook.currentFormatContext();
+        long sampleKey;
+        int moduleIndex;
+        Object ds;
+
+        if (ctx != null) {
+            sampleKey = ctx.sampleKey;
+            moduleIndex = ctx.moduleIndex;
+            ds = ctx.dataSource;
+        } else {
+            try {
+                Object ws = wsJ.get(null);
+                if (ws == null) return null;
+                sampleKey = wsG.getLong(ws);
+                moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
+                ds = wsDataSource.get(ws);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        if (ds == null) return null;
+
+        try {
+            int cellIndex = sysAIndexField.getInt(binding);
+
+            int pci = -1;
+            long arfcn = -1;
+            if (cellIndex < 0 || rankKey.contains("PCell_Rank")) {
+                int[] pcis = readIntArray(ds, moduleIndex,
+                        "NR5G::Serving_Cell::NR_PCI", sampleKey);
+                long[] arfcns = readLongArray(ds, moduleIndex,
+                        "NR5G::Serving_Cell::NR_ARFCN_SSB", sampleKey);
+                pci = pcis != null ? pcis[0] : -1;
+                arfcn = arfcns != null ? arfcns[0] : -1;
+            } else {
+                int[] pcis = readIntArray(ds, moduleIndex,
+                        "NR5G::Serving_Cell::SCell::NR_SCell_PCI", sampleKey);
+                long[] arfcns = readLongArray(ds, moduleIndex,
+                        "NR5G::Serving_Cell::SCell::NR_SCell_ARFCN_SSB", sampleKey);
+                if (pcis != null && cellIndex < pcis.length) pci = pcis[cellIndex];
+                if (arfcns != null && cellIndex < arfcns.length) arfcn = arfcns[cellIndex];
+            }
+            if (pci < 0) return null;
+            return DiagBridge.rankMean(pci, arfcn);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private Object readProperty(Object ds, int moduleIndex, String key, long sampleKey) {
+        try {
+            Object property = dsGetProperty.invoke(ds, key, moduleIndex);
+            if (property == null) return null;
+            Object iterator = propBMethod.invoke(property, sampleKey);
+            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
+            return iterValueMethod.invoke(iterator);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private int[] readIntArray(Object ds, int moduleIndex, String key, long sampleKey) {
+        Object v = readProperty(ds, moduleIndex, key, sampleKey);
+        if (v instanceof int[]) return (int[]) v;
+        if (v instanceof Integer[]) {
+            Integer[] a = (Integer[]) v;
+            int[] r = new int[a.length];
+            for (int i = 0; i < a.length; i++) r[i] = a[i] != null ? a[i] : -1;
+            return r;
+        }
+        if (v instanceof Object[]) {
+            Object[] a = (Object[]) v;
+            int[] r = new int[a.length];
+            for (int i = 0; i < a.length; i++) {
+                r[i] = a[i] instanceof Number ? ((Number) a[i]).intValue() : -1;
+            }
+            return r;
+        }
+        if (v instanceof Number) return new int[]{((Number) v).intValue()};
+        return null;
+    }
+
+    private long[] readLongArray(Object ds, int moduleIndex, String key, long sampleKey) {
+        int[] ints = readIntArray(ds, moduleIndex, key, sampleKey);
+        if (ints == null) return null;
+        long[] r = new long[ints.length];
+        for (int i = 0; i < ints.length; i++) r[i] = ints[i];
+        return r;
     }
 
     /**

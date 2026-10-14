@@ -47,7 +47,7 @@
 
 #define STARTUP_GRACE_MS    8000
 
-static const uint16_t CODES[] = { 0xB8DD, 0xB8D8, 0xB825, 0xB823, 0xB8A7, 0xB97F, 0xB821 };
+static const uint16_t CODES[] = { 0xB8DD, 0xB8D8, 0xB825, 0xB823, 0xB8A7, 0xB97F, 0xB887, 0xB821 };
 #define NCODES ((int)(sizeof(CODES) / sizeof(CODES[0])))
 
 /* Raw B821 sample dump for offline UPER decoder development: the first
@@ -442,6 +442,123 @@ static void decode_live(const uint8_t *pl, int pn, uint64_t ts)
 }
 
 /* ------------------------------------------------------------------ */
+/* B887 MAC PDSCH status: scheduled layers (decimal rank)              */
+/* ------------------------------------------------------------------ */
+
+/* Transport-block grants naming their cell by (PCI, NR-ARFCN). The layers
+ * field is raw (scheduled layers - 1); only C-RNTI/CS-RNTI grants (rnti 0/3)
+ * with a valid CRC flag (<= 1; older 3-bit fields encode other states)
+ * count. Accumulated per cell over a 1 s window and emitted as the decimal
+ * mean — the rank indicator display. */
+struct b887_layout {
+    uint32_t ver;
+    struct pos rec_count; uint16_t rec_start;
+    struct pos item_count; uint16_t items_at, item_bits;
+    struct pos pci, arfcn, scell, bw, tb_size, scs_mu, mcs, rbs, rnti, layers, crc, mod, rx;
+};
+static const struct b887_layout B887[] = {
+    { 0x3000d, { 56, 8 }, 64, { 32, 8 }, 64, 288, { 32, 10 }, { 42, 22 }, { 1, 4 }, { 22, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 147, 3 }, { 150, 3 } },
+    { 0x3000e, { 56, 8 }, 64, { 32, 8 }, 64, 288, { 32, 10 }, { 42, 22 }, { 1, 4 }, { 22, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 147, 3 }, { 150, 3 } },
+    { 0x3000a, { 56, 8 }, 64, { 32, 8 }, 64, 224, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 149, 3 } },
+    { 0x30006, { 56, 8 }, 64, { 32, 8 }, 64, 192, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 149, 3 } },
+    { 0x30005, { 56, 8 }, 64, { 32, 8 }, 64, 192, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 149, 3 } },
+    { 0x30004, { 56, 8 }, 64, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 149, 3 } },
+    { 0x30003, { 56, 8 }, 64, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 150, 2 } },
+    { 0x30002, { 56, 8 }, 64, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 150, 2 } },
+    { 0x30000, { 56, 8 }, 64, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 150, 2 } },
+    { 0x20005, { 120, 8 }, 128, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 150, 2 } },
+    { 0x20004, { 120, 8 }, 128, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 150, 2 } },
+    { 0x20003, { 120, 8 }, 128, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 146, 3 }, { 150, 2 } },
+    { 0x20002, { 120, 8 }, 128, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 0, 0 }, { 0, 0 } },
+    { 0x20001, { 120, 8 }, 128, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 22 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 87, 3 }, { 90, 6 }, { 96, 9 }, { 114, 4 }, { 125, 2 }, { 128, 1 }, { 0, 0 }, { 0, 0 } },
+    { 0x20000, { 120, 8 }, 128, { 32, 8 }, 64, 160, { 32, 10 }, { 42, 18 }, { 4, 4 }, { 25, 4 }, { 69, 18 }, { 60, 3 }, { 91, 5 }, { 96, 9 }, { 87, 4 }, { 125, 2 }, { 128, 1 }, { 0, 0 }, { 0, 0 } },
+    { 0x10010, { 120, 8 }, 192, { 32, 8 }, 64, 544, { 54, 10 }, { 0, 0 }, { 2, 4 }, { 120, 4 }, { 35, 19 }, { 0, 0 }, { 87, 5 }, { 212, 12 }, { 24, 4 }, { 113, 3 }, { 116, 3 }, { 33, 2 }, { 0, 0 } },
+    { 0x1000b, { 120, 8 }, 128, { 32, 8 }, 64, 512, { 54, 10 }, { 0, 0 }, { 2, 4 }, { 120, 4 }, { 35, 19 }, { 0, 0 }, { 87, 5 }, { 212, 12 }, { 24, 4 }, { 113, 3 }, { 116, 3 }, { 33, 2 }, { 0, 0 } },
+    { 0x10009, { 120, 8 }, 128, { 32, 8 }, 64, 512, { 54, 10 }, { 0, 0 }, { 2, 4 }, { 120, 4 }, { 35, 19 }, { 0, 0 }, { 87, 5 }, { 212, 12 }, { 24, 4 }, { 113, 3 }, { 116, 3 }, { 33, 2 }, { 0, 0 } },
+};
+
+struct lay_acc {
+    int      pci;
+    uint32_t arfcn;
+    double   sum;
+    int      n;
+    long     win_start_ms;
+};
+#define LAY_CELLS_MAX 8
+static struct lay_acc lay_cells[LAY_CELLS_MAX];
+static int n_lay_cells = 0;
+
+static void lay_note(int pci, uint32_t arfcn, double layers)
+{
+    struct lay_acc *c = NULL;
+    for (int i = 0; i < n_lay_cells; i++)
+        if (lay_cells[i].pci == pci && lay_cells[i].arfcn == arfcn) {
+            c = &lay_cells[i];
+            break;
+        }
+    if (!c && n_lay_cells < LAY_CELLS_MAX) {
+        c = &lay_cells[n_lay_cells++];
+        c->pci = pci;
+        c->arfcn = arfcn;
+        c->sum = 0;
+        c->n = 0;
+        c->win_start_ms = 0;
+    }
+    if (!c) return;
+
+    long now = mono_ms();
+    if (!c->win_start_ms) c->win_start_ms = now;
+    c->sum += layers;
+    c->n++;
+
+    if (now - c->win_start_ms >= 1000 && c->n > 0) {
+        char line[160];
+        int n = snprintf(line, sizeof(line),
+                "{\"c\":\"lay\",\"ts\":%llu,\"pci\":%d,\"arfcn\":%u,\"mean\":%.2f,\"n\":%d}\n",
+                (unsigned long long)now, c->pci, c->arfcn, c->sum / c->n, c->n);
+        if (n > 0) emit(line, n);
+        c->sum = 0;
+        c->n = 0;
+        c->win_start_ms = now;
+    }
+}
+
+static void decode_b887(const uint8_t *pl, int pn)
+{
+    if (pn < 4) return;
+    const struct b887_layout *t = NULL;
+    uint32_t ver = nr_ver(pl);
+    for (size_t i = 0; i < sizeof(B887) / sizeof(B887[0]); i++)
+        if (B887[i].ver == ver) { t = &B887[i]; break; }
+    if (!t || !fits(t->item_count, pn) || !t->item_bits) return;
+
+    int item_bytes = t->item_bits / 8;
+    int pos = t->rec_start / 8;
+    int records = (int)at(pl, t->rec_count);
+    if (records > 8) records = 8;
+
+    for (int r = 0; r < records; r++) {
+        if (pos + t->items_at / 8 > pn) return;
+        const uint8_t *rec = pl + pos;
+        int items = (int)at(rec, t->item_count);
+        if (items <= 0 || items > 16) return;
+        pos += t->items_at / 8;
+
+        for (int k = 0; k < items; k++, pos += item_bytes) {
+            if (pos + 16 > pn) return;
+            const uint8_t *it = pl + pos;
+            uint32_t rnti = at(it, t->rnti);
+            if (rnti != 0 && rnti != 3) continue;      /* C-RNTI / CS-RNTI only */
+            uint32_t crc = at(it, t->crc);
+            if (crc > 1) continue;                     /* ACK-as-NACK etc. */
+            int pci = (int)at(it, t->pci);
+            if (pci < 0 || pci > 503) continue;
+            lay_note(pci, at(it, t->arfcn), (double)at(it, t->layers) + 1.0);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* DCI callbacks                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -461,6 +578,7 @@ static void on_log(unsigned char *ptr, int len)
     case 0xB823: decode_pcell(pl, pn, ts);     break;
     case 0xB8A7: decode_csf(pl, pn, ts);       break;
     case 0xB97F: decode_live(pl, pn, ts);      break;
+    case 0xB887: decode_b887(pl, pn);          break;
     case 0xB821: decode_b821(pl, pn, ts);      break;
     default: break;
     }

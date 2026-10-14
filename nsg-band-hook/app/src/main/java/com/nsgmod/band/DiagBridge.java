@@ -77,6 +77,8 @@ public final class DiagBridge {
     private static final Map<Integer, long[]> liveByCc = new ConcurrentHashMap<>();
     /** B821-derived CSI-RS port counts per cell, key = (pci << 32) | ssbArfcn. */
     private static final Map<Long, Integer> portsByCell = new ConcurrentHashMap<>();
+    /** B887 mean scheduled layers (decimal rank) per cell, {mean, atMs}. */
+    private static final Map<Long, double[]> layByCell = new ConcurrentHashMap<>();
     private static final ArrayDeque<long[]> pcellRecords = new ArrayDeque<>(); // {atMs, pci, dl}
 
     private static volatile boolean started = false;
@@ -389,6 +391,17 @@ public final class DiagBridge {
                 }
                 break;
             }
+            case "lay": {
+                int pci = o.optInt("pci", -1);
+                long arfcn = o.optLong("arfcn", 0);
+                double mean = o.optDouble("mean", -1);
+                if (pci >= 0 && mean >= 1) {
+                    if (arfcn < 0) arfcn = 0;
+                    layByCell.put(((long) pci << 32) | arfcn,
+                            new double[]{mean, now});
+                }
+                break;
+            }
             case "pcell": {
                 synchronized (LOCK) {
                     pcellRecords.addLast(new long[]{now, o.optInt("pci", -1), o.optInt("dl", -1)});
@@ -493,6 +506,23 @@ public final class DiagBridge {
             }
         }
         return null;
+    }
+
+    /**
+     * B887 mean scheduled layers (decimal rank) for the cell, refreshed every
+     * helper window (~1 s); null when no fresh report exists (> 5 s old).
+     */
+    public static Double rankMean(int pci, long ssbArfcn) {
+        long key = ((long) pci << 32) | (ssbArfcn > 0 ? ssbArfcn : 0);
+        double[] v = layByCell.get(key);
+        if (v == null && ssbArfcn > 0) {
+            for (Map.Entry<Long, double[]> e : layByCell.entrySet()) {
+                if ((e.getKey() >>> 32) == pci) { v = e.getValue(); break; }
+            }
+        }
+        if (v == null) return null;
+        if (System.currentTimeMillis() - (long) v[1] > 5000) return null;
+        return v[0];
     }
 
     private static int ccForCell(int pci, long ssbArfcn) {
