@@ -578,7 +578,7 @@ static void decode_b887(const uint8_t *pl, int pn, uint64_t ts)
             uint32_t crc = at(it, t->crc);
             if (crc > 1) continue;                     /* ACK-as-NACK etc. */
             int pci = (int)at(it, t->pci);
-            if (pci < 0 || pci > 503) continue;
+            if (pci < 0 || pci > 1007) continue;       /* NR PCI range 0..1007 */
             lay_note(pci, at(it, t->arfcn), (double)at(it, t->layers) + 1.0);
         }
     }
