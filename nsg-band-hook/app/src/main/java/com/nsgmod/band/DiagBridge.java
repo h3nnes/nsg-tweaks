@@ -89,6 +89,14 @@ public final class DiagBridge {
     /** Monitor the reader thread waits on; toggles notify it for instant wake-up. */
     private static final Object WAKE = new Object();
     private static volatile long lastHelperSpawnMs = 0;
+
+    /**
+     * Debug switch: when true, the helper logs raw B821 and B887 records to
+     * {@code <cacheDir>/b821-sample.log} and {@code b821-sample.log.b887}.
+     * Disabled for normal operation to avoid log spam in the app cache dir;
+     * flip to true when debugging diag decoding again.
+     */
+    private static final boolean DUMP_ENABLED = false;
     /** Module APK path from getModuleApplicationInfo(), for helper extraction. */
     private static volatile String moduleApkPath;
     private static volatile boolean extractedThisSession = false;
@@ -343,7 +351,7 @@ public final class DiagBridge {
             String dump = new File(ctx.getCacheDir(), "b821-sample.log").getAbsolutePath();
             String cmd = "chmod 755 '" + bin.getAbsolutePath() + "'"
                     + " && exec setsid '" + bin.getAbsolutePath() + "' -uid " + uid
-                    + " -dump '" + dump + "'"
+                    + (DUMP_ENABLED ? " -dump '" + dump + "'" : "")
                     + " </dev/null >/dev/null 2>&1 &";
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
             p.waitFor();
