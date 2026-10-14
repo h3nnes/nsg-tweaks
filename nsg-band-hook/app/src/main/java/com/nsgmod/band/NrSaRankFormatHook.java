@@ -204,12 +204,14 @@ public class NrSaRankFormatHook {
                 if (arfcns != null && cellIndex < arfcns.length) arfcn = arfcns[cellIndex];
             }
             if (pci < 0) {
-                dbg("rank diag: no pci (idx=" + cellIndex + ", key=" + rankKey + ")");
+                dbg("rank diag: no pci (idx=" + cellIndex + ", key=" + rankKey
+                        + ") | " + DiagBridge.layStats());
                 return null;
             }
             Double mean = DiagBridge.rankMean(pci, arfcn);
             dbg("rank diag: pci=" + pci + " arfcn=" + arfcn
-                    + " mean=" + (mean == null ? "none" : mean.toString()));
+                    + " mean=" + (mean == null ? "none" : mean.toString())
+                    + " | " + DiagBridge.layStats());
             return mean;
         } catch (Throwable t) {
             return null;

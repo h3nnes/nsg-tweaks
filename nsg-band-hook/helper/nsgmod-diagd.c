@@ -54,6 +54,10 @@ static const uint16_t CODES[] = { 0xB8DD, 0xB8D8, 0xB825, 0xB823, 0xB8A7, 0xB97F
  * records received are written as one hex line each to -dump <file>. */
 #define B821_DUMP_MAX 200
 static const char *b821_dump_path = NULL;
+/* B887 ground-truth records go to <dump>.b887 (separate file so the two
+ * dumpers cannot truncate each other). */
+static char b887_dump_buf[512];
+static const char *b887_dump_path = NULL;
 static int b821_dump_count = 0;
 static int b887_dump_count = 0;
 
@@ -524,6 +528,19 @@ static void lay_note(int pci, uint32_t arfcn, double layers)
     }
 }
 
+static void dump_b887(const uint8_t *pl, int pn, uint64_t ts, int known)
+{
+    if (!b887_dump_path || b887_dump_count >= B821_DUMP_MAX) return;
+    FILE *f = fopen(b887_dump_path, b887_dump_count ? "a" : "w");
+    if (!f) return;
+    fprintf(f, "{\"c\":\"b887%s\",\"ts\":%llu,\"len\":%d,\"ver\":%u,\"hex\":\"",
+            known ? "" : "unk", (unsigned long long)ts, pn, nr_ver(pl));
+    for (int i = 0; i < pn; i++) fprintf(f, "%02x", pl[i]);
+    fprintf(f, "\"}\n");
+    fclose(f);
+    b887_dump_count++;
+}
+
 static void decode_b887(const uint8_t *pl, int pn, uint64_t ts)
 {
     if (pn < 4) return;
@@ -534,21 +551,12 @@ static void decode_b887(const uint8_t *pl, int pn, uint64_t ts)
     const struct b887_layout *t = NULL;
     for (size_t i = 0; i < sizeof(B887) / sizeof(B887[0]); i++)
         if (B887[i].ver == ver) { t = &B887[i]; break; }
-    if (!t || !fits(t->item_count, pn) || !t->item_bits) return;
 
-    /* Ground-truth dump of the raw records, for diagnosing a version
-     * whose layout is not covered yet. */
-    if (b821_dump_path && b887_dump_count < B821_DUMP_MAX) {
-        FILE *f = fopen(b821_dump_path, b887_dump_count ? "a" : "w");
-        if (f) {
-            fprintf(f, "{\"c\":\"b887\",\"ts\":%llu,\"len\":%d,\"ver\":%u,\"hex\":\"",
-                    (unsigned long long)ts, pn, nr_ver(pl));
-            for (int i = 0; i < pn; i++) fprintf(f, "%02x", pl[i]);
-            fprintf(f, "\"}\n");
-            fclose(f);
-            b887_dump_count++;
-        }
-    }
+    /* Ground-truth dump BEFORE any early return, so an uncovered version
+     * still leaves its raw bytes + version in the dump file. */
+    dump_b887(pl, pn, ts, t != NULL);
+
+    if (!t || !fits(t->item_count, pn) || !t->item_bits) return;
 
     int item_bytes = t->item_bits / 8;
     int pos = t->rec_start / 8;
@@ -709,6 +717,11 @@ int main(int argc, char **argv)
     for (int i = 1; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "-uid")) client_uid = atol(argv[i + 1]);
         if (!strcmp(argv[i], "-dump")) b821_dump_path = argv[i + 1];
+    }
+    if (b821_dump_path) {
+        int n = snprintf(b887_dump_buf, sizeof(b887_dump_buf),
+                         "%s.b887", b821_dump_path);
+        if (n > 0 && (size_t)n < sizeof(b887_dump_buf)) b887_dump_path = b887_dump_buf;
     }
 
     signal(SIGTERM, on_term);

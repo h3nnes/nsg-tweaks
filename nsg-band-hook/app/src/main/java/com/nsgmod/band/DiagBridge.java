@@ -79,6 +79,9 @@ public final class DiagBridge {
     private static final Map<Long, Integer> portsByCell = new ConcurrentHashMap<>();
     /** B887 mean scheduled layers (decimal rank) per cell, {mean, atMs}. */
     private static final Map<Long, double[]> layByCell = new ConcurrentHashMap<>();
+    /** Total "lay" records received from the helper (diagnostics). */
+    private static final java.util.concurrent.atomic.AtomicInteger layReceived =
+            new java.util.concurrent.atomic.AtomicInteger();
     private static final ArrayDeque<long[]> pcellRecords = new ArrayDeque<>(); // {atMs, pci, dl}
 
     private static volatile boolean started = false;
@@ -392,6 +395,7 @@ public final class DiagBridge {
                 break;
             }
             case "lay": {
+                layReceived.incrementAndGet();
                 int pci = o.optInt("pci", -1);
                 long arfcn = o.optLong("arfcn", 0);
                 double mean = o.optDouble("mean", -1);
@@ -523,6 +527,23 @@ public final class DiagBridge {
         if (v == null) return null;
         if (System.currentTimeMillis() - (long) v[1] > 5000) return null;
         return v[0];
+    }
+
+    /** One-line state of the lay stream, for throttled hook diagnostics. */
+    public static String layStats() {
+        StringBuilder sb = new StringBuilder("lay recv=").append(layReceived.get());
+        long now = System.currentTimeMillis();
+        int shown = 0;
+        for (Map.Entry<Long, double[]> e : layByCell.entrySet()) {
+            if (shown++ >= 6) { sb.append(" …"); break; }
+            long k = e.getKey();
+            sb.append(" [").append(k >>> 32).append('/').append(k & 0xffffffffL)
+              .append('=')
+              .append(String.format(java.util.Locale.US, "%.2f@%dms",
+                      e.getValue()[0], now - (long) e.getValue()[1]))
+              .append(']');
+        }
+        return sb.toString();
     }
 
     private static int ccForCell(int pci, long ssbArfcn) {
