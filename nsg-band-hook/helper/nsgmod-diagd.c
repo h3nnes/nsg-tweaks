@@ -55,6 +55,7 @@ static const uint16_t CODES[] = { 0xB8DD, 0xB8D8, 0xB825, 0xB823, 0xB8A7, 0xB97F
 #define B821_DUMP_MAX 200
 static const char *b821_dump_path = NULL;
 static int b821_dump_count = 0;
+static int b887_dump_count = 0;
 
 typedef int (*lsm_init_t)(void *);
 typedef int (*reg_client_t)(int *, uint16_t *, int, void *);
@@ -523,14 +524,31 @@ static void lay_note(int pci, uint32_t arfcn, double layers)
     }
 }
 
-static void decode_b887(const uint8_t *pl, int pn)
+static void decode_b887(const uint8_t *pl, int pn, uint64_t ts)
 {
     if (pn < 4) return;
-    const struct b887_layout *t = NULL;
+    /* 3.7 and 3.8 have no table entry of their own; they decode with
+     * 3.6's layout (same convention as the reference implementation). */
     uint32_t ver = nr_ver(pl);
+    if (ver == 0x30007 || ver == 0x30008) ver = 0x30006;
+    const struct b887_layout *t = NULL;
     for (size_t i = 0; i < sizeof(B887) / sizeof(B887[0]); i++)
         if (B887[i].ver == ver) { t = &B887[i]; break; }
     if (!t || !fits(t->item_count, pn) || !t->item_bits) return;
+
+    /* Ground-truth dump of the raw records, for diagnosing a version
+     * whose layout is not covered yet. */
+    if (b821_dump_path && b887_dump_count < B821_DUMP_MAX) {
+        FILE *f = fopen(b821_dump_path, b887_dump_count ? "a" : "w");
+        if (f) {
+            fprintf(f, "{\"c\":\"b887\",\"ts\":%llu,\"len\":%d,\"ver\":%u,\"hex\":\"",
+                    (unsigned long long)ts, pn, nr_ver(pl));
+            for (int i = 0; i < pn; i++) fprintf(f, "%02x", pl[i]);
+            fprintf(f, "\"}\n");
+            fclose(f);
+            b887_dump_count++;
+        }
+    }
 
     int item_bytes = t->item_bits / 8;
     int pos = t->rec_start / 8;
@@ -545,7 +563,7 @@ static void decode_b887(const uint8_t *pl, int pn)
         pos += t->items_at / 8;
 
         for (int k = 0; k < items; k++, pos += item_bytes) {
-            if (pos + 16 > pn) return;
+            if (pos + item_bytes > pn) return;
             const uint8_t *it = pl + pos;
             uint32_t rnti = at(it, t->rnti);
             if (rnti != 0 && rnti != 3) continue;      /* C-RNTI / CS-RNTI only */
@@ -578,7 +596,7 @@ static void on_log(unsigned char *ptr, int len)
     case 0xB823: decode_pcell(pl, pn, ts);     break;
     case 0xB8A7: decode_csf(pl, pn, ts);       break;
     case 0xB97F: decode_live(pl, pn, ts);      break;
-    case 0xB887: decode_b887(pl, pn);          break;
+    case 0xB887: decode_b887(pl, pn, ts);      break;
     case 0xB821: decode_b821(pl, pn, ts);      break;
     default: break;
     }
