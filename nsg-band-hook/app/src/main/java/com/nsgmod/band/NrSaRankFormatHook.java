@@ -186,9 +186,18 @@ public class NrSaRankFormatHook {
         try {
             int cellIndex = sysAIndexField.getInt(binding);
 
+            // SCell rank bindings always carry c==0; the color hook's grid
+            // geometry mapping (col/row sort) provides the true SCell index.
+            Integer geoIdx = NrSaCellColorHook.rankScellIndexForBinding(binding);
+            boolean pcell = cellIndex < 0 || rankKey.contains("PCell_Rank");
+            if (geoIdx != null) {
+                cellIndex = geoIdx;
+                pcell = false;
+            }
+
             int pci = -1;
             long arfcn = -1;
-            if (cellIndex < 0 || rankKey.contains("PCell_Rank")) {
+            if (pcell) {
                 int[] pcis = readIntArray(ds, moduleIndex,
                         "NR5G::Serving_Cell::NR_PCI", sampleKey);
                 long[] arfcns = readLongArray(ds, moduleIndex,

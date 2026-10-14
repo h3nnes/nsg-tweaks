@@ -74,6 +74,17 @@ public class NrSaCellColorHook {
     private Field rankCaseField;      // v00 "e" (int case id) — 27 for Rank, only on v4.8.9
     private static final int RANK_CASE_ID = 27;
 
+    /** Rank binding (d7.i$k) → SCell index, derived from grid geometry
+     *  (col/row sort — rank bindings always carry c==0). Consumed by
+     *  NrSaRankFormatHook to resolve the right cell for decimal rank. */
+    private static final Map<Object, Integer> rankBindingIdx =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** True SCell index for a rank binding, or null when unknown. */
+    static Integer rankScellIndexForBinding(Object binding) {
+        return rankBindingIdx.get(binding);
+    }
+
     private boolean ready = false;
 
     public NrSaCellColorHook(XposedInterface xposed, ClassLoader loader,
@@ -261,7 +272,6 @@ public class NrSaCellColorHook {
     private Map<Object, Integer> buildRankScellMap(ArrayList<?> elements) {
         Map<Object, Integer> result = new HashMap<>();
         if (rankBindingClass == null) return result;
-
         ArrayList<Object> rankElems = new ArrayList<>();
         ArrayList<Float>  rankCols  = new ArrayList<>();
         ArrayList<Float>  rankRows  = new ArrayList<>();
@@ -303,7 +313,15 @@ public class NrSaCellColorHook {
         // Skip indices[0] (PCell); assign global SCell indices 0, 1, 2, … to the rest
         int scellIdx = 0;
         for (int si = 1; si < indices.length; si++) {
-            result.put(rankElems.get(indices[si]), scellIdx++);
+            Object elem = rankElems.get(indices[si]);
+            result.put(elem, scellIdx);
+            try {
+                ArrayList<?> bindings = (ArrayList<?>) vgBindingsField.get(elem);
+                if (bindings != null && !bindings.isEmpty() && bindings.get(0) != null) {
+                    rankBindingIdx.put(bindings.get(0), scellIdx);
+                }
+            } catch (Exception ignored) {}
+            scellIdx++;
         }
         return result;
     }
