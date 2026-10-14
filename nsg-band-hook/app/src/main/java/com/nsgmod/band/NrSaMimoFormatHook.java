@@ -32,6 +32,7 @@ public class NrSaMimoFormatHook {
 
     // Parent class com.qtrun.sys.a fields (inherited by d7.i$c via com.qtrun.sys.b)
     private Field sysAKeyField;   // field "a" (String key)
+    private Field sysAIndexField; // field "c" (array index; SCell index for SCell:: keys)
 
     // Context captured from v6.g.a(sampleKey, DataSource, moduleIndex) while it formats
     // a label. This is the exact sample key / module index the formatter is rendering,
@@ -76,6 +77,8 @@ public class NrSaMimoFormatHook {
         try {
             Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
             sysAKeyField = sysAClass.getField("a");
+            sysAIndexField = sysAClass.getDeclaredField("c");
+            sysAIndexField.setAccessible(true);
 
             Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
             dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
@@ -133,8 +136,13 @@ public class NrSaMimoFormatHook {
 
                     int rx = ((Number) value).intValue();
 
-                    // SCell: show RX count with a dash for the unknown TX side.
+                    // SCell: network MIMO layers from B825 diag when available,
+                    // otherwise RX count with a dash for the unknown TX side.
                     if (key.contains("SCell_Num_Antenna_Rx")) {
+                        Integer layers = readScellMaxLayers(thisObj);
+                        if (layers != null) {
+                            return layers + " x " + rx;
+                        }
                         return "- x " + rx;
                     }
 
@@ -189,6 +197,106 @@ public class NrSaMimoFormatHook {
         } catch (Exception e) {
             Log.e(TAG, "NrSaMimoFormatHook: install v6.g failed: " + e);
         }
+    }
+
+    private static final String SCELL_PCI_KEY   =
+            "NR5G::Serving_Cell::SCell::NR_SCell_PCI";
+    private static final String SCELL_ARFCN_KEY =
+            "NR5G::Serving_Cell::SCell::NR_SCell_ARFCN_SSB";
+
+    /**
+     * B825-configured network MIMO layers for the SCell this formatter
+     * renders (binding index = 0-based SCell index). Gated on the Experiments
+     * toggle and a live diag helper connection (which only runs on Qualcomm).
+     */
+    private Integer readScellMaxLayers(Object formatter) {
+        if (!SettingsToggleHook.scellMaxLayersEnabled() || !DiagBridge.isAvailable()) {
+            return null;
+        }
+
+        FormatContext ctx = formatContext.get();
+        long sampleKey;
+        int moduleIndex;
+        Object ds;
+
+        if (ctx != null) {
+            sampleKey = ctx.sampleKey;
+            moduleIndex = ctx.moduleIndex;
+            ds = ctx.dataSource;
+        } else {
+            try {
+                Object ws = wsJ.get(null);
+                if (ws == null) {
+                    return null;
+                }
+                sampleKey = wsG.getLong(ws);
+                moduleIndex = ((Number) wsModuleIndex.get(ws)).intValue();
+                ds = wsDataSource.get(ws);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        if (ds == null) {
+            return null;
+        }
+
+        try {
+            int scellIdx = sysAIndexField.getInt(formatter);
+            if (scellIdx < 0) {
+                return null;
+            }
+            int[] pcis = readScellIntArray(ds, moduleIndex, SCELL_PCI_KEY, sampleKey);
+            int pci = (pcis != null && scellIdx < pcis.length) ? pcis[scellIdx] : -1;
+            if (pci < 0) {
+                return null;
+            }
+            long[] arfcns = readScellLongArray(ds, moduleIndex, SCELL_ARFCN_KEY, sampleKey);
+            long arfcn = (arfcns != null && scellIdx < arfcns.length) ? arfcns[scellIdx] : -1;
+            return DiagBridge.maxLayers(pci, arfcn);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private Object readScellProperty(Object ds, int moduleIndex, String key, long sampleKey) {
+        try {
+            Object property = dsGetProperty.invoke(ds, key, moduleIndex);
+            if (property == null) return null;
+            Object iterator = propBMethod.invoke(property, sampleKey);
+            if (iterator == null || (boolean) iterEndMethod.invoke(iterator)) return null;
+            return iterValueMethod.invoke(iterator);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private int[] readScellIntArray(Object ds, int moduleIndex, String key, long sampleKey) {
+        Object v = readScellProperty(ds, moduleIndex, key, sampleKey);
+        if (v instanceof int[]) return (int[]) v;
+        if (v instanceof Integer[]) {
+            Integer[] a = (Integer[]) v;
+            int[] r = new int[a.length];
+            for (int i = 0; i < a.length; i++) r[i] = a[i] != null ? a[i] : -1;
+            return r;
+        }
+        if (v instanceof Object[]) {
+            Object[] a = (Object[]) v;
+            int[] r = new int[a.length];
+            for (int i = 0; i < a.length; i++) {
+                r[i] = a[i] instanceof Number ? ((Number) a[i]).intValue() : -1;
+            }
+            return r;
+        }
+        if (v instanceof Number) return new int[]{((Number) v).intValue()};
+        return null;
+    }
+
+    private long[] readScellLongArray(Object ds, int moduleIndex, String key, long sampleKey) {
+        int[] ints = readScellIntArray(ds, moduleIndex, key, sampleKey);
+        if (ints == null) return null;
+        long[] r = new long[ints.length];
+        for (int i = 0; i < ints.length; i++) r[i] = ints[i];
+        return r;
     }
 
     /** Read NR_PCell_Num_CSI_Ports using the exact sample key being formatted by v6.g.a.

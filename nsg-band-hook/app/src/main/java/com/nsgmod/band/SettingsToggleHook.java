@@ -37,6 +37,7 @@ public class SettingsToggleHook {
     static final String  PREF_KEY_GNB_ID_HEADER  = "nsgmod.gnb_id_header_enabled";
     static final String  PREF_KEY_DECIMAL_RANK   = "nsgmod.decimal_rank_enabled";
     static final String  PREF_KEY_SCELL_DIAG     = "nsgmod.scell_diag_enabled";
+    static final String  PREF_KEY_SCELL_MAXLAY   = "nsgmod.scell_max_layers_enabled";
 
     // -----------------------------------------------------------------------
     // Cached toggle reads.
@@ -67,6 +68,7 @@ public class SettingsToggleHook {
     private static volatile boolean sGnbIdHeader    = true;  // default ON  (fail open)
     private static volatile boolean sDecimalRank    = true;  // default ON  (fail open)
     private static volatile boolean sScellDiag      = true;  // default ON  (fail open)
+    private static volatile boolean sScellMaxLayers = true;  // default ON  (fail open)
 
     // NOTE: must be a strong static reference — SharedPreferencesImpl keeps
     // listeners in a WeakHashMap.
@@ -97,6 +99,7 @@ public class SettingsToggleHook {
             case PREF_KEY_GNB_ID_HEADER:   sGnbIdHeader    = p.getBoolean(key, true);  break;
             case PREF_KEY_DECIMAL_RANK:    sDecimalRank    = p.getBoolean(key, true);  break;
             case PREF_KEY_SCELL_DIAG:      sScellDiag      = p.getBoolean(key, true);  break;
+            case PREF_KEY_SCELL_MAXLAY:    sScellMaxLayers = p.getBoolean(key, true);  break;
             default: break;
         }
     }
@@ -114,6 +117,7 @@ public class SettingsToggleHook {
         updateToggle(p, PREF_KEY_GNB_ID_HEADER);
         updateToggle(p, PREF_KEY_DECIMAL_RANK);
         updateToggle(p, PREF_KEY_SCELL_DIAG);
+        updateToggle(p, PREF_KEY_SCELL_MAXLAY);
     }
 
     /** Resolves Application + SharedPreferences once; on failure retries next call. */
@@ -209,6 +213,12 @@ public class SettingsToggleHook {
     public static boolean scellDiagEnabled() {
         ensurePrefs();
         return sScellDiag;
+    }
+
+    /** Returns true when the SCell MIMO max-layers display is enabled (default: true). */
+    public static boolean scellMaxLayersEnabled() {
+        ensurePrefs();
+        return sScellMaxLayers;
     }
 
     private static final String FRAGMENT_CLS = "t7.t";
@@ -517,6 +527,14 @@ public class SettingsToggleHook {
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
                     PREF_KEY_SCELL_DIAG, "NSGMod: SCell CSI SNR (diag)",
                     "Per-SCell CSI SNR via DCI diag subscription (Qualcomm only)",
+                    true, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_SCELL_MAXLAY) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_SCELL_MAXLAY, "NSGMod: SCell MIMO layers (diag)",
+                    "Show SCell network MIMO layers x Rx via DCI diag subscription (Qualcomm only)",
                     true, prefManager, prefScreen, children);
         }
 

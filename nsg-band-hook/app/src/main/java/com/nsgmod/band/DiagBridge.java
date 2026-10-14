@@ -451,6 +451,20 @@ public final class DiagBridge {
         }
     }
 
+    /**
+     * B825-configured network-side max MIMO layers for the cell (the
+     * configuration is quasi-static, so no sample-time matching is needed).
+     * Returns null when the cell is unknown or the layer count is implausible.
+     */
+    public static Integer maxLayers(int pci, long ssbArfcn) {
+        int cc = ccForCell(pci, ssbArfcn);
+        if (cc < 0) return null;
+        CfgCell c = cfgByCc.get(cc);
+        if (c == null) return null;
+        if (c.maxLayers < 1 || c.maxLayers > 8) return null;
+        return c.maxLayers;
+    }
+
     private static int ccForCell(int pci, long ssbArfcn) {
         // 1. Live searcher map (B97F): freshest, works mid-session.
         for (Map.Entry<Integer, long[]> e : liveByCc.entrySet()) {
