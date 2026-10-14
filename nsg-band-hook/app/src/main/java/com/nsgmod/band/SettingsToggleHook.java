@@ -66,9 +66,9 @@ public class SettingsToggleHook {
     private static volatile boolean sPathlossColumn = false; // default OFF (fail closed)
     private static volatile boolean sNrPdschSnr     = false; // default OFF (fail closed)
     private static volatile boolean sGnbIdHeader    = true;  // default ON  (fail open)
-    private static volatile boolean sDecimalRank    = true;  // default ON  (fail open)
-    private static volatile boolean sScellDiag      = true;  // default ON  (fail open)
-    private static volatile boolean sScellMaxLayers = true;  // default ON  (fail open)
+    private static volatile boolean sDecimalRank    = false; // default OFF (fail closed)
+    private static volatile boolean sScellDiag      = false; // default OFF (fail closed)
+    private static volatile boolean sScellMaxLayers = false; // default OFF (fail closed)
 
     // NOTE: must be a strong static reference — SharedPreferencesImpl keeps
     // listeners in a WeakHashMap.
@@ -97,9 +97,9 @@ public class SettingsToggleHook {
             case PREF_KEY_PATHLOSS_COLUMN: sPathlossColumn = p.getBoolean(key, false); break;
             case PREF_KEY_NR_PDSCH_SINR:   sNrPdschSnr     = p.getBoolean(key, false); break;
             case PREF_KEY_GNB_ID_HEADER:   sGnbIdHeader    = p.getBoolean(key, true);  break;
-            case PREF_KEY_DECIMAL_RANK:    sDecimalRank    = p.getBoolean(key, true);  break;
-            case PREF_KEY_SCELL_DIAG:      sScellDiag      = p.getBoolean(key, true);  break;
-            case PREF_KEY_SCELL_MAXLAY:    sScellMaxLayers = p.getBoolean(key, true);  break;
+            case PREF_KEY_DECIMAL_RANK:    sDecimalRank    = p.getBoolean(key, false); break;
+            case PREF_KEY_SCELL_DIAG:      sScellDiag      = p.getBoolean(key, false); break;
+            case PREF_KEY_SCELL_MAXLAY:    sScellMaxLayers = p.getBoolean(key, false); break;
             default: break;
         }
     }
@@ -434,6 +434,10 @@ public class SettingsToggleHook {
         ctorArgs[0] = ctx;
 
         // --- 6. Inject toggles ---
+        // The three DCI-diag toggles default OFF and are greyed out when NSG's
+        // prerequisite detection says the device is not Qualcomm.
+        Object swScellDiag = null, swDecimalRank = null, swScellMax = null;
+
         if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_CELL_MODS) == null) {
             injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
@@ -515,27 +519,33 @@ public class SettingsToggleHook {
         }
 
         if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_DECIMAL_RANK) == null) {
-            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+            swDecimalRank = injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
-                    PREF_KEY_DECIMAL_RANK, "NSGMod: Decimal rank indicator",
-                    "Show NR Rank as decimal mean of scheduled layers (e.g. 2.7) instead of Rank N",
-                    true, prefManager, prefScreen, children);
+                    PREF_KEY_DECIMAL_RANK, "NSGMod: Decimal rank indicator (diag)",
+                    "Show NR Rank as decimal mean of scheduled layers (e.g. 2.7) via DCI diag subscription (Qualcomm only)",
+                    false, prefManager, prefScreen, children);
         }
 
         if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_SCELL_DIAG) == null) {
-            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+            swScellDiag = injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
                     PREF_KEY_SCELL_DIAG, "NSGMod: SCell CSI SNR (diag)",
                     "Per-SCell CSI SNR via DCI diag subscription (Qualcomm only)",
-                    true, prefManager, prefScreen, children);
+                    false, prefManager, prefScreen, children);
         }
 
         if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_SCELL_MAXLAY) == null) {
-            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+            swScellMax = injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
                     iconSpaceField, setDefaultValue, attachMethod, parentField,
                     PREF_KEY_SCELL_MAXLAY, "NSGMod: SCell MIMO Tx (diag)",
                     "Show SCell gNB CSI ports x Rx via DCI diag subscription (Qualcomm only)",
-                    true, prefManager, prefScreen, children);
+                    false, prefManager, prefScreen, children);
+        }
+
+        if (DiagBridge.isNonQualcomm(loader)) {
+            disablePreference(swScellDiag);
+            disablePreference(swDecimalRank);
+            disablePreference(swScellMax);
         }
 
         // --- 7. Trigger adapter refresh ---
@@ -558,6 +568,23 @@ public class SettingsToggleHook {
             }
         } catch (Throwable t) {
             Log.w(TAG, "adapter refresh failed: " + t);
+        }
+    }
+
+    /** Greys out a preference when the device is not a Qualcomm target. */
+    private void disablePreference(Object pref) {
+        if (pref == null) return;
+        try {
+            for (Class<?> c = pref.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+                try {
+                    Method m = c.getDeclaredMethod("setEnabled", boolean.class);
+                    m.setAccessible(true);
+                    m.invoke(pref, false);
+                    return;
+                } catch (NoSuchMethodException ignored) {}
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "disablePreference failed: " + t);
         }
     }
 

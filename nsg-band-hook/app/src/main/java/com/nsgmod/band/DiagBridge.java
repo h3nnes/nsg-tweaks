@@ -190,6 +190,14 @@ public final class DiagBridge {
                     Thread.sleep(3000);
                     continue;
                 }
+                // Respect the Experiments toggles: never spawn the root
+                // helper when every diag feature is disabled.
+                if (!SettingsToggleHook.scellDiagEnabled()
+                        && !SettingsToggleHook.scellMaxLayersEnabled()
+                        && !SettingsToggleHook.decimalRankEnabled()) {
+                    Thread.sleep(5000);
+                    continue;
+                }
                 int state = qualcommState(loader);
                 if (state == QC_NO) {
                     Log.i(TAG, "DiagBridge: non-Qualcomm target, staying inactive");
@@ -249,6 +257,11 @@ public final class DiagBridge {
             Log.w(TAG, "DiagBridge: prerequisite check failed: " + t);
             return QC_UNKNOWN;
         }
+    }
+
+    /** True when NSG's prerequisite detection positively reports a non-Qualcomm device. */
+    public static boolean isNonQualcomm(ClassLoader loader) {
+        return qualcommState(loader) == QC_NO;
     }
 
     private static android.content.Context appContext() {
