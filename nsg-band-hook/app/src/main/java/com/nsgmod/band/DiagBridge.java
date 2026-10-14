@@ -87,6 +87,10 @@ public final class DiagBridge {
     private static volatile boolean started = false;
     private static volatile boolean dciAvailable = false;
     private static volatile Thread readerThread;
+    /** Socket of the live helper connection, for immediate disconnect. */
+    private static volatile LocalSocket activeSocket;
+    /** Monitor the reader thread waits on; toggles notify it for instant wake-up. */
+    private static final Object WAKE = new Object();
     private static volatile long lastHelperSpawnMs = 0;
     /** Module APK path from getModuleApplicationInfo(), for helper extraction. */
     private static volatile String moduleApkPath;
@@ -187,15 +191,16 @@ public final class DiagBridge {
                 android.content.Context ctx = appContext();
                 if (ctx == null) {
                     // Application not fully created yet — retry shortly.
-                    Thread.sleep(3000);
+                    sleepMs(3000);
                     continue;
                 }
                 // Respect the Experiments toggles: never spawn the root
-                // helper when every diag feature is disabled.
+                // helper when every diag feature is disabled. Woken
+                // immediately by onTogglesChanged() when one is enabled.
                 if (!SettingsToggleHook.scellDiagEnabled()
                         && !SettingsToggleHook.scellMaxLayersEnabled()
                         && !SettingsToggleHook.decimalRankEnabled()) {
-                    Thread.sleep(5000);
+                    sleepMs(60000);
                     continue;
                 }
                 int state = qualcommState(loader);
@@ -205,7 +210,7 @@ public final class DiagBridge {
                 }
                 if (state == QC_UNKNOWN) {
                     // NSG has not finished its prerequisite detection yet.
-                    Thread.sleep(5000);
+                    sleepMs(5000);
                     continue;
                 }
                 ensureHelper(ctx);
@@ -219,12 +224,38 @@ public final class DiagBridge {
             }
             dciAvailable = false;
             long backoff = Math.min(3000L * (1L << Math.min(failures, 4)), 30000L);
+            sleepMs(backoff);
+        }
+    }
+
+    /** Interruptible wait on the WAKE monitor — onTogglesChanged() ends it early. */
+    private static void sleepMs(long ms) {
+        synchronized (WAKE) {
             try {
-                Thread.sleep(backoff);
+                WAKE.wait(ms);
             } catch (InterruptedException e) {
-                return;
+                Thread.currentThread().interrupt();
             }
         }
+    }
+
+    /**
+     * Called by SettingsToggleHook whenever a diag toggle changes.
+     * Re-enabling wakes the bridge thread immediately; disabling all three
+     * closes the live connection, which makes the helper unsubscribe and
+     * exit by itself.
+     */
+    public static void onTogglesChanged() {
+        if (!SettingsToggleHook.scellDiagEnabled()
+                && !SettingsToggleHook.scellMaxLayersEnabled()
+                && !SettingsToggleHook.decimalRankEnabled()) {
+            LocalSocket s = activeSocket;
+            if (s != null) {
+                Log.i(TAG, "DiagBridge: all diag toggles off — disconnecting helper");
+                try { s.close(); } catch (Throwable ignored) {}
+            }
+        }
+        synchronized (WAKE) { WAKE.notifyAll(); }
     }
 
     /**
@@ -340,6 +371,7 @@ public final class DiagBridge {
     private static void connectAndRead() throws Exception {
         LocalSocket socket = new LocalSocket();
         socket.connect(new LocalSocketAddress(SOCKET_NAME, LocalSocketAddress.Namespace.ABSTRACT));
+        activeSocket = socket;
         dciAvailable = true;
         Log.i(TAG, "DiagBridge: connected to helper");
 
@@ -354,6 +386,7 @@ public final class DiagBridge {
                 }
             }
         } finally {
+            activeSocket = null;
             try { socket.close(); } catch (Throwable ignored) {}
         }
         Log.i(TAG, "DiagBridge: helper disconnected");

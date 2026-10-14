@@ -82,6 +82,13 @@ public class SettingsToggleHook {
                     } catch (Throwable t) {
                         Log.w(TAG, "toggle listener failed for key " + key + ": " + t);
                     }
+                    // Diag toggles drive the helper lifecycle — wake the bridge
+                    // immediately (spawn on enable, disconnect when all are off).
+                    if (key.equals(PREF_KEY_SCELL_DIAG)
+                            || key.equals(PREF_KEY_SCELL_MAXLAY)
+                            || key.equals(PREF_KEY_DECIMAL_RANK)) {
+                        DiagBridge.onTogglesChanged();
+                    }
                 }
             };
 

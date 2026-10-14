@@ -10,8 +10,8 @@ android {
         applicationId = 'com.nsgmod.band'
         minSdk = 23
         targetSdk = 37
-        versionCode = 86
-        versionName = "10.33"
+        versionCode = 87
+        versionName = "10.34"
     }
 
     buildTypes {
