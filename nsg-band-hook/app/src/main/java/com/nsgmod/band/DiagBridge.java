@@ -280,16 +280,15 @@ public final class DiagBridge {
             try (ZipFile apk = new ZipFile(apkPath)) {
                 ZipEntry entry = apk.getEntry("assets/helper/" + abi + "/nsgmod-diagd");
                 if (entry == null) throw new IllegalStateException("helper binary missing from module APK");
-                // Re-extract unless the cached binary exactly matches the APK
-                // entry, so helper updates actually take effect (a stale
-                // binary from an earlier module version would keep running).
-                if (!bin.exists() || bin.length() != entry.getSize()) {
-                    try (InputStream in = apk.getInputStream(entry);
-                         FileOutputStream out = new FileOutputStream(bin)) {
-                        byte[] buf = new byte[8192];
-                        int n;
-                        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-                    }
+                // Always overwrite on the first call of a session: a
+                // same-size helper update would otherwise never replace the
+                // cached binary (the module process restarts exactly when a
+                // module update takes effect).
+                try (InputStream in = apk.getInputStream(entry);
+                     FileOutputStream out = new FileOutputStream(bin)) {
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
                 }
             }
             extractedThisSession = true;
