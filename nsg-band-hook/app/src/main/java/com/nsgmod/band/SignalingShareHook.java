@@ -243,15 +243,18 @@ public class SignalingShareHook {
                             contentView.setTag(R.id.msg_title_ref_tag, existingRef);
                         }
                         final String[] msgTitleRef = existingRef;
-                        // Always update with this open's title
-                        {
+                        // Always update with this open's title.
+                        // A synthetic click from SignalingNavHook (arrow buttons) passes a
+                        // null row view: keep the previous title instead of resetting it to
+                        // "signaling", and skip the expensive selection re-apply below.
+                        View clickedRow = (View) chain.getArg(1);
+                        if (clickedRow != null) {
                             String t = "";
                             try {
-                                View rowView = (View) chain.getArg(1);
-                                int titleId = rowView.getContext().getResources()
+                                int titleId = clickedRow.getContext().getResources()
                                         .getIdentifier("msg_title", "id", "com.qtrun.QuickTest");
                                 if (titleId != 0) {
-                                    View tv = rowView.findViewById(titleId);
+                                    View tv = clickedRow.findViewById(titleId);
                                     if (tv instanceof TextView) {
                                         t = ((TextView) tv).getText().toString().trim();
                                     }
@@ -267,10 +270,13 @@ public class SignalingShareHook {
                         // then overwrites the movement method with ScrollingMovementMethod.
                         // We poll until the text appears, then convert to EDITABLE buffer
                         // type and force mSelectionControllerEnabled via reflection.
+                        // Skipped for synthetic arrow-button clicks: the buffer is already
+                        // EDITABLE from the first open and re-running this per page turn is
+                        // needlessly expensive on long messages.
                         try {
                             final TextView detailTv =
                                     (TextView) contentView.findViewById(idDetailText);
-                            if (detailTv != null) {
+                            if (detailTv != null && clickedRow != null) {
                                 detailTv.setTextIsSelectable(true);
                                 detailTv.setEllipsize(null);
                                 final android.os.Handler pollHandler =

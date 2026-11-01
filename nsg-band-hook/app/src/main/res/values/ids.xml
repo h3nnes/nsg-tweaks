@@ -4,4 +4,7 @@
     <item name="nsg_header_pathloss_injected" type="id"/>
     <item name="nsg_header_pathloss_label" type="id"/>
     <item name="nsg_header_pathloss_value" type="id"/>
+    <item name="nsg_nav_added_tag" type="id"/>
+    <item name="nsg_nav_state_tag" type="id"/>
+    <item name="nsg_nav_bottom_padding_tag" type="id"/>
 </resources>

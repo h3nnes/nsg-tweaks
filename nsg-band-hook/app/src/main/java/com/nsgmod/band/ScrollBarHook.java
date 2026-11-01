@@ -263,6 +263,16 @@ public class ScrollBarHook {
                                         int frameH = frame.getHeight();
                                         if (frameH <= 0) return; // not laid out yet
 
+                                        // Reserve room for the arrow buttons injected at the
+                                        // bottom-right by SignalingNavHook so the SeekBar track
+                                        // (and its touch area) does not overlap them.
+                                        Object navPadTag = frame.getTag(
+                                                R.id.nsg_nav_bottom_padding_tag);
+                                        if (navPadTag instanceof Integer) {
+                                            int navPad = (Integer) navPadTag;
+                                            if (navPad > 0) topOffset += navPad;
+                                        }
+
                                         int trackH = frameH - topOffset;
                                         if (trackH <= 0) return;
 

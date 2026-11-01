@@ -162,6 +162,20 @@ public class SignalingSearchHook {
         boolean capped = false;
         /** Previous currentIndex, used by reapplySpans to only swap two spans. */
         int previousIndex = -1;
+        /** UI handles, so a message change can clear the result label from outside. */
+        TextView countView;
+        Button nextButton;
+
+        /** Drops all results and restores the initial search UI state. */
+        void reset() {
+            matches.clear();
+            currentIndex = 0;
+            capped = false;
+            lastFullText = "";
+            previousIndex = -1;
+            if (countView != null) countView.setText("");
+            if (nextButton != null) nextButton.setText("S");
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -197,6 +211,19 @@ public class SignalingSearchHook {
 
                         ensureResIds(frame.getContext());
 
+                        // A synthetic click from SignalingNavHook (arrow buttons) passes
+                        // a null row view: a different message is being loaded, so any
+                        // search session for the old text must be dropped (stale match
+                        // offsets would otherwise be applied to the new text), while the
+                        // expensive UI rebuild below is skipped.
+                        if (chain.getArg(1) == null) {
+                            Object tag = frame.getTag("nsg_search_state".hashCode());
+                            if (tag instanceof SearchState) {
+                                ((SearchState) tag).reset();
+                            }
+                            return result;
+                        }
+
                         // Find the ScrollView
                         final ScrollView scrollView = findScrollView(frame);
                         if (scrollView == null) {
@@ -216,11 +243,7 @@ public class SignalingSearchHook {
                         // Always reset state on every open — NSG reuses the same view hierarchy
                         // and asynchronously replaces the TextView text after onItemClick returns,
                         // so any cached text from the previous open is now stale.
-                        state.matches.clear();
-                        state.currentIndex = 0;
-                        state.capped = false;
-                        state.lastFullText = "";   // CRITICAL: force re-read of text at next search
-                        state.previousIndex = -1;
+                        state.reset();
 
                         // Guard: only build and add the search bar UI once (views are reused)
                         if (SEARCH_BAR_TAG.equals(frame.getTag(SEARCH_BAR_TAG.hashCode()))) {
@@ -351,6 +374,11 @@ public class SignalingSearchHook {
                         searchBar.addView(prevBtn);
                         searchBar.addView(nextBtn);
 
+                        // Publish the label/button handles so a message change driven by
+                        // SignalingNavHook can reset the search UI from outside.
+                        state.countView = countTv;
+                        state.nextButton = nextBtn;
+
                         frame.addView(searchBar);
 
                         // ---------------------------------------------------------------
@@ -394,6 +422,16 @@ public class SignalingSearchHook {
                                 for (int idx : indices) {
                                     if (idx < 0 || idx >= state.matches.size()) continue;
                                     int[] m = state.matches.get(idx);
+                                    // Bounds guard: a message change (arrow navigation) can
+                                    // leave match offsets that no longer fit the new text.
+                                    if (m[0] < 0 || m[1] > sp.length() || m[0] >= m[1]) {
+                                        state.matches.clear();
+                                        state.currentIndex = 0;
+                                        state.previousIndex = -1;
+                                        countTv.setText("");
+                                        nextBtn.setText("S");
+                                        return;
+                                    }
                                     int bgColor = (idx == state.currentIndex) ? 0xFFFF8C00 : 0xFFFFFF00;
                                     BackgroundColorSpan[] existing = sp.getSpans(m[0], m[1], BackgroundColorSpan.class);
                                     for (BackgroundColorSpan s : existing) sp.removeSpan(s);
@@ -573,14 +611,18 @@ public class SignalingSearchHook {
                                 new ViewTreeObserver.OnGlobalLayoutListener() {
                                     @Override
                                     public void onGlobalLayout() {
+                                        int barH = searchBar.getHeight();
+                                        if (barH <= 0) return; // wait for a real measurement
+
                                         searchBar.getViewTreeObserver()
                                                 .removeOnGlobalLayoutListener(this);
-                                        int barH = searchBar.getHeight();
-                                        if (barH <= 0) return;
 
                                         frame.setTag("nsg_search_bar_height".hashCode(), barH);
 
-                                        // Push ScrollView content below the search bar
+                                        // Push ScrollView content below the search bar.
+                                        // The decoded text keeps the full remaining height:
+                                        // SignalingNavHook's buttons float over the content
+                                        // and must not reserve a bottom strip.
                                         scrollView.setPadding(
                                                 scrollView.getPaddingLeft(),
                                                 barH,
