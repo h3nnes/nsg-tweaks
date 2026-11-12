@@ -57,6 +57,7 @@ public final class ClassMapping {
         map.put("a8.i$a", "j6.i$a");
         map.put("a8.d", "j6.d");
         map.put("a8.d$b", "j6.d$b");
+        map.put("a8.d$a", "j6.d$a");
         map.put("a8.b", "j6.b");
         map.put("a8.b$a", "j6.b$a");
         map.put("a8.b$b", "j6.b$b");
@@ -179,6 +180,8 @@ public final class ClassMapping {
         methodMap.put("com.qtrun.legend.Presentation.PresentationManager|a", "d");
         methodMap.put("ts|g", "a");
         methodMap.put("ts|m", "f");
+        // a8.d$a formatted-column accessor: qtrun d(int,int) -> gplay e(int,int)
+        methodMap.put("a8.d$a|d", "e");
         GPLAY_METHOD_OVERRIDES = Collections.unmodifiableMap(methodMap);
 
         Map<String, String> fieldMap = new HashMap<>();

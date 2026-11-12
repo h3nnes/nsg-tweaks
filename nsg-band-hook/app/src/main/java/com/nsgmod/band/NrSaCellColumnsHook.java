@@ -46,6 +46,14 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * NOTE: Do NOT use NR5G::Serving_Cell::NR_ARFCN_SSB / NR_SCell_ARFCN_SSB for ARFCN.
  * Those are the metrics-page (g8.m / NRNSANRCC) keys which only cover SCells visible
  * on the NR-SA metrics tab. Aggregated SCells not on that page will show "-".
+ *
+ * Additionally (own toggle, default OFF) the same getView hook colours the PCI of
+ * detected/neighbour rows turquoise when that row's PCI and ARFCN both match the
+ * serving primary cell. In multi-beam deployments one sector cell appears as
+ * several neighbour rows sharing PCI+ARFCN, so this makes same-site beams easy to
+ * tell apart from other sectors. The colour equals SCELL_COLORS[1] (SCell 2) on the
+ * NR-SA CA Matrix DL page. Works in any RRC state. Controlled by the
+ * "NSGMod: Highlight same-site NR neighbours" toggle.
  */
 public class NrSaCellColumnsHook {
 
@@ -69,6 +77,7 @@ public class NrSaCellColumnsHook {
     // Adapter reflection — a8.d$b
     private Field  sourcesField; // actual bytecode name "d"  (JADX: f135d) — a8.d.a[]
     private Method gMethod;      // g(int) → Pair<a8.d.a, Integer>
+    private Method bucketTextMethod; // a8.d$a.d(int,int) → formatted cell text (null = unavailable)
 
     private boolean ready = false;
     private static volatile boolean nrCellDbLoaded = false;
@@ -117,6 +126,23 @@ public class NrSaCellColumnsHook {
             gMethod      = ClassMapping.getMethod(dbClass, "a8.d$b", "g", loader, int.class);
             // NOTE: a8.d.a extends k8.b (not k8.c), so there is no f5509c field.
             // Sample key is captured via hookDataCallback() instead.
+
+            // Optional: formatted-column accessor on the bucket class, used only by
+            // the same-site PCI highlight. Resolved separately so a flavor mismatch
+            // cannot disable the column-injection features.
+            try {
+                Class<?> bucketClass = ClassMapping.loadClass("a8.d$a", loader);
+                if (bucketClass != null) {
+                    bucketTextMethod = ClassMapping.getMethod(bucketClass, "a8.d$a", "d",
+                            loader, int.class, int.class);
+                } else {
+                    Log.w(TAG, "NrSaCellColumnsHook: a8.d$a has no mapping on this flavor, "
+                            + "same-site PCI highlight disabled");
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "NrSaCellColumnsHook: bucket accessor unavailable, "
+                        + "same-site PCI highlight disabled: " + t);
+            }
 
             ready = true;
         } catch (Exception e) {
@@ -326,6 +352,99 @@ public class NrSaCellColumnsHook {
     }
 
     // -----------------------------------------------------------------------
+    // Same-site neighbour PCI highlight (NR-SA cell table)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Turquoise — identical to the colour NrSaCellColorHook assigns to the
+     * second SCell on the SA CA Matrix DL page (SCELL_COLORS[1]).
+     */
+    private static final int SAME_SITE_PCI_COLOR = 0xFF00BCD4;
+
+    /** Column indices inside an hb0 bucket (a8.d$a), see hb0's registration order. */
+    private static final int COL_SERVING_TYPE = 0;
+    private static final int COL_ARFCN        = 1;
+    private static final int COL_PCI          = 2;
+
+    /** Cached tvRowPCI_NR resource id per Resources instance. */
+    private static final java.util.Map<android.content.res.Resources, Integer> PCI_ID_CACHE =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    private static int pciViewId(android.content.res.Resources res) {
+        Integer cached = PCI_ID_CACHE.get(res);
+        if (cached != null) return cached;
+        int id = res.getIdentifier("tvRowPCI_NR", "id", "com.qtrun.QuickTest");
+        PCI_ID_CACHE.put(res, id);
+        return id;
+    }
+
+    /**
+     * True when the detected (neighbour) row at {@code intraRow} belongs to the
+     * serving primary cell's site, i.e. its PCI and ARFCN both match entry 0 of
+     * the serving bucket. With multiple SSB beams a single sector shows up as
+     * several neighbour rows with the same PCI/ARFCN; highlighting them makes the
+     * same-site beams distinguishable from other sectors. Applies in every RRC
+     * state, including idle/inactive, as long as the table shows a primary cell.
+     *
+     * Both the reference and the row value are read from the adapter's own
+     * buckets — the exact data snapshot NSG has just rendered — so the comparison
+     * can never straddle two sample keys.
+     */
+    private boolean isSameSiteNeighbour(Object servingBucket, Object rowBucket,
+                                        int intraRow) {
+        if (bucketTextMethod == null) return false;
+        if (servingBucket == null || rowBucket == null || servingBucket == rowBucket) {
+            return false; // unknown bucket or serving row — keep NSG's own colour
+        }
+        // Entry 0 of the serving bucket is the PCell (ServingType 0 → "P").
+        if (!"P".equals(bucketText(servingBucket, COL_SERVING_TYPE, 0))) return false;
+
+        String servingPci   = bucketText(servingBucket, COL_PCI, 0);
+        String servingArfcn = bucketText(servingBucket, COL_ARFCN, 0);
+        if (!isUsable(servingPci) || !isUsable(servingArfcn)) return false;
+
+        String rowPci   = bucketText(rowBucket, COL_PCI, intraRow);
+        String rowArfcn = bucketText(rowBucket, COL_ARFCN, intraRow);
+        return servingPci.equals(rowPci) && servingArfcn.equals(rowArfcn);
+    }
+
+    /**
+     * Applies the highlight (when requested) and returns {@code result}
+     * unchanged. Called at every exit of the getView post-processing so the
+     * injected ARFCN/BW columns have already copied NSG's base PCI colour.
+     */
+    private static Object finishRow(boolean highlightPci, LinearLayout topRow, Object result) {
+        if (!highlightPci) return result;
+        try {
+            int id = pciViewId(topRow.getResources());
+            if (id == 0) return result;
+            View pciView = topRow.findViewById(id);
+            if (pciView instanceof TextView) {
+                ((TextView) pciView).setTextColor(SAME_SITE_PCI_COLOR);
+            }
+        } catch (Throwable ignored) {
+        }
+        return result;
+    }
+
+    /** Reads one formatted cell from a bucket; null on any failure. */
+    private String bucketText(Object bucket, int column, int row) {
+        if (bucketTextMethod == null || bucket == null) return null;
+        try {
+            Object value = bucketTextMethod.invoke(bucket, column, row);
+            return value instanceof String ? (String) value : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static boolean isUsable(String value) {
+        if (value == null) return false;
+        String v = value.trim();
+        return !v.isEmpty() && !"-".equals(v);
+    }
+
+    // -----------------------------------------------------------------------
     // Hook 1: a8.i$a.getView — inject ARFCN + BW columns, conditionally hide sub-row
     // -----------------------------------------------------------------------
 
@@ -343,7 +462,9 @@ public class NrSaCellColumnsHook {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result   = chain.proceed();
-                    if (!SettingsToggleHook.cellModsEnabled()) return result;
+                    boolean cellMods    = SettingsToggleHook.cellModsEnabled();
+                    boolean sameSitePci = SettingsToggleHook.sameSitePciEnabled();
+                    if (!cellMods && !sameSitePci) return result;
                     int    position = (int) chain.getArg(0);
                     View   rowView  = (View) result;
                     if (rowView == null) return result;
@@ -359,6 +480,50 @@ public class NrSaCellColumnsHook {
                     if (!(topChild instanceof LinearLayout)) return result;
                     LinearLayout topRow = (LinearLayout) topChild;
                     if (topRow.getOrientation() != LinearLayout.HORIZONTAL) return result;
+
+                    // queryTime: use lastNrSaSampleKey captured from the a8.d.b() data
+                    // callback (set before notifyDataSetChanged → getView).  Falls back
+                    // to Long.MAX_VALUE on first render before any callback fires
+                    // (live mode: MAX_VALUE = latest data = correct).
+                    long    queryTime = lastNrSaSampleKey > 0 ? lastNrSaSampleKey : Long.MAX_VALUE;
+
+                    // Resolve serving/intraRow once — shared by the optional same-site
+                    // PCI highlight and the ARFCN/BW column injection below.
+                    boolean isServing = false;
+                    int     intraRow  = 0;
+                    Object  rowBucket     = null;
+                    Object  servingBucket = null;
+                    try {
+                        Object   adapter = chain.getThisObject();
+                        Object[] sources = (Object[]) sourcesField.get(adapter);
+                        android.util.Pair<?, ?> pair =
+                                (android.util.Pair<?, ?>) gMethod.invoke(adapter, position);
+                        if (pair != null && pair.second != null) {
+                            intraRow = (int) pair.second;
+                            if (pair.first != null && sources != null && sources.length > 0) {
+                                isServing     = (pair.first == sources[0]);
+                                rowBucket     = pair.first;
+                                servingBucket = sources[0];
+                            }
+                        }
+                    } catch (Exception e) {
+                        Log.w(TAG, "NrSaCellColumnsHook: g(position) failed: " + e);
+                    }
+
+                    // Decide whether this row belongs to the connected PCell's site.
+                    // Applied at the end of the intercept so the injected ARFCN/BW
+                    // columns (which copy the PCI colour list) keep NSG's base colour.
+                    boolean highlightPci = false;
+                    if (sameSitePci) {
+                        try {
+                            highlightPci = isSameSiteNeighbour(servingBucket, rowBucket,
+                                    intraRow);
+                        } catch (Throwable t) {
+                            Log.w(TAG, "NrSaCellColumnsHook: same-site PCI check failed: " + t);
+                        }
+                    }
+
+                    if (!cellMods) return finishRow(highlightPci, topRow, result);
 
                     // Match NR-NSA row height: container 22dp, children 21dp
                     android.content.Context ctx = rowView.getContext();
@@ -404,28 +569,6 @@ public class NrSaCellColumnsHook {
                         subRow.setVisibility(View.GONE);
                     }
 
-                    // Resolve serving/intraRow
-                    boolean isServing = false;
-                    int     intraRow  = 0;
-                    // queryTime: use lastNrSaSampleKey captured from the a8.d.b() data
-                    // callback (set before notifyDataSetChanged → getView).  Falls back
-                    // to Long.MAX_VALUE on first render before any callback fires
-                    // (live mode: MAX_VALUE = latest data = correct).
-                    long    queryTime = lastNrSaSampleKey > 0 ? lastNrSaSampleKey : Long.MAX_VALUE;
-                    try {
-                        Object   adapter = chain.getThisObject();
-                        Object[] sources = (Object[]) sourcesField.get(adapter);
-                        android.util.Pair<?, ?> pair =
-                                (android.util.Pair<?, ?>) gMethod.invoke(adapter, position);
-                        if (pair != null && pair.second != null) {
-                            intraRow  = (int) pair.second;
-                            isServing = (pair.first != null && sources != null
-                                    && sources.length > 0 && pair.first == sources[0]);
-                        }
-                    } catch (Exception e) {
-                        Log.w(TAG, "NrSaCellColumnsHook: g(position) failed: " + e);
-                    }
-
                     // Read values using adapter-aligned sample key (not Workspace.g).
                     String arfcnText = "-";
                     String arfcn = readArfcn(isServing, intraRow, queryTime);
@@ -451,11 +594,13 @@ public class NrSaCellColumnsHook {
                             tvBw.setText(bwText);
                             tvBw.setTextColor(colors);
                         }
-                        return result;
+                        return finishRow(highlightPci, topRow, result);
                     }
 
                     // First time — must have exactly 6 children
-                    if (topRow.getChildCount() != 6) return result;
+                    if (topRow.getChildCount() != 6) {
+                        return finishRow(highlightPci, topRow, result);
+                    }
 
                     // Copy style from PCI column (child[1]) for new text views
                     TextView pciView = (TextView) topRow.getChildAt(1);
@@ -512,7 +657,7 @@ public class NrSaCellColumnsHook {
                     }
 
                     topRow.setTag(TAG_COLS_INJECTED);
-                    return result;
+                    return finishRow(highlightPci, topRow, result);
                 }
             });
         } catch (Exception e) {

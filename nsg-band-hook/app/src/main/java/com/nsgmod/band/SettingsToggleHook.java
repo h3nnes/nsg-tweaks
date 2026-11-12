@@ -35,6 +35,7 @@ public class SettingsToggleHook {
     static final String  PREF_KEY_PATHLOSS_COLUMN = "nsgmod.pathloss_column_enabled";
     static final String  PREF_KEY_NR_PDSCH_SINR  = "nsgmod.nr_pdsch_snr_enabled";
     static final String  PREF_KEY_GNB_ID_HEADER  = "nsgmod.gnb_id_header_enabled";
+    static final String  PREF_KEY_SAME_SITE_PCI  = "nsgmod.same_site_pci_enabled";
 
     // -----------------------------------------------------------------------
     // Cached toggle reads.
@@ -63,6 +64,7 @@ public class SettingsToggleHook {
     private static volatile boolean sPathlossColumn = false; // default OFF (fail closed)
     private static volatile boolean sNrPdschSnr     = false; // default OFF (fail closed)
     private static volatile boolean sGnbIdHeader    = true;  // default ON  (fail open)
+    private static volatile boolean sSameSitePci    = false; // default OFF (fail closed)
 
     // NOTE: must be a strong static reference — SharedPreferencesImpl keeps
     // listeners in a WeakHashMap.
@@ -91,6 +93,7 @@ public class SettingsToggleHook {
             case PREF_KEY_PATHLOSS_COLUMN: sPathlossColumn = p.getBoolean(key, false); break;
             case PREF_KEY_NR_PDSCH_SINR:   sNrPdschSnr     = p.getBoolean(key, false); break;
             case PREF_KEY_GNB_ID_HEADER:   sGnbIdHeader    = p.getBoolean(key, true);  break;
+            case PREF_KEY_SAME_SITE_PCI:   sSameSitePci    = p.getBoolean(key, false); break;
             default: break;
         }
     }
@@ -106,6 +109,7 @@ public class SettingsToggleHook {
         updateToggle(p, PREF_KEY_PATHLOSS_COLUMN);
         updateToggle(p, PREF_KEY_NR_PDSCH_SINR);
         updateToggle(p, PREF_KEY_GNB_ID_HEADER);
+        updateToggle(p, PREF_KEY_SAME_SITE_PCI);
     }
 
     /** Resolves Application + SharedPreferences once; on failure retries next call. */
@@ -189,6 +193,15 @@ public class SettingsToggleHook {
     public static boolean gnbIdHeaderEnabled() {
         ensurePrefs();
         return sGnbIdHeader;
+    }
+
+    /**
+     * Returns true when same-site neighbour PCI highlighting is enabled
+     * (NR-SA cell table; default: false).
+     */
+    public static boolean sameSitePciEnabled() {
+        ensurePrefs();
+        return sSameSitePci;
     }
 
     private static final String FRAGMENT_CLS = "t7.t";
@@ -482,6 +495,14 @@ public class SettingsToggleHook {
                     PREF_KEY_GNB_ID_HEADER, "NSGMod: NR-NSA gNB-ID in header",
                     "Show gNB-ID / sector next to ECellID in NR-NSA mode (requires cell DB)",
                     true, prefManager, prefScreen, children);
+        }
+
+        if (findPref == null || findPref.invoke(prefScreen, PREF_KEY_SAME_SITE_PCI) == null) {
+            injectSwitch(swCtor, ctorArgs, keyField, titleField, summaryField,
+                    iconSpaceField, setDefaultValue, attachMethod, parentField,
+                    PREF_KEY_SAME_SITE_PCI, "NSGMod: Highlight same-site NR neighbours",
+                    "Color neighbour PCI turquoise when its PCI and ARFCN match the serving NR-SA cell",
+                    false, prefManager, prefScreen, children);
         }
 
         // --- 7. Trigger adapter refresh ---
