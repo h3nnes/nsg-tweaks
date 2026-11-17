@@ -9,14 +9,13 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks a8.h$a (NRNSACellsFragment adapter) to inject an ARFCN column (labelled "Band")
+ * Hooks nc.getView for the NR-NSA table (nc.f == 6, fragment oa0) to inject an ARFCN column (labelled "Band")
  * at index 1 of the main NR cell row, and conditionally hides the NSG info sub-row.
  *
  * ARFCN is read directly from the DataSource via Workspace/Property reflection —
@@ -29,12 +28,14 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   serving  : NR5G::Cell_Measurements::NR_Cells_ARFCN       (Integer[], index=intraRow)
  *   detected : NR5G::Detected_Cells::NR_DetectedCells_ARFCN  (Integer[], index=intraRow)
  *
- * Row-to-intraRow mapping uses a8.b$b.h(position) → Pair<source, intraRow>
- * and a8.b$b.e (Object[] sources array).
+ * Row-to-intraRow mapping is resolved by CellTableRowDispatcher (nc.g(position) ->
+ * Pair<source, intraRow>, nc.e sources array).
  *
- * In NSG v4.8.6 the row layout is nr_cell_list_row_double_nsa — a vertical LinearLayout:
+ * The row layout is nr_cell_list_row_double_nsa — a vertical LinearLayout:
  *   child 0: horizontal main row  [Serving, PCI, Beam, RSRP, RSRQ, SINR]  (6 cols)
  *   child 1: horizontal info strip [tvRowRFID=ARFCN, tvRowCellName, tvRowCellID]
+ *
+ * Header label: oa0.E (onCreateView) is hooked to add the "ARFCN" header cell.
  *
  * After injection:
  *   outer LL child 0 only; main row: [Serving, ARFCN("Band"), PCI, Beam, RSRP, RSRQ, SINR] (7 cols)
@@ -54,30 +55,20 @@ public class BandColumnHook {
     private final XposedInterface xposed;
     private final ClassLoader     loader;
 
-    // Workspace / DataSource / Property reflection — resolved once.
-    private Field  wsSingleton;
-    private Field  wsModuleIndex;
-    private Field  wsDataSource;
+    private static final String NR_NSA_FRAGMENT = "oa0"; // NRNSACells fragment
+    private static final String CELL_DB = "sd";          // cell-DB holder; e(String) = lookup
+
+    // DataSource / Property reflection — resolved once.
     private Method dsGetProperty;
     private Method propIterMethod;
     private Method iterEndMethod;
     private Method iterKeyMethod;
     private Method iterValueMethod;
 
-    // Adapter intraRow resolution — a8.b$b (base class of a8.h$a)
-    private Field  eField;   // a8.b$b.e — Object[] sources array
-    private Method hMethod;  // a8.b$b.h(int) — returns Pair<source, intraRow>
-
     private boolean reflectionReady = false;
     private static volatile boolean nrCellDbLoaded = false;
     private static volatile boolean lteCellDbLoaded = false;
     private static boolean cellDbHookInstalled = false;
-    private Class<?> f7bClass;
-    private Method  f7bEMethod;
-    private Method  f7bDMethod;
-    /** k8.c field "c" (f5509c) — the data sample key the adapter used for its current data. */
-    private Field  f5509cField;
-    private Field  adapterTypeField;
     private static final int ADAPTER_TYPE_NR_NSA = 6;
 
     public BandColumnHook(XposedInterface xposed, ClassLoader loader) {
@@ -88,42 +79,19 @@ public class BandColumnHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            Class<?> dsClass   = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
-            Class<?> bbClass   = ClassMapping.loadClass("a8.b$b", loader);
-            Class<?> k8cClass  = ClassMapping.loadClass("k8.c", loader);
-            if (wsClass == null || dsClass == null || propClass == null || iterClass == null
-                    || bbClass == null || k8cClass == null) {
+            Class<?> dsClass   = Nsg.load(loader, Nsg.DATA_SOURCE);
+            Class<?> propClass = Nsg.load(loader, Nsg.PROPERTY);
+            Class<?> iterClass = Nsg.load(loader, Nsg.PROPERTY_ITER);
+            if (dsClass == null || propClass == null || iterClass == null) {
                 Log.i(TAG, "BandColumnHook: essential class missing, skipping");
                 return;
             }
-
-            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
-            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
-            wsSingleton    = wsClass.getField(wsJName);
-            wsModuleIndex  = wsClass.getField(wsAName);
-            wsDataSource   = wsClass.getField(wsCName);
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
-
-            String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
-            eField  = bbClass.getField(eFieldName);   // Object[] sources array
-            hMethod = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
-            String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
-            f5509cField = k8cClass.getField(sampleKeyFieldName); // data sample key (f5509c)
-
-            try {
-                adapterTypeField = bbClass.getDeclaredField("f");
-                adapterTypeField.setAccessible(true);
-            } catch (NoSuchFieldException ignored) {
-            }
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -140,9 +108,9 @@ public class BandColumnHook {
     private void hookCellDbStatus() {
         if (cellDbHookInstalled) return;
         try {
-            Class<?> cls = ClassMapping.loadClass("f7.b", loader);
+            Class<?> cls = Nsg.load(loader, CELL_DB);
             if (cls == null) return;
-            Method dMethod = ClassMapping.getMethod(cls, "f7.b", "d", loader, String.class);
+            Method dMethod = cls.getMethod("e", String.class); // sd.e(String): cell-DB lookup
             xposed.hook(dMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
@@ -242,13 +210,13 @@ public class BandColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.h$a.getView — registered with the shared CellTableRowDispatcher
-    // (single interceptor per runtime getView method). The row context is
-    // resolved once per call and shared with the other cell-table features.
+    // Hook: nc.getView (NR-NSA rows) — registered with the shared CellTableRowDispatcher.
+    // The row context is resolved once per call and shared with the other
+    // cell-table features.
     // -----------------------------------------------------------------------
     private void hookGetView() {
         boolean registered =
-                CellTableRowDispatcher.register(xposed, loader, "a8.h$a", "BandColumnHook",
+                CellTableRowDispatcher.register(xposed, loader, "BandColumnHook",
                 new CellTableRowDispatcher.RowProcessor() {
                     @Override
                     public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
@@ -308,12 +276,12 @@ public class BandColumnHook {
                         int     position  = ctx.position();
                         boolean isServing = false;
                         int     intraRow  = position;
-                        // queryTime: use f5509c (adapter's own sample key) when > 0, otherwise
-                        // fall back to Long.MAX_VALUE. f5509c is set by a8.b$b.g() before
+                        // queryTime: use q00.c (adapter's own sample key) when > 0, otherwise
+                        // fall back to Long.MAX_VALUE. q00.c is set by q00.f() before
                         // notifyDataSetChanged(), so it is valid by the time getView fires.
                         // Do NOT use Workspace.g — it is frozen at the first post-event dispatch
                         // and never advances; new ticks land at sk > wsG and Property.b(wsG)
-                        // cannot see them. Long.MAX_VALUE fallback handles reset state (f5509c=-1).
+                        // cannot see them. Long.MAX_VALUE fallback handles reset state (q00.c=-1).
                         long    queryTime = Long.MAX_VALUE;
                         if (reflectionReady) {
                             intraRow  = ctx.intraRow();
@@ -385,16 +353,13 @@ public class BandColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.h.I — inject "Band" header label
+    // Hook: oa0.E (onCreateView) — inject "ARFCN" header label
     // -----------------------------------------------------------------------
     private void hookOnCreateView() {
         try {
-            Class<?> fragClass = ClassMapping.loadClass("a8.h", loader);
-            if (fragClass == null) {
-                Log.i(TAG, "BandColumnHook: a8.h not available, skipping onCreateView hook");
-                return;
-            }
-            Method   iMethod   = ClassMapping.getMethod(fragClass, "a8.h", "I", loader,
+            Class<?> fragClass = Nsg.load(loader, NR_NSA_FRAGMENT);
+            if (fragClass == null) return;
+            Method   iMethod   = fragClass.getDeclaredMethod("E",
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
             xposed.hook(iMethod).intercept(new Hooker() {

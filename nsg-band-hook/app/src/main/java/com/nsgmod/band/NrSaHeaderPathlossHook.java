@@ -23,12 +23,16 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * between PCI and SS-RSRP, showing NR5G::Downlink_Measurements::NR_Pathloss_DL.
  * Only visible in NR-SA mode.
  *
- * Hook: AFTER HeaderRFFragment.I(LayoutInflater, ViewGroup, Bundle)
+ * Hook: AFTER HeaderRFFragment.E(LayoutInflater, ViewGroup, Bundle)
  * Hook: AFTER HeaderRFFragment.b(DataSource, long, short, Object)
  */
 public class NrSaHeaderPathlossHook {
 
     private static final String TAG = "NSGBandHook";
+
+    private static final String HEADER_RF_FRAGMENT = "com.qtrun.udv.header.HeaderRFFragment";
+    private static final String ATTR_BASE = "l8";   // attribute base: key a, format b, index c
+    private static final String ATTR_MAIN = "m8";   // attribute subclass (instantiated via Unsafe)
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -43,45 +47,43 @@ public class NrSaHeaderPathlossHook {
 
     // HeaderRFFragment
     private Class<?> headerRFFragmentClass;
-    private Field headerRFFragmentK2aField; // found by type k2.a
+    private Field headerRFFragmentBuilderField; // Z (r31, final)
 
-    // k2.a builder methods
-    private Method k2aRMethod; // r(float row, float h, float col, float w) -> v6.e (label)
-    private Method k2aTMethod; // t(float row, float h, float col, float w) -> v6.g (value)
-    private Method k2aJMethod; // j(Context, int) -> ScrollView
-    private Field k2aListField;  // d -> ArrayList<v6.a>
+    // r31 grid builder methods
+    private Method builderLabelMethod; // M(float row, float h, float col, float w) -> bh0 (label)
+    private Method builderValueMethod; // O(float row, float h, float col, float w) -> dh0 (value)
+    private Field builderListField;    // b -> ArrayList<xg0> (typed Object)
 
-    // v6.e label fields
-    private Field veF; // text   (f)
-    private Field veG; // appearance (g)
-    private Field veH; // gravity (h)
+    // bh0 label fields
+    private Field labelText;  // f
+    private Field labelAlign; // g
+    private Field labelGravity; // h
 
-    // v6.g value cell methods
-    private Method vgGMethod; // g(com.qtrun.sys.b, boolean)
-    private Method vgJMethod; // j(int appearance, int color)
+    // dh0 value cell methods
+    private Method valueBindMethod;  // g(m8, boolean)
+    private Method valueStyleMethod; // j(int appearance, int color)
 
-    // v6.a element fields
-    private Field vaViewField; // a -> View
-    private Field vaRowField;   // b (row float)
-    private Field vaColField;   // d (col float)
-    private Field vaWidthField; // e (width float)
+    // xg0 element fields / methods
+    private Field elementViewField;  // a -> View
+    private Field elementRowField;   // b (row float)
+    private Field elementColField;   // d (col float)
+    private Field elementWidthField; // e (width float)
+    private Method elementCreateViewMethod; // c(ViewGroup) -> View
 
-    // v6.d layout internal list
-    private Class<?> v6dClass;
-    private Field v6dListField; // a -> ArrayList<v6.a>
+    // ah0 layout internal list
+    private Field layoutListField; // a -> ArrayList<xg0>
 
-    // com.qtrun.sys.b / a — property binding
-    private Class<?> sysBClass;
-    private Field sysAFieldA; // final String key
-    private Field sysAFieldB; // final String format
-    private Field sysAFieldC; // int index
+    // l8 / m8 — property binding
+    private Class<?> attrClass;
+    private Field attrKey;    // final String a
+    private Field attrFormat; // final String b
+    private Field attrIndex;  // int c
 
     // Workspace reflection for NR-SA detection
-    private Class<?> workspaceClass;
     private Field wsSingletonField; // j
-    private Field wsRatField;     // d -> com.qtrun.sys.j
+    private Field wsRatField;       // d -> com.qtrun.sys.d (toString "NR-SA" / "NR-NSA" / ...)
 
-    // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
+    // Unsafe for allocateInstance (m8 ctor is not usable here)
     private Object unsafe;
     private Method unsafeAllocateInstance;
 
@@ -128,74 +130,60 @@ public class NrSaHeaderPathlossHook {
 
     private void initReflection() {
         try {
-            headerRFFragmentClass = ClassMapping.loadClass("com.qtrun.udv.header.HeaderRFFragment", loader);
+            headerRFFragmentClass = Nsg.load(loader, HEADER_RF_FRAGMENT);
 
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vgClass = ClassMapping.loadClass("v6.g", loader);
-            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
-            v6dClass = ClassMapping.loadClass("v6.d", loader);
+            Class<?> builderClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Class<?> labelClass = Nsg.load(loader, Nsg.GRID_LABEL);
+            Class<?> valueClass = Nsg.load(loader, Nsg.GRID_MULTI);
+            Class<?> elementClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
+            Class<?> layoutClass = Nsg.load(loader, Nsg.GRID_D);
 
-            // Find the k2.a field inside HeaderRFFragment by type.
-            String k2aRuntimeName = ClassMapping.runtimeName("k2.a", loader);
-            for (Field field : headerRFFragmentClass.getDeclaredFields()) {
-                if (k2aRuntimeName != null && k2aRuntimeName.equals(field.getType().getName())) {
-                    field.setAccessible(true);
-                    headerRFFragmentK2aField = field;
-                    break;
-                }
-            }
-            if (headerRFFragmentK2aField == null) {
-                throw new NoSuchFieldException("k2.a field not found in HeaderRFFragment");
-            }
+            headerRFFragmentBuilderField = headerRFFragmentClass.getDeclaredField("Z");
+            headerRFFragmentBuilderField.setAccessible(true);
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+            builderLabelMethod = builderClass.getMethod("M",
                     float.class, float.class, float.class, float.class);
-            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
+            builderValueMethod = builderClass.getMethod("O",
                     float.class, float.class, float.class, float.class);
-            k2aJMethod = ClassMapping.getMethod(k2aClass, "k2.a", "j", loader,
-                    android.content.Context.class, int.class);
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
-            k2aListField.setAccessible(true);
+            builderListField = builderClass.getDeclaredField("b");
+            builderListField.setAccessible(true);
 
-            veF = veClass.getField("f");
-            veG = veClass.getField("g");
-            veH = veClass.getField("h");
+            labelText = labelClass.getField("f");
+            labelAlign = labelClass.getField("g");
+            labelGravity = labelClass.getField("h");
 
-            vaViewField = vaClass.getDeclaredField("a");
-            vaRowField = vaClass.getDeclaredField("b");
-            vaColField = vaClass.getDeclaredField("d");
-            vaWidthField = vaClass.getDeclaredField("e");
-            vaViewField.setAccessible(true);
-            vaRowField.setAccessible(true);
-            vaColField.setAccessible(true);
-            vaWidthField.setAccessible(true);
+            elementViewField = elementClass.getDeclaredField("a");
+            elementRowField = elementClass.getDeclaredField("b");
+            elementColField = elementClass.getDeclaredField("d");
+            elementWidthField = elementClass.getDeclaredField("e");
+            elementViewField.setAccessible(true);
+            elementRowField.setAccessible(true);
+            elementColField.setAccessible(true);
+            elementWidthField.setAccessible(true);
+            elementCreateViewMethod = elementClass.getMethod("c", ViewGroup.class);
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            sysAFieldA = sysAClass.getDeclaredField("a");
-            sysAFieldB = sysAClass.getDeclaredField("b");
-            sysAFieldC = sysAClass.getDeclaredField("c");
-            sysAFieldA.setAccessible(true);
-            sysAFieldB.setAccessible(true);
-            sysAFieldC.setAccessible(true);
+            attrClass = Nsg.load(loader, ATTR_MAIN);
+            Class<?> attrBaseClass = Nsg.load(loader, ATTR_BASE);
+            attrKey = attrBaseClass.getDeclaredField("a");
+            attrFormat = attrBaseClass.getDeclaredField("b");
+            attrIndex = attrBaseClass.getDeclaredField("c");
+            attrKey.setAccessible(true);
+            attrFormat.setAccessible(true);
+            attrIndex.setAccessible(true);
 
-            vgGMethod = vgClass.getMethod("g", sysBClass, boolean.class);
-            vgJMethod = vgClass.getMethod("j", int.class, int.class);
+            valueBindMethod = valueClass.getMethod("g", attrClass, boolean.class);
+            valueStyleMethod = valueClass.getMethod("j", int.class, int.class);
 
-            String v6dListFieldName = ClassMapping.runtimeFieldName("v6.d", "a", loader);
-            v6dListField = v6dClass.getDeclaredField(v6dListFieldName);
-            v6dListField.setAccessible(true);
+            layoutListField = layoutClass.getDeclaredField("a");
+            layoutListField.setAccessible(true);
 
-            workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            String wsRatName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "d", loader);
-            wsSingletonField = workspaceClass.getField(wsSingletonName);
-            wsRatField = workspaceClass.getDeclaredField(wsRatName);
+            Class<?> workspaceClass = Nsg.load(loader, Nsg.WORKSPACE);
+            wsSingletonField = workspaceClass.getField("j");
+            wsRatField = workspaceClass.getDeclaredField("d");
             wsRatField.setAccessible(true);
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-            java.lang.reflect.Field unsafeField;
+            Field unsafeField;
             try {
                 unsafeField = unsafeClass.getDeclaredField("THE_ONE"); // Android/Dalvik
             } catch (NoSuchFieldException e2) {
@@ -217,13 +205,10 @@ public class NrSaHeaderPathlossHook {
             return;
         }
         try {
-            Class<?> layoutInflaterClass = ClassMapping.loadClass("android.view.LayoutInflater", loader);
-            Class<?> viewGroupClass = ClassMapping.loadClass("android.view.ViewGroup", loader);
-            Class<?> bundleClass = ClassMapping.loadClass("android.os.Bundle", loader);
-            Method iMethod = ClassMapping.getMethod(headerRFFragmentClass, "com.qtrun.udv.header.HeaderRFFragment", "I", loader,
-                    layoutInflaterClass, viewGroupClass, bundleClass);
+            Method createViewMethod = headerRFFragmentClass.getMethod("E",
+                    android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
-            xposed.hook(iMethod).intercept(new Hooker() {
+            xposed.hook(createViewMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -235,7 +220,7 @@ public class NrSaHeaderPathlossHook {
                 }
             });
 
-            Class<?> dataSourceClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Class<?> dataSourceClass = Nsg.load(loader, Nsg.DATA_SOURCE);
             Method bMethod = headerRFFragmentClass.getMethod("b",
                     dataSourceClass, long.class, short.class, Object.class);
 
@@ -292,16 +277,16 @@ public class NrSaHeaderPathlossHook {
         }
 
         try {
-            Object k2aObj = headerRFFragmentK2aField.get(thiz);
-            if (k2aObj == null) {
-                Log.w(TAG, "NrSaHeaderPathlossHook: k2.a builder is null, skipping");
+            Object builder = headerRFFragmentBuilderField.get(thiz);
+            if (builder == null) {
+                Log.w(TAG, "NrSaHeaderPathlossHook: r31 builder is null, skipping");
                 return;
             }
 
             @SuppressWarnings("unchecked")
-            ArrayList<Object> list = (ArrayList<Object>) k2aListField.get(k2aObj);
+            ArrayList<Object> list = (ArrayList<Object>) builderListField.get(builder);
             if (list == null) {
-                Log.w(TAG, "NrSaHeaderPathlossHook: k2.a list is null, skipping");
+                Log.w(TAG, "NrSaHeaderPathlossHook: r31 list is null, skipping");
                 return;
             }
 
@@ -312,12 +297,12 @@ public class NrSaHeaderPathlossHook {
             Object ssSinrLabel = null, ssSinrValue = null;
 
             for (Object elem : list) {
-                float row = (float) vaRowField.get(elem);
+                float row = (float) elementRowField.get(elem);
                 if (row != 0.0f && row != 1.0f) {
                     continue;
                 }
-                float col = (float) vaColField.get(elem);
-                float width = (float) vaWidthField.get(elem);
+                float col = (float) elementColField.get(elem);
+                float width = (float) elementWidthField.get(elem);
 
                 // SSB-ARFCN: col 0, width 25
                 if (col < 1.0f && Math.abs(width - 25.0f) < 1.0f) {
@@ -345,43 +330,43 @@ public class NrSaHeaderPathlossHook {
             final float h = 1.0f;
 
             // Step 2: create Pathloss label at row=0, col=34, width=16.
-            Object pathlossLabel = k2aRMethod.invoke(k2aObj, 0.0f, h, 34.0f, 16.0f);
+            Object pathlossLabel = builderLabelMethod.invoke(builder, 0.0f, h, 34.0f, 16.0f);
             if (pathlossLabel != null) {
-                veF.set(pathlossLabel, "Pathloss");
-                veG.set(pathlossLabel, 0); // appearance
-                veH.set(pathlossLabel, 2); // gravity
+                labelText.set(pathlossLabel, "Pathloss");
+                labelAlign.set(pathlossLabel, 0); // appearance
+                labelGravity.set(pathlossLabel, 2); // gravity
             }
 
             // Step 3: create Pathloss value cell at row=1, col=34, width=16.
-            Object pathlossValue = k2aTMethod.invoke(k2aObj, 1.0f, h, 34.0f, 16.0f);
+            Object pathlossValue = builderValueMethod.invoke(builder, 1.0f, h, 34.0f, 16.0f);
             if (pathlossValue != null) {
                 // Match the surrounding value cells: appearance 0, color -1 (white), centered.
-                vgJMethod.invoke(pathlossValue, 0, -1);
+                valueStyleMethod.invoke(pathlossValue, 0, -1);
 
-                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_Pathloss_DL");
-                sysAFieldB.set(prop, "%.1f dB");
-                sysAFieldC.set(prop, -1);
-                vgGMethod.invoke(pathlossValue, prop, true);
+                Object prop = unsafeAllocateInstance.invoke(unsafe, attrClass);
+                attrKey.set(prop, "NR5G::Downlink_Measurements::NR_Pathloss_DL");
+                attrFormat.set(prop, "%.1f dB");
+                attrIndex.set(prop, -1);
+                valueBindMethod.invoke(pathlossValue, prop, true);
             }
 
             // Step 4: add new elements to the layout.
-            ViewGroup v6d = null;
+            ViewGroup layout = null;
             if (pathlossLabel != null && pathlossValue != null) {
                 if (rootView instanceof android.widget.ScrollView
                         && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
-                    v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
-                    if (v6d != null) {
-                        addElementToLayout(k2aObj, v6d, list, pathlossLabel);
-                        addElementToLayout(k2aObj, v6d, list, pathlossValue);
+                    layout = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
+                    if (layout != null) {
+                        addElementToLayout(layout, list, pathlossLabel);
+                        addElementToLayout(layout, list, pathlossValue);
                     }
                 }
             }
 
             // Step 5: store geometry and mark injected.
             if (pathlossLabel != null && pathlossValue != null) {
-                View labelView = (View) vaViewField.get(pathlossLabel);
-                View valueView = (View) vaViewField.get(pathlossValue);
+                View labelView = (View) elementViewField.get(pathlossLabel);
+                View valueView = (View) elementViewField.get(pathlossValue);
                 if (labelView != null && valueView != null) {
                     rootView.setTag(R.id.nsg_header_pathloss_label, labelView);
                     rootView.setTag(R.id.nsg_header_pathloss_value, valueView);
@@ -408,30 +393,21 @@ public class NrSaHeaderPathlossHook {
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
-    private void addElementToLayout(Object k2aObj, ViewGroup v6d, ArrayList k2aList, Object elem)
+    private void addElementToLayout(ViewGroup layout, ArrayList builderList, Object elem)
             throws Exception {
-        // Append to k2.a's internal list so it is updated by k2a.e().
-        k2aList.add(elem);
+        // Append to r31's internal list so it is updated with the other elements.
+        builderList.add(elem);
 
-        // Create the actual View for this element and attach it to v6.d.
-        View view = (View) vaClassCMethod().invoke(elem, v6d);
+        // Create the actual View for this element and attach it to the ah0 layout.
+        View view = (View) elementCreateViewMethod.invoke(elem, layout);
         if (view != null) {
-            v6d.addView(view);
+            layout.addView(view);
             @SuppressWarnings("unchecked")
-            ArrayList<Object> v6dList = (ArrayList<Object>) v6dListField.get(v6d);
-            if (v6dList != null) {
-                v6dList.add(elem);
+            ArrayList<Object> layoutList = (ArrayList<Object>) layoutListField.get(layout);
+            if (layoutList != null) {
+                layoutList.add(elem);
             }
         }
-    }
-
-    private Method vaClassCMethod;
-    private Method vaClassCMethod() throws Exception {
-        if (vaClassCMethod == null) {
-            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
-            vaClassCMethod = vaClass.getMethod("c", ViewGroup.class);
-        }
-        return vaClassCMethod;
     }
 
     private void updateVisibility(Object thiz) {
@@ -483,8 +459,8 @@ public class NrSaHeaderPathlossHook {
 
                         if (rootView instanceof android.widget.ScrollView
                                 && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
-                            ViewGroup v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
-                            forceV6dLayout(v6d);
+                            ViewGroup layout = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
+                            forceLayout(layout);
                         }
                     }
                 }
@@ -536,8 +512,8 @@ public class NrSaHeaderPathlossHook {
 
             if (rootView instanceof android.widget.ScrollView
                     && ((android.widget.ScrollView) rootView).getChildCount() > 0) {
-                ViewGroup v6d = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
-                forceV6dLayout(v6d);
+                ViewGroup layout = (ViewGroup) ((android.widget.ScrollView) rootView).getChildAt(0);
+                forceLayout(layout);
             }
         } catch (Exception e) {
             Log.w(TAG, "NrSaHeaderPathlossHook: updateVisibility failed: " + e);
@@ -546,24 +522,24 @@ public class NrSaHeaderPathlossHook {
 
     private void setGeometry(Object elem, float col, float width) throws Exception {
         if (elem == null) return;
-        vaColField.set(elem, col);
-        vaWidthField.set(elem, width);
+        elementColField.set(elem, col);
+        elementWidthField.set(elem, width);
     }
 
-    private void forceV6dLayout(final ViewGroup v6d) {
-        if (v6d == null) return;
-        v6d.requestLayout();
-        v6d.post(() -> {
+    private void forceLayout(final ViewGroup layout) {
+        if (layout == null) return;
+        layout.requestLayout();
+        layout.post(() -> {
             try {
-                if (v6d.getWidth() > 0 && v6d.getHeight() > 0) {
+                if (layout.getWidth() > 0 && layout.getHeight() > 0) {
                     Method onLayoutMethod = ViewGroup.class.getDeclaredMethod(
                             "onLayout", boolean.class, int.class, int.class, int.class, int.class);
                     onLayoutMethod.setAccessible(true);
-                    onLayoutMethod.invoke(v6d, true,
-                            v6d.getLeft(), v6d.getTop(), v6d.getRight(), v6d.getBottom());
+                    onLayoutMethod.invoke(layout, true,
+                            layout.getLeft(), layout.getTop(), layout.getRight(), layout.getBottom());
                 }
             } catch (Exception e) {
-                Log.w(TAG, "NrSaHeaderPathlossHook: forceV6dLayout failed: " + e);
+                Log.w(TAG, "NrSaHeaderPathlossHook: forceLayout failed: " + e);
             }
         });
     }

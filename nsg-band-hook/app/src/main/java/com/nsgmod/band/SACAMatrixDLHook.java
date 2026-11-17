@@ -12,28 +12,33 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Adds "SS-RSRP" and "CSI-RSRP" rows immediately after the "ARFCN/PCI" row on the
- * NR-SA CA Matrix DL page (h8.b).
+ * NR-SA CA Matrix DL page (db0).
+ *
+ * v4.8.14 targets: r31 (grid builder; b = element list; M = add label bh0, N = add bar ch0,
+ * O = add value cell dh0), xg0 (element base; b = row, d = column), bh0 (label: f text, g align,
+ * h span), ch0 (bar: g = m8 binding), dh0 (value cell: g(m8,boolean) = set binding,
+ * j(int,int) = set color), l8/m8 (attribute binding: a key, b format, c index).
  *
  * This hook is installed BEFORE NrSaCsiSnrRowHook so it runs outermost (first) in the
- * v6.b.k0 chain. NrSaCsiSnrRowHook and NrSaModUsageRowHook have already been updated
+ * yg0.g0(r31) chain. NrSaCsiSnrRowHook and NrSaModUsageRowHook have already been updated
  * to use insertion rows that account for the shift introduced here.
  *
  * Row geometry per carrier path:
  *
- *   Path A  carriers==2 (1 SCell, k0())  — single-height rows (h=1.0, barOffset=0, barH=1.0)
+ *   Path A  carriers==2 (1 SCell)  — single-height rows (h=1.0, barOffset=0, barH=1.0)
  *     ARFCN/PCI at row 9.  Insert SS-RSRP at 10, CSI-RSRP at 11. Shift ≥10 by +2.0.
  *     Columns: PCell col=30 w=34, SCell[0] col=65 w=34.
  *
- *   Path B  carriers==3 (2 SCells, inline o0())  — double-height rows (h=2.0, barOffset=+0.3, barH=1.4)
+ *   Path B  carriers==3 (2 SCells, inline)  — double-height rows (h=2.0, barOffset=+0.3, barH=1.4)
  *     ARFCN/PCI at row 10 (h=2). Insert SS-RSRP at 12, CSI-RSRP at 14. Shift ≥12 by +4.0.
  *     SS-RSRP:  PCell bar at row 12.3 h=1.4 col=30; SCell[0] bar at row 12.0 h=1.0 col=65;
  *               SCell[1] bar at row 13.0 h=1.0 col=65.
  *     CSI-RSRP: PCell bar at row 14.3 h=1.4 col=30 only.
  *
- *   Path C  carriers>=4 (3 SCells, l0())  — single-height rows (h=1.0, barOffset=0, barH=1.0)
+ *   Path C  carriers>=4 (3 SCells)  — single-height rows (h=1.0, barOffset=0, barH=1.0)
  *     ARFCN/PCI at row 10 (sub-rows 10+11). Insert SS-RSRP at 12, CSI-RSRP at 14. Shift ≥12 by +3.0.
  *     SS-RSRP:  PCell col=30 row=12; SCell[0] col=30 row=13; SCell[1] col=65 row=12; SCell[2] col=65 row=13.
- *     CSI-RSRP: PCell col=30 row=14 only (same style as CSI SNR / ModUsage in l0()).
+ *     CSI-RSRP: PCell col=30 row=14 only (same style as CSI SNR / ModUsage).
  *
  * Property keys:
  *   PCell SS-RSRP  : NR5G::Downlink_Measurements::NR_SS_RSRP       index=-1  format="%.1f dBm"
@@ -57,45 +62,48 @@ public class SACAMatrixDLHook {
 
     private static final String TAG = "NSGBandHook";
 
+    private static final String ATTR_L8 = "l8";
+    private static final String ATTR_M8 = "m8";
+
     // Shared ThreadLocal owned by NrSaCsiSnrRowHook — read-only here.
     private final ThreadLocal<Integer> carrierCountInO0;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // k2.a builder methods
-    private Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e  (label)
-    private Method k2aSMethod; // s(float row, float h, float col, float w) → v6.f  (bar)
-    private Method k2aTMethod; // t(float row, float h, float col, float w) → v6.g  (text cell)
+    // r31 builder methods
+    private Method k2aRMethod; // M(float row, float h, float col, float w) → bh0 (label)
+    private Method k2aSMethod; // N(float row, float h, float col, float w) → ch0 (bar)
+    private Method k2aTMethod; // O(float row, float h, float col, float w) → dh0 (text cell)
 
-    // v6.e label fields (actual bytecode names)
-    private Field veF; // text   (JADX: f8116f)
-    private Field veG; // align  (JADX: f8117g)
+    // bh0 label fields
+    private Field veF; // text
+    private Field veG; // align
     private Field veH; // span
-    private Class<?> veClass; // v6.e for isInstance checks
+    private Class<?> veClass; // bh0 for isInstance checks
 
-    // v6.f bar data-binding field
-    private Field vfF8120g; // g (JADX: f8120g) — data binding
+    // ch0 bar data-binding field
+    private Field vfBinding; // g — m8 data binding
 
-    // v6.g value cell methods
-    private Method v6gGMethod; // g(com.qtrun.sys.b, boolean) → data binding (PCell, index set manually)
+    // dh0 value cell methods
+    private Method v6gGMethod; // g(m8, boolean) → data binding (PCell, index set manually)
     private Method v6gJMethod; // j(int appearance, int color) → text coloring (SCell)
-    private Class<?> vgClass; // v6.g for isInstance checks
+    private Class<?> vgClass; // dh0 for isInstance checks
 
-    // com.qtrun.sys.b / a — property binding
+    // l8 / m8 — property binding
     private Class<?> sysBClass;
     private Field sysAFieldA; // final String key
     private Field sysAFieldB; // final String format
     private Field sysAFieldC; // int index
 
-    // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
+    // Unsafe for allocateInstance (m8 ctor stripped by R8)
     private Object unsafe;
     private Method unsafeAllocateInstance;
 
-    // k2.a list + v6.a row field
+    // r31 list + xg0 row/col fields
     private Field k2aListField;
     private Field vaRowField;
-    private Field vaColField; // v6.a field "d" (col)
+    private Field vaColField; // xg0.d (col)
 
     private boolean ready = false;
 
@@ -109,26 +117,23 @@ public class SACAMatrixDLHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            veClass  = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
+            Class<?> k2aClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            veClass  = Nsg.load(loader, Nsg.GRID_LABEL);
+            Class<?> vfClass  = Nsg.load(loader, Nsg.GRID_VALUE);
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
-                    float.class, float.class, float.class, float.class);
-            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
-                    float.class, float.class, float.class, float.class);
-            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
-                    float.class, float.class, float.class, float.class);
+            k2aRMethod = k2aClass.getMethod("M", float.class, float.class, float.class, float.class);
+            k2aSMethod = k2aClass.getMethod("N", float.class, float.class, float.class, float.class);
+            k2aTMethod = k2aClass.getMethod("O", float.class, float.class, float.class, float.class);
 
             veF = veClass.getField("f");
             veG = veClass.getField("g");
             veH = veClass.getField("h");
 
-            vfF8120g = vfClass.getDeclaredField("g");
-            vfF8120g.setAccessible(true);
+            vfBinding = vfClass.getDeclaredField("g");
+            vfBinding.setAccessible(true);
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            sysBClass = Nsg.load(loader, ATTR_M8);
+            Class<?> sysAClass = Nsg.load(loader, ATTR_L8);
             sysAFieldA = sysAClass.getDeclaredField("a");
             sysAFieldB = sysAClass.getDeclaredField("b");
             sysAFieldC = sysAClass.getDeclaredField("c");
@@ -136,7 +141,7 @@ public class SACAMatrixDLHook {
             sysAFieldB.setAccessible(true);
             sysAFieldC.setAccessible(true);
 
-            vgClass = ClassMapping.loadClass("v6.g", loader);
+            vgClass = Nsg.load(loader, Nsg.GRID_MULTI);
             v6gGMethod = vgClass.getMethod("g", sysBClass, boolean.class);
             v6gJMethod = vgClass.getMethod("j", int.class, int.class);
 
@@ -151,9 +156,9 @@ public class SACAMatrixDLHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
+            k2aListField = k2aClass.getDeclaredField("b"); // r31.b: element list
             k2aListField.setAccessible(true);
-            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
+            Class<?> vaClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
             vaColField = vaClass.getDeclaredField("d");
@@ -170,19 +175,19 @@ public class SACAMatrixDLHook {
             Log.w(TAG, "SACAMatrixDLHook: skipping install — reflection not ready");
             return;
         }
-        installV6bK0Hook();
+        installGridPageHook();
         Log.i(TAG, "SACAMatrixDLHook: installed");
     }
 
     // -----------------------------------------------------------------------
-    // Hook: static v6.b.k0(k2.a) — inject when called from h8.b.o0()
+    // Hook: static yg0.g0(r31) — inject when called from db0.k0()
     // -----------------------------------------------------------------------
 
-    private void installV6bK0Hook() {
+    private void installGridPageHook() {
         try {
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Method   k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
+            Class<?> v6bClass = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> k2aClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Method   k0Method = v6bClass.getDeclaredMethod("g0", k2aClass); // yg0.g0(r31)
 
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
@@ -197,7 +202,7 @@ public class SACAMatrixDLHook {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "SACAMatrixDLHook: v6.b.k0 hook failed: " + e);
+            Log.e(TAG, "SACAMatrixDLHook: yg0.g0 hook failed: " + e);
         }
     }
 
@@ -210,7 +215,7 @@ public class SACAMatrixDLHook {
             // Determine path geometry
             boolean isPathA   = (carriers == 2);  // 1 SCell, single-height
             boolean isInline3 = (carriers == 3);  // 2 SCells, double-height inline
-            // carriers >= 4: 3 SCells, single-height l0() path
+            // carriers >= 4: 3 SCells, single-height h0() path
 
             // SS-RSRP and CSI-RSRP both insert right after ARFCN/PCI.
             // Path A: ARFCN/PCI at row 9 → insert SS-RSRP at 10, CSI-RSRP at 11
@@ -384,7 +389,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_SS_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, -1);
-            vfF8120g.set(ssPCellBar, prop);
+            vfBinding.set(ssPCellBar, prop);
         }
 
         // SS-RSRP SCell[0] bar
@@ -394,7 +399,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Cell_Measurements::NR_Cells_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 1);
-            vfF8120g.set(ssSCell0Bar, prop);
+            vfBinding.set(ssSCell0Bar, prop);
         }
 
         // CSI-RSRP label
@@ -412,7 +417,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_CSI_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, -1);
-            vfF8120g.set(csiPCellBar, prop);
+            vfBinding.set(csiPCellBar, prop);
         }
     }
 
@@ -452,7 +457,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_SS_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, -1);
-            vfF8120g.set(ssPCellBar, prop);
+            vfBinding.set(ssPCellBar, prop);
         }
 
         // SS-RSRP SCell[0] bar — first sub-row in col=65
@@ -462,7 +467,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Cell_Measurements::NR_Cells_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 1);
-            vfF8120g.set(ssSCell0Bar, prop);
+            vfBinding.set(ssSCell0Bar, prop);
         }
 
         // SS-RSRP SCell[1] bar — second sub-row in col=65
@@ -472,7 +477,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Cell_Measurements::NR_Cells_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 2);
-            vfF8120g.set(ssSCell1Bar, prop);
+            vfBinding.set(ssSCell1Bar, prop);
         }
 
         // CSI-RSRP label
@@ -490,14 +495,14 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_CSI_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, -1);
-            vfF8120g.set(csiPCellBar, prop);
+            vfBinding.set(csiPCellBar, prop);
         }
     }
 
     /**
      * Path C: carriers>=4 (3 SCells), single-height rows (h=1.0, barOffset=0, barH=1.0).
      * Each logical row occupies 2 sub-rows: col=30 gets PCell+SCell[0], col=65 gets SCell[1]+SCell[2].
-     * CSI-RSRP is PCell-only with same single-height style as CSI SNR / ModUsage in l0().
+     * CSI-RSRP is PCell-only with same single-height style as CSI SNR / ModUsage.
      *
      * SS-RSRP at ssRsrpRow (=12.0):
      *   label row=12.0 h=1.0 col=0 w=27
@@ -529,7 +534,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_SS_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, -1);
-            vfF8120g.set(ssPCellBar, prop);
+            vfBinding.set(ssPCellBar, prop);
         }
 
         // SS-RSRP SCell[0] bar — col=30 sub-row 1
@@ -539,7 +544,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Cell_Measurements::NR_Cells_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 1);
-            vfF8120g.set(ssSCell0Bar, prop);
+            vfBinding.set(ssSCell0Bar, prop);
         }
 
         // SS-RSRP SCell[1] bar — col=65 sub-row 0
@@ -549,7 +554,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Cell_Measurements::NR_Cells_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 2);
-            vfF8120g.set(ssSCell1Bar, prop);
+            vfBinding.set(ssSCell1Bar, prop);
         }
 
         // SS-RSRP SCell[2] bar — col=65 sub-row 1
@@ -559,10 +564,10 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Cell_Measurements::NR_Cells_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, 3);
-            vfF8120g.set(ssSCell2Bar, prop);
+            vfBinding.set(ssSCell2Bar, prop);
         }
 
-        // CSI-RSRP label — single-height, same style as CSI SNR / ModUsage in l0()
+        // CSI-RSRP label — single-height, same style as CSI SNR / ModUsage
         Object csiLabel = k2aRMethod.invoke(k2aObj, csiRsrpRow, h, 0.0f, 27.0f);
         if (csiLabel != null) {
             veF.set(csiLabel, "CSI-RSRP");
@@ -577,7 +582,7 @@ public class SACAMatrixDLHook {
             sysAFieldA.set(prop, "NR5G::Downlink_Measurements::NR_CSI_RSRP");
             sysAFieldB.set(prop, "%.1f dBm");
             sysAFieldC.set(prop, -1);
-            vfF8120g.set(csiPCellBar, prop);
+            vfBinding.set(csiPCellBar, prop);
         }
     }
 

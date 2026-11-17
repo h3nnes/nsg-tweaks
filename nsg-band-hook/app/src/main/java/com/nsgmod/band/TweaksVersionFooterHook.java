@@ -17,18 +17,16 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Appends the tweaks-module version code and NSG flavor letter to NSG's
+ * Appends the tweaks-module version code and the qtrun build letter to NSG's
  * bottom-left footer version {@code TextView} ({@code @id/info_version}), so it
- * reads e.g. {@code 4.8.9 66:q} on the qtrun flavor or {@code 4.8.9 66:g} on
- * google-play. Reusing the same view keeps the footer's existing grey colour
+ * reads e.g. {@code 4.8.14 69:q}. Reusing the same view keeps the footer's existing grey colour
  * ({@code #424242}) automatically; there is no toggle or user configuration.
  *
  * <p>NSG sets {@code info_version} in the {@code onResume()} of both
  * {@code com.qtrun.nsg.NormalActivity} (version name only) and
  * {@code com.qtrun.nsg.AdvancedActivity} (version name, plus {@code " *****"}
- * when activated). Both class names are stable across flavors, so no
- * {@link ClassMapping} entries are required. The {@code info_version} resource
- * id differs per flavor, so it is resolved by name at runtime.
+ * when activated). Both classes keep their real names in v4.8.14. The
+ * {@code info_version} resource id is resolved by name at runtime.
  *
  * <p>The suffix is computed once per process and cached; each {@code onResume}
  * therefore only performs a cached id lookup, {@code findViewById},
@@ -42,7 +40,7 @@ public class TweaksVersionFooterHook {
     private static final String NORMAL_ACTIVITY = "com.qtrun.nsg.NormalActivity";
     private static final String ADVANCED_ACTIVITY = "com.qtrun.nsg.AdvancedActivity";
     private static final String ACTIVATED_MARKER = " *****";
-    private static final int FALLBACK_VERSION_CODE = 67;
+    private static final int FALLBACK_VERSION_CODE = 70; // build.gradle versionCode
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
@@ -62,11 +60,8 @@ public class TweaksVersionFooterHook {
 
     private void installFor(String className) {
         try {
-            Class<?> activityClass = ClassMapping.loadClass(className, loader);
-            if (activityClass == null) {
-                Log.w(TAG, "footer version hook: " + className + " not found, skipped");
-                return;
-            }
+            Class<?> activityClass = Nsg.load(loader, className);
+            if (activityClass == null) return;
             Method onResume = activityClass.getDeclaredMethod("onResume");
             onResume.setAccessible(true);
             xposed.hook(onResume).intercept(new Hooker() {
@@ -124,7 +119,7 @@ public class TweaksVersionFooterHook {
     }
 
     private String buildSuffix(Activity activity) {
-        return " " + resolveVersionCode(activity) + ":" + flavorLetter();
+        return " " + resolveVersionCode(activity) + ":q";
     }
 
     private int resolveVersionCode(Activity activity) {
@@ -159,9 +154,5 @@ public class TweaksVersionFooterHook {
 
     private int versionCodeOf(PackageInfo info) {
         return Build.VERSION.SDK_INT >= 28 ? (int) info.getLongVersionCode() : info.versionCode;
-    }
-
-    private String flavorLetter() {
-        return FlavorDetector.detect(loader) == FlavorDetector.Flavor.GPLAY ? "g" : "q";
     }
 }

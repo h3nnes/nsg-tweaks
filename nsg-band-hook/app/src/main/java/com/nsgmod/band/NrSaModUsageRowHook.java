@@ -13,15 +13,19 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Adds "16Q Util." and "QPSK Util." percentage rows (PCell + NR SCells) directly below
- * "64Q Util." on the NR-SA CA Matrix DL page (h8.b), above "Phy. Thput".
+ * "64Q Util." on the NR-SA CA Matrix DL page (db0), above "Phy. Thput".
  *
  * Uses the same hook architecture as NrSaCsiSnrRowHook:
- *   - h8.b.o0() intercept sets a ThreadLocal with the carrier count
- *   - v6.b.k0(k2.a) intercept injects the new rows into the builder
+ *   - db0.k0() intercept (NrSaCsiSnrRowHook) sets a ThreadLocal with the carrier count
+ *   - yg0.g0(r31) intercept injects the new rows into the builder
+ *
+ * v4.8.14 targets: r31 (grid builder; b = element list; M = add label bh0, N = add bar ch0),
+ *   xg0 (element base; b = row), bh0 (label: f text, g align, h span), ch0 (bar: g = m8 binding,
+ *   f(int color, float max)), l8/m8 (attribute binding: a key, b format, c index).
  *
  * Row positions (per path, after SACAMatrixDLHook + per-PRB and NrSaCsiSnrRowHook shifts):
- *   Path A k0()  carriers==2 : 64Q at 26, Phy.Thput at 28 → insert at 28, shift by 2.0f
- *   Path B l0()  carriers>=4 : 64Q at 44, Phy.Thput at 46 (+1 if PDSCH on) → insert at 46/47, shift by 4.0f
+ *   Path A       carriers==2 : 64Q at 26, Phy.Thput at 28 → insert at 28, shift by 2.0f
+ *   Path B       carriers>=4 : 64Q at 44, Phy.Thput at 46 (+1 if PDSCH on) → insert at 46/47, shift by 4.0f
  *   Path C inline carriers==3 : 64Q label at 46 h=2.0, bar at 46.3 h=1.4
  *                               → insert at 48 (+2 if PDSCH on), shift by 4.0f (2 rows × 2.0f)
  *
@@ -33,7 +37,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *     16QAM DL : NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_16QAM_DL
  *     QPSK DL  : NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_QPSK_DL
  *
- * Bar style: v6.f (same as 64Q Util. bars), deep blue via v6.f.f(colorInt, 100.0f).
+ * Bar style: ch0 (same as 64Q Util. bars), deep blue via ch0.f(colorInt, 100.0f).
  */
 public class NrSaModUsageRowHook {
 
@@ -48,6 +52,9 @@ public class NrSaModUsageRowHook {
     private static final String KEY_QPSK_SCELL =
             "NR5G::Downlink_Measurements::SCell::NR_SCell_ModUsage_QPSK_DL";
 
+    private static final String ATTR_L8 = "l8";
+    private static final String ATTR_M8 = "m8";
+
     // Shared ThreadLocal with NrSaCsiSnrRowHook — we read it, not own it.
     // Passed in via constructor from MainHook.
     private final ThreadLocal<Integer> carrierCountInO0;
@@ -55,30 +62,30 @@ public class NrSaModUsageRowHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // k2.a builder methods
-    private Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e  (label)
-    private Method k2aSMethod; // s(float row, float h, float col, float w) → v6.f  (bar)
+    // r31 builder methods
+    private Method k2aRMethod; // M(float row, float h, float col, float w) → bh0 (label)
+    private Method k2aSMethod; // N(float row, float h, float col, float w) → ch0 (bar)
 
-    // v6.e label fields (actual bytecode names)
-    private Field veF;  // text   (JADX: f8116f)
-    private Field veG;  // align  (JADX: f8117g)
+    // bh0 label fields
+    private Field veF;  // text
+    private Field veG;  // align
     private Field veH;  // span
 
-    // v6.f bar field + style method
-    private Field   vfG;        // data binding (JADX: f8120g)
+    // ch0 bar field + style method
+    private Field   vfG;        // g: m8 data binding
     private Method  vfFMethod;  // void f(int color, float max)
 
-    // com.qtrun.sys.b / a — property binding
+    // l8 / m8 — property binding
     private Class<?> sysBClass;
     private Field    sysAFieldA; // key string
     private Field    sysAFieldB; // format string
     private Field    sysAFieldC; // index int
 
-    // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
+    // Unsafe for allocateInstance (m8 ctor stripped by R8)
     private Object unsafe;
     private Method unsafeAllocateInstance;
 
-    // k2.a list + v6.a row field
+    // r31 list + xg0 row field
     private Field k2aListField;
     private Field vaRowField;
 
@@ -97,14 +104,12 @@ public class NrSaModUsageRowHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
+            Class<?> k2aClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Class<?> veClass  = Nsg.load(loader, Nsg.GRID_LABEL);
+            Class<?> vfClass  = Nsg.load(loader, Nsg.GRID_VALUE);
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
-                    float.class, float.class, float.class, float.class);
-            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
-                    float.class, float.class, float.class, float.class);
+            k2aRMethod = k2aClass.getMethod("M", float.class, float.class, float.class, float.class);
+            k2aSMethod = k2aClass.getMethod("N", float.class, float.class, float.class, float.class);
 
             veF = veClass.getField("f");
             veG = veClass.getField("g");
@@ -114,8 +119,8 @@ public class NrSaModUsageRowHook {
             vfG.setAccessible(true);
             vfFMethod = vfClass.getMethod("f", int.class, float.class);
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            sysBClass = Nsg.load(loader, ATTR_M8);
+            Class<?> sysAClass = Nsg.load(loader, ATTR_L8);
             sysAFieldA = sysAClass.getDeclaredField("a");
             sysAFieldB = sysAClass.getDeclaredField("b");
             sysAFieldC = sysAClass.getDeclaredField("c");
@@ -134,9 +139,9 @@ public class NrSaModUsageRowHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
+            k2aListField = k2aClass.getDeclaredField("b"); // r31.b: element list
             k2aListField.setAccessible(true);
-            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
+            Class<?> vaClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
@@ -173,19 +178,19 @@ public class NrSaModUsageRowHook {
             Log.w(TAG, "NrSaModUsageRowHook: skipping install — reflection not ready");
             return;
         }
-        installV6bK0Hook();
+        installGridPageHook();
         Log.i(TAG, "NrSaModUsageRowHook: installed");
     }
 
     // -----------------------------------------------------------------------
-    // Hook: static v6.b.k0(k2.a) — inject when called from h8.b.o0()
+    // Hook: static yg0.g0(r31) — inject when called from db0.k0()
     // -----------------------------------------------------------------------
 
-    private void installV6bK0Hook() {
+    private void installGridPageHook() {
         try {
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Method   k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
+            Class<?> v6bClass = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> k2aClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Method   k0Method = v6bClass.getDeclaredMethod("g0", k2aClass); // yg0.g0(r31)
 
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
@@ -200,7 +205,7 @@ public class NrSaModUsageRowHook {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "NrSaModUsageRowHook: v6.b.k0 hook failed: " + e);
+            Log.e(TAG, "NrSaModUsageRowHook: yg0.g0 hook failed: " + e);
         }
     }
 
@@ -210,7 +215,7 @@ public class NrSaModUsageRowHook {
 
     private void injectModUsageRows(Object k2aObj, int carriers) {
         try {
-            // Per-path geometry — matches h8.b exactly
+            // Per-path geometry — matches db0.k0() exactly
             //   Path A  carriers==2 : 64Q at row 23, label h=1.0, bar h=1.0, no offset
             //   Path B  carriers>=4 : 64Q at row 38, label h=1.0, bar h=1.0, no offset
             //   Path C  carriers==3 : 64Q at row 38, label h=2.0, bar h=1.4, offset +0.3f
@@ -325,7 +330,7 @@ public class NrSaModUsageRowHook {
     }
 
     /**
-     * Creates a single v6.f bar bound to the given property key/index.
+     * Creates a single ch0 bar bound to the given property key/index.
      * All ModUsage bars share the same deep-blue color and 100.0f max scale.
      */
     private void injectModUsageBar(Object k2aObj, float row, float height, float col,

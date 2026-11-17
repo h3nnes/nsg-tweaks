@@ -8,6 +8,12 @@ import android.widget.TextView;
 
 import io.github.libxposed.api.XposedInterface;
 
+/**
+ * Hides the cell-DB info sub-row (child 1 of the vertical row layout) of the cell-table
+ * rows when no cell-DB name/id is available. Post-processes the rows returned by
+ * {@code nc.getView} (the shared cell-table adapter, see {@link CellTableRowDispatcher});
+ * toggle: {@code SettingsToggleHook.cellRowHeightEnabled()}.
+ */
 public class CellRowHeightHook {
     private static final String TAG = "NSGBandHook";
 
@@ -24,12 +30,8 @@ public class CellRowHeightHook {
     }
 
     private void installHook() {
-        boolean lte = CellTableRowDispatcher.register(xposed, loader, "a8.f$a",
-                "CellRowHeightHook-LTE", newProcessor());
-        boolean nrnsa = CellTableRowDispatcher.register(xposed, loader, "a8.h$a",
-                "CellRowHeightHook-NRNSA", newProcessor());
-        if (lte || nrnsa)
-            Log.i(TAG, "CellRowHeightHook: installed (LTE=" + lte + ", NRNSA=" + nrnsa + ")");
+        if (CellTableRowDispatcher.register(xposed, loader, "CellRowHeightHook", newProcessor()))
+            Log.i(TAG, "CellRowHeightHook: installed");
     }
 
     private CellTableRowDispatcher.RowProcessor newProcessor() {

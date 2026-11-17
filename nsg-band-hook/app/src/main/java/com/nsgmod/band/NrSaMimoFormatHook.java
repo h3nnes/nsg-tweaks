@@ -11,7 +11,7 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks d7.i$c.c(Object) to reformat NR MIMO display:
+ * Hooks u00.c(Object) (R8-merged attribute formatter, switch on field e) to reformat NR MIMO display:
  *   - PCell: "{CSI_PORTS} x {RX_ANTENNAS}" (e.g. "2 x 4")
  *   - SCell: "- x {RX_ANTENNAS}" (e.g. "- x 4", "- x 2")
  *
@@ -25,15 +25,18 @@ public class NrSaMimoFormatHook {
 
     private static final String TAG = "NSGBandHook";
 
+    private static final String ATTR_BASE = "l8";       // attribute base class: key field a
+    private static final String FORMATTER = "u00";      // m8 subclass with merged formatters; c(Object)
+
     private final XposedInterface xposed;
     private final ClassLoader     loader;
 
     private boolean ready = false;
 
-    // Parent class com.qtrun.sys.a fields (inherited by d7.i$c via com.qtrun.sys.b)
-    private Field sysAKeyField;   // field "a" (String key)
+    // l8.a (String key), inherited by u00 via m8
+    private Field attrKeyField;
 
-    // Context captured from v6.g.a(sampleKey, DataSource, moduleIndex) while it formats
+    // Context captured from dh0.a(sampleKey, DataSource, moduleIndex) while it formats
     // a label. This is the exact sample key / module index the formatter is rendering,
     // which may differ from Workspace.g in replay/freeze mode.
     private static final ThreadLocal<FormatContext> formatContext = new ThreadLocal<>();
@@ -51,7 +54,7 @@ public class NrSaMimoFormatHook {
     }
 
     // Workspace / DataSource reflection (shared pattern)
-    private Field  wsJ;           // Workspace.j singleton
+    private Field  wsJ;           // Workspace.j enum singleton
     private Field  wsG;           // Workspace.g — current sample key (cursor)
     private Field  wsModuleIndex; // Workspace.a (module index)
     private Field  wsDataSource;  // Workspace.c (DataSource)
@@ -69,22 +72,17 @@ public class NrSaMimoFormatHook {
 
     private void initReflection() {
         try {
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            sysAKeyField = sysAClass.getField("a");
+            attrKeyField = Nsg.load(loader, ATTR_BASE).getField("a");
 
-            Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> wsClass = Nsg.load(loader, Nsg.WORKSPACE);
+            dsClass = Nsg.load(loader, Nsg.DATA_SOURCE);
+            Class<?> propClass = Nsg.load(loader, Nsg.PROPERTY);
+            Class<?> iterClass = Nsg.load(loader, Nsg.PROPERTY_ITER);
 
-            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            String wsGName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "g", loader);
-            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
-            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
-            wsJ = wsClass.getField(wsJName);
-            wsG = wsClass.getDeclaredField(wsGName); wsG.setAccessible(true);
-            wsModuleIndex = wsClass.getField(wsAName);
-            wsDataSource = wsClass.getField(wsCName);
+            wsJ = wsClass.getField("j");
+            wsG = wsClass.getDeclaredField("g"); wsG.setAccessible(true);
+            wsModuleIndex = wsClass.getField("a");
+            wsDataSource = wsClass.getField("c");
 
             dsGetProperty = dsClass.getMethod("getProperty", String.class, int.class);
             propBMethod = propClass.getMethod("b", long.class);
@@ -108,18 +106,14 @@ public class NrSaMimoFormatHook {
 
     private void installFormatterHook() {
         try {
-            Class<?> formatterClass = ClassMapping.loadClass("d7.i$c", loader);
-            if (formatterClass == null) {
-                Log.i(TAG, "NrSaMimoFormatHook: d7.i$c not available, skipping formatter hook");
-                return;
-            }
+            Class<?> formatterClass = Nsg.load(loader, FORMATTER);
             Method cMethod = formatterClass.getMethod("c", Object.class);
 
             xposed.hook(cMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object thisObj = chain.getThisObject();
-                    String key = (String) sysAKeyField.get(thisObj);
+                    String key = (String) attrKeyField.get(thisObj);
                     Object value = chain.getArg(0);
 
                     if (key == null || !(value instanceof Number)) {
@@ -148,13 +142,13 @@ public class NrSaMimoFormatHook {
             });
             Log.i(TAG, "NrSaMimoFormatHook: formatter hook installed");
         } catch (Exception e) {
-            Log.e(TAG, "NrSaMimoFormatHook: install d7.i$c failed: " + e);
+            Log.e(TAG, "NrSaMimoFormatHook: install u00 failed: " + e);
         }
     }
 
     private void installGridValueLabelHook() {
         try {
-            Class<?> gridValueLabelClass = ClassMapping.loadClass("v6.g", loader);
+            Class<?> gridValueLabelClass = Nsg.load(loader, Nsg.GRID_MULTI);
             Method aMethod = gridValueLabelClass.getMethod("a", long.class, dsClass, short.class);
 
             xposed.hook(aMethod).intercept(new Hooker() {
@@ -180,12 +174,12 @@ public class NrSaMimoFormatHook {
             });
             Log.i(TAG, "NrSaMimoFormatHook: grid value label hook installed");
         } catch (Exception e) {
-            Log.e(TAG, "NrSaMimoFormatHook: install v6.g failed: " + e);
+            Log.e(TAG, "NrSaMimoFormatHook: install dh0 failed: " + e);
         }
     }
 
-    /** Read NR_PCell_Num_CSI_Ports using the exact sample key being formatted by v6.g.a.
-     *  Falls back to the current Workspace cursor if not called from v6.g.a. */
+    /** Read NR_PCell_Num_CSI_Ports using the exact sample key being formatted by dh0.a.
+     *  Falls back to the current Workspace cursor if not called from dh0.a. */
     private Integer readCsiPorts() {
         FormatContext ctx = formatContext.get();
 

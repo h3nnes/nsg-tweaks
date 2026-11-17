@@ -1,6 +1,7 @@
 package com.nsgmod.band;
 
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,58 +29,55 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * loaded for replay, showing the filename and "Replaying" status.
  *
  * NSG behaviour (unhooked):
- *   t7.e.b() case 4: shows wait_progress_layout ("Loading <file> …")
- *   a4.h.e() case 5: calls AdvancedActivity.K() -> sets layout GONE, then
- *                    populates Workspace, calls M() and invalidateOptionsMenu().
+ *   s2.b(Object) case 4: shows wait_progress_layout ("Loading <file> …")
+ *   u2.f(Object) case 0: calls AdvancedActivity.C() -> sets layout GONE, then
+ *                    populates Workspace, calls E() and invalidateOptionsMenu().
  *
- * Strategy — three hooks that work together:
+ * Strategy — seven hooks that work together:
  *
- * Prong A: a4.h.e(Object) case 5 after-hook.
- *   Fires after the full case-5 body (K, workspace setup, M(), menu) completes.
+ * Prong A: u2.f(Object) case 0 after-hook.
+ *   Fires after the full case-0 body (C, workspace setup, E(), menu) completes.
  *   Re-shows the bar with "<filename> — Replaying" text and progress bar hidden.
  *   Sets replayActive = true and stores a WeakReference to the Activity.
  *
- * Prong B: AdvancedActivity.K() intercept.
- *   Uses Workspace.c (DataSource field) to distinguish the two K() callers:
- *   • DataSource == null  -> called from a4.h.e() case 5 during file loading
- *     (workspace.c() clears it first; workspace.f() sets it after K()).
- *     -> Suppress K(), keep bar visible.
- *   • DataSource != null  -> called from t7.e.e() case 1 (user stopped replay).
- *     g0.G() never clears the DataSource, so it remains set.
- *     -> Allow K(), clear replayActive so save-log / live mode resume normally.
+ * Prong B: AdvancedActivity.C() intercept.
+ *   Uses Workspace.c (DataSource field) to distinguish the two C() callers:
+ *   • DataSource == null  -> called from u2.f() case 0 during file loading
+ *     (workspace.c() clears it first; workspace.f() sets it after C()).
+ *     -> Suppress C(), keep bar visible.
+ *   • DataSource != null  -> called from s2.f() case 1 (user stopped replay).
+ *     a40.G() never clears the DataSource, so it remains set.
+ *     -> Allow C(), clear replayActive so save-log / live mode resume normally.
  *
- * Prong C: t7.g0.E() before-hook (start-new-test).
- *   When menu_open_new_test is tapped in replay mode, NSG calls g0.D(false) then
- *   g0.E() directly — it NEVER calls K(). So replayActive would stay true forever.
- *   Prong C detects g0.E() while replayActive==true, clears the flag, and hides
+ * Prong C: a40.E() before-hook (start-new-test).
+ *   When menu_open_new_test is tapped in replay mode, NSG calls a40.D(false) then
+ *   a40.E() directly — it NEVER calls C(). So replayActive would stay true forever.
+ *   Prong C detects a40.E() while replayActive==true, clears the flag, and hides
  *   the bar on the main thread. This is the primary "end replay" signal.
- *   g0.E() is also called from the "Discard" dialog path, so all stop-replay
+ *   a40.E() is also called from the "Discard" dialog path, so all stop-replay
  *   cases are covered.
- *   (v4.8.4: t7.h0 — renamed to t7.g0 in v4.8.6)
  *
- * Prong D: t7.w0.c(Activity) before-hook (graceful exit).
- *   In replay mode g0.A() returns false (no live test), so menu_exit takes the
- *   fast-exit branch: w0.c() is called directly and I() (which shows the loading
+ * Prong D: s31.h(Activity) before-hook (graceful exit).
+ *   In replay mode a40.A() returns false (no live test), so menu_exit takes the
+ *   fast-exit branch: s31.h() is called directly and A(int) (which shows the loading
  *   spinner) is never called. The user sees the replay bar vanish with no spinner.
- *   Prong D intercepts w0.c() — when replayActive, shows wait_progress_bar
+ *   Prong D intercepts s31.h() — when replayActive, shows wait_progress_bar
  *   (spinner + "Stopping…") before proceeding, matching the live-test exit UX.
- *   replayActive is cleared here so Prong B does not interfere with subsequent K().
- *   (v4.8.4: t7.x0 — renamed to t7.w0 in v4.8.6)
+ *   replayActive is cleared here so Prong B does not interfere with subsequent C().
  *
- * Prong E: t7.p.a(MenuItem) intercept — allow "load logfile" while replay bar is visible.
- *   NSG's sidebar handler (t7.p.a, AdvancedActivity's DrawerLayout listener) guards
+ * Prong E: r31.b(MenuItem) intercept — allow "load logfile" while replay bar is visible.
+ *   NSG's sidebar handler (r31.b, AdvancedActivity's DrawerLayout listener) guards
  *   the file picker launch with:
  *     if (advancedActivity.findViewById(R.id.wait_progress_layout).getVisibility() != 0)
  *   Since the replay bar keeps wait_progress_layout VISIBLE, this guard silently
  *   blocks the file picker while a replay is active and the bar is not dismissed.
- *   Prong E intercepts t7.p.a() when replayActive == true and the selected item is
- *   menu_load_logfile: it directly invokes advancedActivity.K.c() with MIME type "*&#47;*"
+ *   Prong E intercepts r31.b() when replayActive == true and the selected item is
+ *   menu_load_logfile: it directly invokes advancedActivity.H.r() with MIME type "*&#47;*"
  *   (respecting the Application.d() subscription guard) and closes the drawer,
  *   bypassing the visibility guard entirely.
- *   (v4.8.4: t7.q — renamed to t7.p in v4.8.6)
  *
- * Prong F: t7.e.b(Object) before-hook — restore spinner visibility before second load.
- *   t7.e.b() case 4 is NSG's "Loading…" phase: it sets wait_progress_layout VISIBLE
+ * Prong F: s2.b(Object) before-hook — restore spinner visibility before second load.
+ *   s2.b() case 4 is NSG's "Loading…" phase: it sets wait_progress_layout VISIBLE
  *   and calls progressBar.setIndeterminate(true), but does NOT call
  *   progressBar.setVisibility(VISIBLE). On first load progressBar starts VISIBLE
  *   (NSG default), so the spinner shows. But showReplayBar() sets progressBar GONE
@@ -96,8 +94,8 @@ public class ReplayStatusBarHook {
     /**
      * True while a log file is loaded and being replayed.
      * Set to true by Prong A when load succeeds.
-     * Cleared by Prong C when g0.E() fires (start-new-test path).
-     * Also cleared by Prong B as a fallback if K() is called with DataSource set.
+     * Cleared by Prong C when a40.E() fires (start-new-test path).
+     * Also cleared by Prong B as a fallback if C() is called with DataSource set.
      */
     private static volatile boolean replayActive = false;
 
@@ -114,7 +112,7 @@ public class ReplayStatusBarHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // a4.h fields — runtime names are a/b/c on qtrun, b/d/c on gplay
+    // u2 fields (file-load callback): a = switch case, b = Activity, c = filename
     private Field f76a;  // int   — switch case
     private Field f77b;  // Object — AdvancedActivity
     private Field f78c;  // Object — filename String
@@ -123,18 +121,18 @@ public class ReplayStatusBarHook {
     private Field wsSingleton;
     private Field wsDataSource;
 
-    // Prong E: t7.q menu handler bypass
-    private Field advActivityKField;    // AdvancedActivity.K — the logfile picker (d.d)
-    private Method pickerCMethod;       // d.d.c(Object) [qtrun] / d.d.a(Object) [gplay]
+    // Prong E: r31 menu handler bypass
+    private Field advActivityKField;    // AdvancedActivity.H — the logfile picker (i2)
+    private Method pickerCMethod;       // i2.r(Object, nr0) — file-picker launcher
     private Method appDMethod;          // com.qtrun.sys.Application.d() — subscription check
     private Method drawerDMethod;       // DrawerLayout.d(boolean) — closeDrawers()
     private boolean prongEReady = false;
 
-    // Prong F: t7.e.b(Object) — runtime field names for the discriminator and Activity
-    private Field teDiscriminator;      // t7.e.a (int) [qtrun] / c6.f.b (int) [gplay]
-    private Field teActivity;           // t7.e.b (AdvancedActivity) [qtrun] / c6.f.c [gplay]
+    // Prong F: s2.b(Object) — runtime field names for the discriminator and Activity
+    private Field teDiscriminator;      // s2.a (int) switch case
+    private Field teActivity;           // s2.b (AdvancedActivity)
 
-    // a4.h / c6.h synthetic switch case that signals a successful log load.
+    // u2 synthetic switch case that signals a successful log load (u2.f case 0).
     private int loadCompleteCase;
 
     private boolean reflectionReady = false;
@@ -147,23 +145,20 @@ public class ReplayStatusBarHook {
 
     private void initReflection() {
         try {
-            Class<?> hClass  = ClassMapping.loadClass("a4.h", loader);
-            Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            // u2 is the synthetic file-load callback: a = switch case, b = Activity,
+            // c = filename.
+            Class<?> hClass  = Nsg.load(loader, "u2");
+            Class<?> wsClass = Nsg.load(loader, Nsg.WORKSPACE);
             if (hClass == null || wsClass == null) {
-                Log.i(REPLAY_TAG, "initReflection: a4.h or Workspace missing, skipping");
+                Log.i(REPLAY_TAG, "initReflection: u2 or Workspace missing, skipping");
                 return;
             }
-String hDiscriminator = ClassMapping.runtimeFieldName("a4.h", "a", loader);
-            String hActivity      = ClassMapping.runtimeFieldName("a4.h", "b", loader);
-            String hFilename      = ClassMapping.runtimeFieldName("a4.h", "c", loader);
-            f76a = hClass.getDeclaredField(hDiscriminator); f76a.setAccessible(true);  // int discriminator
-            f77b = hClass.getDeclaredField(hActivity);      f77b.setAccessible(true);  // AdvancedActivity
-            f78c = hClass.getDeclaredField(hFilename);      f78c.setAccessible(true);  // filename String
-String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            String wsDataSourceName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
-            wsSingleton  = wsClass.getField(wsSingletonName);
-            wsDataSource = wsClass.getField(wsDataSourceName);
-            loadCompleteCase = ClassMapping.runtimeIntConstant("a4.h|LOAD_COMPLETE_CASE", 5, loader);
+            f76a = hClass.getDeclaredField("a"); f76a.setAccessible(true);  // int discriminator
+            f77b = hClass.getDeclaredField("b"); f77b.setAccessible(true);  // AdvancedActivity
+            f78c = hClass.getDeclaredField("c"); f78c.setAccessible(true);  // filename String
+            wsSingleton  = wsClass.getField("j");
+            wsDataSource = wsClass.getField("c");
+            loadCompleteCase = 0;
             reflectionReady = true;
             Log.i(REPLAY_TAG, "initReflection: core reflection ready");
         } catch (Exception e) {
@@ -176,12 +171,11 @@ String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace"
 
     private void initProngEReflection() {
         try {
-            Class<?> advActivityClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
-            String advKFieldName = ClassMapping.runtimeFieldName("com.qtrun.nsg.AdvancedActivity", "K", loader);
-            advActivityKField = advActivityClass.getDeclaredField(advKFieldName);
+            Class<?> advActivityClass = Nsg.load(loader, "com.qtrun.nsg.AdvancedActivity");
+            advActivityKField = advActivityClass.getDeclaredField("H");
             advActivityKField.setAccessible(true);
-            Class<?> ddClass = ClassMapping.loadClass("d.d", loader);
-            String pickerMethodName = ClassMapping.runtimeMethodName("d.d", "c", loader);
+            Class<?> ddClass = Nsg.load(loader, "i2");
+            String pickerMethodName = "r"; // i2.r(Object, nr0) == launch(String[], Object)
             try {
                 pickerCMethod = ddClass.getDeclaredMethod(pickerMethodName, Object.class);
             } catch (NoSuchMethodException nsme) {
@@ -193,17 +187,16 @@ String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace"
                     }
                 }
                 if (pickerCMethod == null) {
-                    Log.w(REPLAY_TAG, "Prong E: " + pickerMethodName
-                            + "(Object) not found, Prong E disabled");
+                    Log.w(REPLAY_TAG, "Prong E: i2." + pickerMethodName
+                            + "(Object, nr0) not found, Prong E disabled");
                     return;
                 }
             }
             pickerCMethod.setAccessible(true);
-            Class<?> appClass = ClassMapping.loadClass("com.qtrun.sys.Application", loader);
-            appDMethod = ClassMapping.getDeclaredMethod(appClass, "com.qtrun.sys.Application", "d", loader);
-            Class<?> drawerClass = ClassMapping.loadClass("androidx.drawerlayout.widget.DrawerLayout", loader);
-            drawerDMethod = ClassMapping.getMethod(drawerClass, "androidx.drawerlayout.widget.DrawerLayout",
-                    "d", loader, boolean.class);
+            Class<?> appClass = Nsg.load(loader, "com.qtrun.sys.Application");
+            appDMethod = appClass.getDeclaredMethod("d");
+            Class<?> drawerClass = Nsg.load(loader, "androidx.drawerlayout.widget.DrawerLayout");
+            drawerDMethod = drawerClass.getMethod("d", boolean.class);
             prongEReady = true;
         } catch (Exception e) {
             Log.w(REPLAY_TAG, "Prong E reflection failed (disabled): " + e);
@@ -212,15 +205,13 @@ String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace"
 
     private void initProngFReflection() {
         try {
-            Class<?> teClass = ClassMapping.loadClass("t7.e", loader);
+            Class<?> teClass = Nsg.load(loader, "s2");
             if (teClass == null) {
-                Log.i(REPLAY_TAG, "Prong F: t7.e not available, skipping");
+                Log.i(REPLAY_TAG, "Prong F: s2 not available, skipping");
                 return;
             }
-            String teDiscName = ClassMapping.runtimeFieldName("t7.e", "a", loader);
-            String teActName  = ClassMapping.runtimeFieldName("t7.e", "b", loader);
-            teDiscriminator = teClass.getDeclaredField(teDiscName); teDiscriminator.setAccessible(true);
-            teActivity      = teClass.getDeclaredField(teActName);  teActivity.setAccessible(true);
+            teDiscriminator = teClass.getDeclaredField("a"); teDiscriminator.setAccessible(true);
+            teActivity      = teClass.getDeclaredField("b"); teActivity.setAccessible(true);
         } catch (Exception e) {
             Log.w(REPLAY_TAG, "Prong F reflection failed (disabled): " + e);
         }
@@ -242,12 +233,12 @@ String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace"
     }
 
     // -----------------------------------------------------------------------
-    // Prong A: a4.h.e(Object) — after-hook for file load completion (case 5)
+    // Prong A: u2.f(Object) — after-hook for file load completion (case 0)
     // -----------------------------------------------------------------------
     private void installProngA() {
         try {
-            Class<?> hClass  = ClassMapping.loadClass("a4.h", loader);
-            Method   eMethod = ClassMapping.getMethod(hClass, "a4.h", "e", loader, Object.class);
+            Class<?> hClass  = Nsg.load(loader, "u2");
+            Method   eMethod = hClass.getMethod("f", Object.class);
 xposed.hook(eMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
@@ -286,27 +277,26 @@ showReplayBar(activity, filename);
     }
 
     // -----------------------------------------------------------------------
-    // Prong B: AdvancedActivity.K() — suppress GONE when replayActive,
-    //          BUT allow K() when the user explicitly stops replay.
+    // Prong B: AdvancedActivity.C() — suppress GONE when replayActive,
+    //          BUT allow C() when the user explicitly stops replay.
     //
-    // How to distinguish the two K() callers:
-    //   • K() called from a4.h.e() case 5 (file loading):
+    // How to distinguish the two C() callers:
+    //   • C() called from u2.f() case 0 (file loading):
     //       workspace.c (DataSource) is NULL — load hasn't set it yet.
-    //       -> Suppress K(), keep the bar visible.
-    //   • K() called from t7.e.e() case 1 (user tapped stop/save):
-    //       g0.G() ran but never clears workspace.c; DataSource is still set.
-    //       -> Allow K(), clear replayActive so normal behaviour resumes.
+    //       -> Suppress C(), keep the bar visible.
+    //   • C() called from s2.f() case 1 (user tapped stop/save):
+    //       a40.G() ran but never clears workspace.c; DataSource is still set.
+    //       -> Allow C(), clear replayActive so normal behaviour resumes.
     // -----------------------------------------------------------------------
     private void installProngB() {
         try {
-            Class<?> activityClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
-            Method   kMethod       = ClassMapping.getDeclaredMethod(activityClass,
-                    "com.qtrun.nsg.AdvancedActivity", "K", loader);
+            Class<?> activityClass = Nsg.load(loader, "com.qtrun.nsg.AdvancedActivity");
+            Method   kMethod       = activityClass.getDeclaredMethod("C");
 xposed.hook(kMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     if (!replayActive) {
-                        // Live mode — always allow K() normally
+                        // Live mode — always allow C() normally
                         return chain.proceed();
                     }
 
@@ -321,7 +311,7 @@ xposed.hook(kMethod).intercept(new Hooker() {
                         Log.w(REPLAY_TAG, "Prong B: workspace check failed: " + t);
                     }
 if (dataSourceNull) {
-                        // K() is called during file loading — DataSource not yet assigned.
+                        // C() is called during file loading — DataSource not yet assigned.
                         // Suppress it, clear FLAG_NOT_TOUCHABLE so UI stays interactive.
                         try {
                             Activity activity = (Activity) chain.getThisObject();
@@ -330,9 +320,9 @@ if (dataSourceNull) {
                             Log.w(REPLAY_TAG, "Prong B: clearFlags failed: " + t);
                             return chain.proceed(); // fall back on error
                         }
-                        return null; // skip original K()
+                        return null; // skip original C()
                     } else {
-                        // K() is called because user stopped replay (DataSource still live).
+                        // C() is called because user stopped replay (DataSource still live).
                         // Allow it to run so the bar hides and save-log works normally.
                         replayActive = false;
 return chain.proceed();
@@ -345,23 +335,22 @@ return chain.proceed();
     }
 
     // -----------------------------------------------------------------------
-    // Prong C: t7.g0.E() — start-new-test, the primary "end replay" signal.
+    // Prong C: a40.E() — start-new-test, the primary "end replay" signal.
     //
     // When menu_open_new_test is tapped in replay mode, NSG calls:
-    //   J() -> g0.D(false) -> g0.E()
-    // It NEVER calls K(), so Prong B never fires and replayActive stays true.
-    // Hook g0.E() before it runs: clear replayActive and hide the bar.
-    // g0.E() runs on the main thread, so we can touch views directly.
-    // (v4.8.4: t7.h0 — renamed to t7.g0 in v4.8.6)
+    //   J() -> a40.D(false) -> a40.E()
+    // It NEVER calls C(), so Prong B never fires and replayActive stays true.
+    // Hook a40.E() before it runs: clear replayActive and hide the bar.
+    // a40.E() runs on the main thread, so we can touch views directly.
     // -----------------------------------------------------------------------
     private void installProngC() {
         try {
-            Class<?> h0Class  = ClassMapping.loadClass("t7.g0", loader);
+            Class<?> h0Class  = Nsg.load(loader, "a40");
             if (h0Class == null) {
-                Log.i(REPLAY_TAG, "installProngC: t7.g0 not available, skipping Prong C");
+                Log.i(REPLAY_TAG, "installProngC: a40 not available, skipping Prong C");
                 return;
             }
-            Method   eMethod  = ClassMapping.getDeclaredMethod(h0Class, "t7.g0", "E", loader);
+            Method   eMethod  = h0Class.getDeclaredMethod("E");
 xposed.hook(eMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
@@ -378,29 +367,28 @@ hideReplayBar();
     }
 
     // -----------------------------------------------------------------------
-    // Prong D: t7.w0.c(Activity) — graceful-exit path in replay mode.
+    // Prong D: s31.h(Activity) — graceful-exit path in replay mode.
     //
-    // In live mode:  menu_exit -> g0.A()==true -> t7.b runnable -> activity.I() -> w0.c()
-    // In replay mode: menu_exit -> g0.A()==false -> w0.c() DIRECTLY (no I() call)
+    // In live mode:  menu_exit -> a40.A()==true -> o2 runnable -> activity.A(int) + C()/finish
+    // In replay mode: menu_exit -> a40.A()==false -> s31.h() DIRECTLY (no A(int) spinner)
     //
-    // Fix: before w0.c() proceeds, show the spinner bar so the user sees the
+    // Fix: before s31.h() proceeds, show the spinner bar so the user sees the
     //      normal "Stopping…" loading animation during the ~250 ms before finish().
-    // (v4.8.4: t7.x0 — renamed to t7.w0 in v4.8.6)
     // -----------------------------------------------------------------------
     private void installProngD() {
         try {
-            Class<?> x0Class   = ClassMapping.loadClass("t7.w0", loader);
-            Class<?> actClass  = ClassMapping.loadClass("android.app.Activity", loader);
+            Class<?> x0Class   = Nsg.load(loader, "s31");
+            Class<?> actClass  = Nsg.load(loader, "android.app.Activity");
             if (x0Class == null || actClass == null) {
-                Log.i(REPLAY_TAG, "installProngD: t7.w0 or Activity missing, skipping Prong D");
+                Log.i(REPLAY_TAG, "installProngD: s31 or Activity missing, skipping Prong D");
                 return;
             }
-            Method   cMethod   = ClassMapping.getDeclaredMethod(x0Class, "t7.w0", "c", loader, actClass);
+            Method   cMethod   = x0Class.getDeclaredMethod("h", actClass);
 xposed.hook(cMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
 if (replayActive) {
-                        replayActive = false; // clear first so Prong B doesn't suppress K()
+                        replayActive = false; // clear first so Prong B doesn't suppress C()
                         try {
                             Activity activity = (Activity) chain.getArg(0);
                             if (activity != null && !activity.isFinishing()) {
@@ -419,16 +407,15 @@ showExitSpinner(activity);
     }
 
     // -----------------------------------------------------------------------
-    // Prong E: t7.p.a(MenuItem) — bypass visibility guard for "load logfile"
+    // Prong E: r31.b(MenuItem) — bypass visibility guard for "load logfile"
     //          while the replay bar is displayed.
     //
     // NSG's guard: if (wait_progress_layout.getVisibility() != 0) { open picker }
     // The replay bar keeps that layout VISIBLE, so the picker is silently blocked.
     // We intercept the menu handler and, when replayActive==true and the item is
-    // menu_load_logfile, directly call advancedActivity.K.c(new String[]{"*/*"})
+    // menu_load_logfile, directly call advancedActivity.H.r(new String[]{"*/*"}, null)
     // (mirroring what NSG would do) then close the drawer and return true.
-    // (v4.8.4: t7.q — renamed to t7.p in v4.8.6; t7.p is AdvancedActivity's
-    //  NavigationView.OnNavigationItemSelectedListener)
+    // (r31 is AdvancedActivity's NavigationView.OnNavigationItemSelectedListener)
     // -----------------------------------------------------------------------
     private void installProngE() {
         if (!prongEReady) {
@@ -436,13 +423,13 @@ showExitSpinner(activity);
             return;
         }
         try {
-            Class<?> tqClass      = ClassMapping.loadClass("t7.p", loader);
-            Class<?> menuItemClass = ClassMapping.loadClass("android.view.MenuItem", loader);
+            Class<?> tqClass      = Nsg.load(loader, "r31");
+            Class<?> menuItemClass = Nsg.load(loader, "android.view.MenuItem");
             if (tqClass == null || menuItemClass == null) {
-                Log.i(REPLAY_TAG, "installProngE: t7.p or MenuItem missing, skipping Prong E");
+                Log.i(REPLAY_TAG, "installProngE: r31 or MenuItem missing, skipping Prong E");
                 return;
             }
-            Method   aMethod       = ClassMapping.getDeclaredMethod(tqClass, "t7.p", "a", loader, menuItemClass);
+            Method   aMethod       = tqClass.getDeclaredMethod("b", menuItemClass);
             aMethod.setAccessible(true);
 xposed.hook(aMethod).intercept(new Hooker() {
                 @Override
@@ -482,26 +469,24 @@ if (subscribed) {
                                     pickerCMethod.invoke(kPicker, new Object[]{new String[]{"*/*"}});
                                 }
                             } else {
-                                Log.w(REPLAY_TAG, "Prong E: advancedActivity.K is null");
+                                Log.w(REPLAY_TAG, "Prong E: advancedActivity.H is null");
                                 return chain.proceed(); // fall back
                             }
                         } else {
-                            // Not subscribed — show the upgrade dialog via w0.e(activity)
+                            // Not subscribed — show the upgrade dialog via s31.l(activity)
                             try {
-                                Class<?> w0Class  = ClassMapping.loadClass("t7.w0", loader);
-                                Class<?> advClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
-                                Method   eMethod  = ClassMapping.getDeclaredMethod(w0Class, "t7.w0", "e", loader, advClass);
+                                Class<?> w0Class  = Nsg.load(loader, "s31");
+                                Method   eMethod  = w0Class.getDeclaredMethod("l", Context.class);
                                 eMethod.setAccessible(true);
 eMethod.invoke(null, activity);
                             } catch (Throwable t) {
-                                Log.w(REPLAY_TAG, "Prong E: w0.e() fallback failed: " + t);
+                                Log.w(REPLAY_TAG, "Prong E: s31.l() fallback failed: " + t);
                             }
                         }
 
                         // Close the drawer (d(false) == closeDrawers())
                         try {
-                            String drawerFieldName = ClassMapping.runtimeFieldName("t7.p", "a", loader);
-                            Field drawerField = chain.getThisObject().getClass().getDeclaredField(drawerFieldName);
+                            Field drawerField = chain.getThisObject().getClass().getDeclaredField("a");
                             drawerField.setAccessible(true);
                             Object drawerLayout = drawerField.get(chain.getThisObject());
                             if (drawerLayout != null) {
@@ -511,7 +496,7 @@ drawerDMethod.invoke(drawerLayout, false);
                             Log.w(REPLAY_TAG, "Prong E: closeDrawers failed: " + t);
                         }
 
-                        return true; // consumed — skip original a() body
+                        return true; // consumed — skip original b() body
                     } catch (Throwable t) {
                         Log.w(REPLAY_TAG, "Prong E failed: " + t);
                         return chain.proceed(); // fail safe
@@ -524,9 +509,9 @@ drawerDMethod.invoke(drawerLayout, false);
     }
 
     // -----------------------------------------------------------------------
-    // Prong F: t7.e.b(Object) — restore progressBar visibility before second load.
+    // Prong F: s2.b(Object) — restore progressBar visibility before second load.
     //
-    // t7.e.b() case 4 is the "Loading…" phase. It sets wait_progress_layout VISIBLE
+    // s2.b() case 4 is the "Loading…" phase. It sets wait_progress_layout VISIBLE
     // and ensures the ProgressBar is indeterminate — but it does NOT call
     // progressBar.setVisibility(VISIBLE). On the first load the bar defaults to
     // VISIBLE, so the spinner shows. After showReplayBar() the spinner is GONE.
@@ -537,12 +522,12 @@ drawerDMethod.invoke(drawerLayout, false);
     // -----------------------------------------------------------------------
     private void installProngF() {
         try {
-            Class<?> teClass  = ClassMapping.loadClass("t7.e", loader);
+            Class<?> teClass  = Nsg.load(loader, "s2");
             if (teClass == null) {
-                Log.i(REPLAY_TAG, "installProngF: t7.e not available, skipping Prong F");
+                Log.i(REPLAY_TAG, "installProngF: s2 not available, skipping Prong F");
                 return;
             }
-            Method   bMethod  = ClassMapping.getDeclaredMethod(teClass, "t7.e", "b", loader, Object.class);
+            Method   bMethod  = teClass.getDeclaredMethod("b", Object.class);
             bMethod.setAccessible(true);
 xposed.hook(bMethod).intercept(new Hooker() {
                 @Override
@@ -581,9 +566,8 @@ if (discriminator == 4 && arg != null) {
     // -----------------------------------------------------------------------
     private void installProngG() {
         try {
-            Class<?> advClass = ClassMapping.loadClass("com.qtrun.nsg.AdvancedActivity", loader);
-            Method iMethod = ClassMapping.getDeclaredMethod(advClass,
-                    "com.qtrun.nsg.AdvancedActivity", "I", loader, int.class);
+            Class<?> advClass = Nsg.load(loader, "com.qtrun.nsg.AdvancedActivity");
+            Method iMethod = advClass.getDeclaredMethod("A", int.class);
             iMethod.setAccessible(true);
 xposed.hook(iMethod).intercept(new Hooker() {
                 @Override

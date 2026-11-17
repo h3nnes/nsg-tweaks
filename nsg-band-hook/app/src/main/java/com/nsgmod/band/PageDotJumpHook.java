@@ -17,10 +17,16 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * Hooks CirclePageIndicator.onTouchEvent to allow tapping on specific bottom dots
  * to jump directly to a page, instead of just swiping prev/next.
  *
- * Works for all technologies and adapter types.
+ * <p>NSG v4.8.14 targets: com.qtrun.widget.viewpagerindicator.CirclePageIndicator (real
+ * name; fields a radius, e ViewPager my0, g current page, k orientation, l centered,
+ * q dragging), my0.getAdapter()/setCurrentItem(int), be0.c() (adapter page count).
+ *
+ * <p>Works for all technologies and adapter types.
  */
 public class PageDotJumpHook {
     private static final String TAG = "NSGBandHook";
+    private static final String INDICATOR = "com.qtrun.widget.viewpagerindicator.CirclePageIndicator";
+    private static final String PAGER_ADAPTER = "be0";  // abstract PagerAdapter, c() = getCount()
     private static final long LONG_PRESS_MS = 300L;
 
     private final XposedInterface xposed;
@@ -30,18 +36,17 @@ public class PageDotJumpHook {
     private final WeakHashMap<View, Long> recentShortTaps = new WeakHashMap<>();
 
     // reflection fields on CirclePageIndicator
-    private Field viewPagerField;    // e
-    private Field currentPageField;  // g
-    private Field radiusField;       // a
-    private Field draggingField;     // q
-    private Field orientationField;  // k
-    private Field centeredField;     // l
+    private Field viewPagerField;    // e: my0 (ViewPager)
+    private Field currentPageField;  // g: int
+    private Field radiusField;       // a: float
+    private Field draggingField;     // q: boolean
+    private Field orientationField;  // k: int (0 = horizontal)
+    private Field centeredField;     // l: boolean
 
     // ViewPager / adapter methods
-    private Method setCurrentItemMethod;
-    private Method getAdapterMethod;
-    private Method getCountMethod;
-    private Field adapterTechField;  // h on x6.b (optional, for logging only)
+    private Method setCurrentItemMethod;  // my0.setCurrentItem(int)
+    private Method getAdapterMethod;      // my0.getAdapter() -> be0
+    private Method getCountMethod;        // be0.c(): page count
 
     private boolean reflectionReady = false;
 
@@ -53,85 +58,35 @@ public class PageDotJumpHook {
 
     private void initReflection() {
         try {
-            Class<?> indicatorClass = ClassMapping.loadClass(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", loader);
-            if (indicatorClass == null) {
-                Log.i(TAG, "PageDotJumpHook: CirclePageIndicator not available, skipping");
+            Class<?> indicatorClass = Nsg.load(loader, INDICATOR);
+            Class<?> adapterClass = Nsg.load(loader, PAGER_ADAPTER);
+            if (indicatorClass == null || adapterClass == null) {
+                Log.i(TAG, "PageDotJumpHook: CirclePageIndicator or be0 not available, skipping");
                 return;
             }
 
-            String viewPagerName = ClassMapping.runtimeFieldName(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "e", loader);
-            String currentPageName = ClassMapping.runtimeFieldName(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "g", loader);
-            String radiusName = ClassMapping.runtimeFieldName(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "a", loader);
-            String draggingName = ClassMapping.runtimeFieldName(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "q", loader);
-            String orientationName = ClassMapping.runtimeFieldName(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "k", loader);
-            String centeredName = ClassMapping.runtimeFieldName(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", "l", loader);
+            viewPagerField = field(indicatorClass, "e");
+            currentPageField = field(indicatorClass, "g");
+            radiusField = field(indicatorClass, "a");
+            draggingField = field(indicatorClass, "q");
+            orientationField = field(indicatorClass, "k");
+            centeredField = field(indicatorClass, "l");
 
-            for (Field f : indicatorClass.getDeclaredFields()) {
-                f.setAccessible(true);
-                String name = f.getName();
-                Class<?> type = f.getType();
+            Class<?> viewPagerClass = viewPagerField.getType();
+            getAdapterMethod = viewPagerClass.getMethod("getAdapter");
+            setCurrentItemMethod = viewPagerClass.getMethod("setCurrentItem", int.class);
+            getCountMethod = adapterClass.getMethod("c");
 
-                if (viewPagerName.equals(name)) {
-                    viewPagerField = f;
-                } else if (currentPageName.equals(name) && type == int.class) {
-                    currentPageField = f;
-                } else if (radiusName.equals(name) && type == float.class) {
-                    radiusField = f;
-                } else if (draggingName.equals(name) && type == boolean.class) {
-                    draggingField = f;
-                } else if (orientationName.equals(name) && type == int.class) {
-                    orientationField = f;
-                } else if (centeredName.equals(name) && type == boolean.class) {
-                    centeredField = f;
-                }
-            }
-
-            if (viewPagerField != null) {
-                Class<?> viewPagerClass = viewPagerField.getType();
-                getAdapterMethod = viewPagerClass.getMethod("getAdapter");
-                setCurrentItemMethod = viewPagerClass.getMethod("setCurrentItem", int.class);
-            }
-
-            // Resolve adapter count method from w1.a (obfuscated: method is "c" not "getCount")
-            try {
-                Class<?> w1aClass = ClassMapping.loadClass("w1.a", loader);
-                getCountMethod = w1aClass.getMethod("c");
-            } catch (Exception e) {
-                Log.w(TAG, "Could not find w1.a.c() count method");
-            }
-
-            // Adapter tech field: only x6.b has int h. x6.d has a different type for h.
-            // This is optional — used only for debug logging.
-            try {
-                Class<?> x6bClass = ClassMapping.loadClass("x6.b", loader);
-                adapterTechField = x6bClass.getDeclaredField("h");
-                adapterTechField.setAccessible(true);
-            } catch (Exception e) {
-                Log.w(TAG, "Could not find adapter tech field h in x6.b");
-            }
-
-            reflectionReady = viewPagerField != null
-                    && currentPageField != null
-                    && radiusField != null
-                    && draggingField != null
-                    && orientationField != null
-                    && centeredField != null
-                    && setCurrentItemMethod != null
-                    && getAdapterMethod != null;
-
-            if (!reflectionReady) {
-                Log.w(TAG, "PageDotJumpHook: reflection partially failed");
-            }
+            reflectionReady = true;
         } catch (Exception e) {
             Log.e(TAG, "PageDotJumpHook: initReflection failed: " + e);
         }
+    }
+
+    private static Field field(Class<?> c, String name) throws NoSuchFieldException {
+        Field f = c.getDeclaredField(name);
+        f.setAccessible(true);
+        return f;
     }
 
     public void install() {
@@ -140,12 +95,7 @@ public class PageDotJumpHook {
             return;
         }
         try {
-            Class<?> indicatorClass = ClassMapping.loadClass(
-                    "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", loader);
-            if (indicatorClass == null) {
-                Log.i(TAG, "PageDotJumpHook: CirclePageIndicator not available, skipping install");
-                return;
-            }
+            Class<?> indicatorClass = Nsg.load(loader, INDICATOR);
             Method onTouchEventMethod = indicatorClass.getDeclaredMethod(
                     "onTouchEvent", MotionEvent.class);
 
@@ -197,13 +147,6 @@ public class PageDotJumpHook {
                             return chain.proceed();
                         }
 
-                        // Read tech for logging only, don't block on it
-                        try {
-                            adapterTechField.getInt(adapter);
-                        } catch (Exception e) {
-                            // NormalActivity (x6.d) doesn't have int h field — that's fine
-                        }
-
                         float touchX = event.getX();
                         float radius = (float) radiusField.get(indicator);
                         int currentPage = (int) currentPageField.get(indicator);
@@ -213,29 +156,7 @@ public class PageDotJumpHook {
                         int paddingRight = indicatorView.getPaddingRight();
                         int width = indicatorView.getWidth();
 
-                        // Get adapter count with fallback
-                        int count = 0;
-                        if (getCountMethod != null) {
-                            try {
-                                count = (int) getCountMethod.invoke(adapter);
-                            } catch (Exception e) {
-                                // try dynamic lookup below
-                            }
-                        }
-                        if (count <= 0) {
-                            try {
-                                Method dynamicCount = adapter.getClass().getMethod("c");
-                                count = (int) dynamicCount.invoke(adapter);
-                            } catch (Exception e1) {
-                                try {
-                                    Method getCount = adapter.getClass().getMethod("getCount");
-                                    count = (int) getCount.invoke(adapter);
-                                } catch (Exception e2) {
-                                    Log.w(TAG, "Could not get adapter count: " + e2);
-                                    return chain.proceed();
-                                }
-                            }
-                        }
+                        int count = (int) getCountMethod.invoke(adapter); // be0.c()
 
                         if (count <= 0) {
                             return chain.proceed();
@@ -281,12 +202,7 @@ public class PageDotJumpHook {
             // instances and wrap the listener with a guard that skips the call
             // if a short tap was recorded recently.
             try {
-                Class<?> indicatorCls = ClassMapping.loadClass(
-                        "com.qtrun.widget.viewpagerindicator.CirclePageIndicator", loader);
-                if (indicatorCls == null) {
-                    Log.i(TAG, "PageDotJumpHook: CirclePageIndicator not available for long-click guard");
-                    return;
-                }
+                final Class<?> indicatorCls = indicatorClass;
                 Method setOnLongClickListenerMethod = View.class.getDeclaredMethod(
                         "setOnLongClickListener", View.OnLongClickListener.class);
                 setOnLongClickListenerMethod.setAccessible(true);

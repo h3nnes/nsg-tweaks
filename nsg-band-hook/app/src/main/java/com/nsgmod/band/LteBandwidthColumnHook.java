@@ -19,7 +19,7 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks a8.f$a (LTECellsFragment adapter) to inject BOTH a BW column (between
+ * Hooks nc.getView for the LTE table (nc.f == 4, fragment y00) to inject BOTH a BW column (between
  * Band and EARFCN) and an SNR (LTE SINR) column (as the last column, after RSRQ)
  * into the LTE cell table — using a single getView hook and a single onCreateView
  * hook to avoid the interference caused by two separate hooks.
@@ -47,12 +47,12 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * The SNR column uses {@code com.qtrun.widget.textview.ProgressTextView} (not a
  * plain TextView) with {@code com.qtrun.legend.LegendManager} color coding, the
  * same mechanism NSG uses for RSRP/RSRQ columns (decompiled
- * {@code a8.b.AbstractC0008b.j}). Each intraRow gets a
- * {@code com.qtrun.sys.b} attribute descriptor created via Unsafe (the
- * constructor is stripped by ProGuard on gplay) and cached.
+ * {@code nc.j/nc.k}). Each intraRow gets an
+ * {@code m8} attribute descriptor (subclass of {@code l8}: key a, format b,
+ * index c) created via Unsafe and cached.
  *
  * <p>Data is read fresh on every getView() call using the adapter's own sample
- * key (f5509c) as the queryTime anchor — same Property.b(queryTime) -> iter.value()
+ * key (q00.c) as the queryTime anchor — same Property.b(queryTime) -> iter.value()
  * pattern as NSG's v6/f.java. A prev-tick fallback handles partially-written
  * head entries where iter.value() returns null.
  */
@@ -99,23 +99,16 @@ public class LteBandwidthColumnHook {
     // ------------------------------------------------------------------
     // Workspace / Property reflection (for reading BW and SINR data)
     // ------------------------------------------------------------------
-    private Field  wsSingleton;
-    private Field  wsModuleIndex;
-    private Field  wsDataSource;
     private Method dsGetProperty;
     private Method propIterMethod;
     private Method iterEndMethod;
     private Method iterKeyMethod;
     private Method iterValueMethod;
 
-    // ------------------------------------------------------------------
-    // Adapter reflection
-    // ------------------------------------------------------------------
-    private Field  eField;       // a8.b$b.e — Object[] sources array
-    private Method hMethod;      // a8.b$b.h(int) — returns Pair<source, intraRow>
-    private Field  f5509cField;  // k8.c.c — adapter's current data sample key
-    private Field  adapterTypeField;
     private static final int ADAPTER_TYPE_LTE = 4;
+    private static final String LTE_FRAGMENT = "y00"; // LTECells fragment
+    private static final String ATTR_BASE = "l8";     // attribute base (key/format/index)
+    private static final String ATTR_SUB  = "m8";     // attribute subclass used as legend key
 
     // ------------------------------------------------------------------
     // SINR color-coding reflection
@@ -128,17 +121,17 @@ public class LteBandwidthColumnHook {
 
     private Class<?>         legendClass;      // com.qtrun.legend.LegendManager
     private Field            legendSingleton;  // static singleton field
-    private Method           legendMethodC;    // c(com.qtrun.sys.b, double) -> float
-    private Method           legendMethodA;    // a(com.qtrun.sys.b, double) -> Integer
+    private Method           legendMethodC;    // b(m8, double) -> float
+    private Method           legendMethodA;    // a(m8, double) -> Integer
     /** Cached LegendManager singleton instance (stable app object, not modem
      *  data) — avoids a reflective static-field read on every LTE row per frame. */
     private volatile Object  legendSingletonCache;
 
-    private Class<?>         sysBClass;        // com.qtrun.sys.b
-    private Field            sysAFieldA;       // com.qtrun.sys.a.a — String key
-    private Field            sysAFieldB;       // com.qtrun.sys.a.b — String format
-    private Field            sysAFieldC;       // com.qtrun.sys.a.c — int index
-    private Method           sysACMethod;      // com.qtrun.sys.a.c(Object) -> String
+    private Class<?>         sysBClass;        // m8
+    private Field            sysAFieldA;       // l8.a — String key
+    private Field            sysAFieldB;       // l8.b — String format
+    private Field            sysAFieldC;       // l8.c — int index
+    private Method           sysACMethod;      // l8.c(Object) -> String
 
     private Object           unsafe;
     private Method           unsafeAllocateInstance;
@@ -155,42 +148,19 @@ public class LteBandwidthColumnHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            Class<?> dsClass   = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
-            Class<?> bbClass   = ClassMapping.loadClass("a8.b$b", loader);
-            Class<?> k8cClass  = ClassMapping.loadClass("k8.c", loader);
-            if (wsClass == null || dsClass == null || propClass == null || iterClass == null
-                    || bbClass == null || k8cClass == null) {
+            Class<?> dsClass   = Nsg.load(loader, Nsg.DATA_SOURCE);
+            Class<?> propClass = Nsg.load(loader, Nsg.PROPERTY);
+            Class<?> iterClass = Nsg.load(loader, Nsg.PROPERTY_ITER);
+            if (dsClass == null || propClass == null || iterClass == null) {
                 Log.i(TAG, "LteBandwidthColumnHook: essential class missing, skipping");
                 return;
             }
-
-            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
-            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
-            wsSingleton    = wsClass.getField(wsJName);
-            wsModuleIndex  = wsClass.getField(wsAName);
-            wsDataSource   = wsClass.getField(wsCName);
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
-
-            String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
-            eField      = bbClass.getField(eFieldName);
-            hMethod     = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
-            String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
-            f5509cField = k8cClass.getField(sampleKeyFieldName);
-
-            try {
-                adapterTypeField = bbClass.getDeclaredField("f");
-                adapterTypeField.setAccessible(true);
-            } catch (NoSuchFieldException ignored) {
-            }
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -204,8 +174,7 @@ public class LteBandwidthColumnHook {
 
     private void initSinrColorReflection() {
         try {
-            // ProgressTextView — stable across flavors (com.qtrun package).
-            ptvClass = ClassMapping.loadClass("com.qtrun.widget.textview.ProgressTextView", loader);
+            ptvClass = Nsg.load(loader, "com.qtrun.widget.textview.ProgressTextView");
             if (ptvClass == null) {
                 Log.w(TAG, "LteBandwidthColumnHook: ProgressTextView not available, "
                         + "SNR will use plain TextView");
@@ -214,8 +183,7 @@ public class LteBandwidthColumnHook {
             ptvCtor = ptvClass.getConstructor(Context.class, AttributeSet.class);
             ptvCtor.setAccessible(true);
 
-            ptvFieldJ = ptvClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName("com.qtrun.widget.textview.ProgressTextView", "j", loader));
+            ptvFieldJ = ptvClass.getDeclaredField("j");
             ptvFieldJ.setAccessible(true);
 
             ptvMethodH = ptvClass.getDeclaredMethod("h", int.class, float.class);
@@ -223,28 +191,19 @@ public class LteBandwidthColumnHook {
 
             ptvSetProgress = ptvClass.getMethod("setProgress", float.class);
 
-            // LegendManager — stable across flavors (com.qtrun package).
-            legendClass = ClassMapping.loadClass("com.qtrun.legend.LegendManager", loader);
+            legendClass = Nsg.load(loader, "com.qtrun.legend.LegendManager");
             if (legendClass == null) {
                 Log.w(TAG, "LteBandwidthColumnHook: LegendManager not available, "
                         + "SNR will show without color coding");
                 return;
             }
-            // Singleton field: qtrun "e" -> gplay "f" (JADX renames to f3839f/f3783e).
-            String legendSingletonName =
-                    ClassMapping.runtimeFieldName("com.qtrun.legend.LegendManager", "e", loader);
-            try {
-                legendSingleton = legendClass.getDeclaredField(legendSingletonName);
-            } catch (NoSuchFieldException nsfe) {
-                legendSingleton = legendClass.getDeclaredField(ClassMapping.runtimeFieldName("com.qtrun.legend.LegendManager", "e", loader));
-            }
+            legendSingleton = legendClass.getDeclaredField("e"); // enum singleton
             legendSingleton.setAccessible(true);
 
-            // com.qtrun.sys.b class and com.qtrun.sys.a fields/method.
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            sysBClass = Nsg.load(loader, ATTR_SUB);
+            Class<?> sysAClass = Nsg.load(loader, ATTR_BASE);
             if (sysBClass == null || sysAClass == null) {
-                Log.w(TAG, "LteBandwidthColumnHook: com.qtrun.sys.b/a not available");
+                Log.w(TAG, "LteBandwidthColumnHook: " + ATTR_SUB + "/" + ATTR_BASE + " not available");
                 return;
             }
             sysAFieldA = sysAClass.getDeclaredField("a");
@@ -255,18 +214,13 @@ public class LteBandwidthColumnHook {
             sysAFieldC.setAccessible(true);
             sysACMethod = sysAClass.getMethod("c", Object.class);
 
-            // LegendManager methods: c(b, double)->float, a(b, double)->Integer
-            // On gplay these are renamed to e(...) and d(...).
-            legendMethodC = ClassMapping.getDeclaredMethod(
-                    legendClass, "com.qtrun.legend.LegendManager", "c", loader,
-                    sysBClass, double.class);
+            // LegendManager: b(m8, double) -> float (progress), a(m8, double) -> Integer (color)
+            legendMethodC = legendClass.getDeclaredMethod("b", sysBClass, double.class);
             legendMethodC.setAccessible(true);
-            legendMethodA = ClassMapping.getDeclaredMethod(
-                    legendClass, "com.qtrun.legend.LegendManager", "a", loader,
-                    sysBClass, double.class);
+            legendMethodA = legendClass.getDeclaredMethod("a", sysBClass, double.class);
             legendMethodA.setAccessible(true);
 
-            // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard).
+            // Unsafe for allocateInstance (m8 has no usable constructor).
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
             java.lang.reflect.Field unsafeField;
             try {
@@ -298,8 +252,7 @@ public class LteBandwidthColumnHook {
     }
 
     /**
-     * Allocate a com.qtrun.sys.b via Unsafe and set key/format/index fields.
-     * The constructor is stripped by ProGuard on gplay, so Unsafe is required.
+     * Allocate an m8 via Unsafe and set its key/format/index fields (l8.a/b/c).
      */
     private Object makeSinrAttr(String key, int index, String format) throws Exception {
         Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
@@ -315,7 +268,7 @@ public class LteBandwidthColumnHook {
 
     /**
      * Read LTE BW for the given row fresh from the DataSource.
-     * @param adsk adapter's current sample key (f5509c); used as queryTime anchor.
+     * @param adsk adapter's current sample key (q00.c); used as queryTime anchor.
      * @param intraRow 0 = PCell, 1..7 = SCell N (matches the SCell number in the key).
      */
     private String readLteBwFresh(Object ds, int modIdx, long adsk, int intraRow) {
@@ -412,8 +365,8 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.f$a.getView — registered with the shared CellTableRowDispatcher
-    // (single interceptor per runtime getView method). Runs AFTER
+    // Hook: nc.getView (LTE rows) — registered with the shared CellTableRowDispatcher.
+    // Runs AFTER
     // CellRowHeightHook's row processor (reverse registration order), exactly
     // as in the legacy interceptor chain.
     //
@@ -426,7 +379,7 @@ public class LteBandwidthColumnHook {
             return;
         }
         boolean registered =
-                CellTableRowDispatcher.register(xposed, loader, "a8.f$a", "LteBandwidthColumnHook",
+                CellTableRowDispatcher.register(xposed, loader, "LteBandwidthColumnHook",
                 new CellTableRowDispatcher.RowProcessor() {
                     @Override
                     public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
@@ -537,16 +490,13 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.f.I — inject both "BW" and "SNR" header labels
+    // Hook: y00.E (onCreateView) — inject both "BW" and "SNR" header labels
     // -----------------------------------------------------------------------
     private void hookOnCreateView() {
         try {
-            Class<?> fragClass = ClassMapping.loadClass("a8.f", loader);
-            if (fragClass == null) {
-                Log.i(TAG, "LteBandwidthColumnHook: a8.f not available, skipping onCreateView hook");
-                return;
-            }
-            Method   iMethod   = ClassMapping.getMethod(fragClass, "a8.f", "I", loader,
+            Class<?> fragClass = Nsg.load(loader, LTE_FRAGMENT);
+            if (fragClass == null) return;
+            Method   iMethod   = fragClass.getDeclaredMethod("E",
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
             xposed.hook(iMethod).intercept(new Hooker() {
@@ -616,7 +566,7 @@ public class LteBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // SINR color coding — mirrors NSG's a8.b.AbstractC0008b.j()
+    // SINR color coding — mirrors NSG's nc.j/nc.k
     // -----------------------------------------------------------------------
 
     /**
@@ -669,7 +619,7 @@ public class LteBandwidthColumnHook {
                     }
                 }
 
-                // Set formatted text via com.qtrun.sys.a.c(Object).
+                // Set formatted text via l8.c(Object).
                 tv.setText(formatSinrValue(bVar, sinrRaw));
                 return;
             } catch (Exception e) {
@@ -683,7 +633,7 @@ public class LteBandwidthColumnHook {
     }
 
     /**
-     * Format a SINR value using com.qtrun.sys.a.c(Object), falling back to
+     * Format a SINR value using l8.c(Object), falling back to
      * String.format("%.1f") if the reflective call fails.
      */
     private String formatSinrValue(Object bVar, Float value) {

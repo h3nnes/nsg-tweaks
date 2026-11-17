@@ -13,7 +13,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Inserts a "Thput/PRB" row at position 11.0 on the NR-SA CA Matrix UL page
- * (h8.c / q6.c), between the "RB" row (original row 10) and the "Tx Mode" row
+ * (eb0), between the "RB" row (original row 10) and the "Tx Mode" row
  * (original row 11), shifting the original row 11 and all subsequent rows by +1.0.
  *
  * Row geometry:
@@ -32,11 +32,14 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * (RB at row 10, Tx Mode at row 11), shifts rows >= 11.0 by +1.0, and inserts at
  * row 11.0. Then PucchTx shifts rows >= 8.0 by +3.0, moving everything correctly.
  *
- * Hook: AFTER h8.c.l0(Context) / q6.c.k0(Context)
+ * Hook: AFTER eb0.h0(Context)
  */
 public class NrSaThputPerPrbHook {
 
     private static final String TAG = "NSGBandHook";
+
+    private static final String ATTR_BASE = "l8";   // attribute base: key a, format b, index c
+    private static final String ATTR_MAIN = "m8";   // attribute subclass (instantiated via Unsafe)
 
     private static final String PCELL_KEY =
             "NR5G::Uplink_Measurements::PCell::NR_PCell_Physical_Throughput_per_PRB_UL";
@@ -46,35 +49,35 @@ public class NrSaThputPerPrbHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // k2.a builder methods
-    private Method k2aRMethod; // r(float row, float h, float col, float w) -> v6.e  (label)
-    private Method k2aTMethod; // t(float row, float h, float col, float w) -> v6.g  (text cell)
+    // r31 grid builder methods
+    private Method builderLabelMethod; // M(float row, float h, float col, float w) -> bh0 (label)
+    private Method builderTextMethod;  // O(float row, float h, float col, float w) -> dh0 (text cell)
 
-    // v6.e label fields (actual bytecode names)
-    private Field veF; // text   (f)
-    private Field veG; // appearance (g)
-    private Field veH; // gravity (h)
+    // bh0 label fields
+    private Field labelText;  // f
+    private Field labelAlign; // g
+    private Field labelSpan;  // h
 
-    // v6.g value cell method
-    private Method v6gGMethod; // g(com.qtrun.sys.b, boolean) -> data binding
-    private Method v6gJMethod; // j(int index, int color) -> SCell text coloring
+    // dh0 value cell methods
+    private Method textBindMethod;  // g(m8, boolean) -> data binding
+    private Method textColorMethod; // j(int index, int color) -> SCell text coloring
 
-    // com.qtrun.sys.b / a — property binding
-    private Class<?> sysBClass;
-    private Field sysAFieldA; // final String key
-    private Field sysAFieldB; // final String format
-    private Field sysAFieldC; // int index
+    // l8 / m8 — property binding
+    private Class<?> attrClass;
+    private Field attrKey;    // final String a
+    private Field attrFormat; // final String b
+    private Field attrIndex;  // int c
 
-    // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
+    // Unsafe for allocateInstance (m8 ctor is not usable here)
     private Object unsafe;
     private Method unsafeAllocateInstance;
 
-    // k2.a list + v6.a row field
-    private Field k2aListField;
-    private Field vaRowField;
+    // r31 element list + xg0 row field
+    private Field builderListField;
+    private Field elementRowField;
 
-    // v6.b.Y field — k2.a instance on the fragment
-    private Field v6bYField;
+    // yg0.X field — r31 builder on the fragment
+    private Field pageBuilderField;
 
     private boolean ready = false;
 
@@ -86,35 +89,35 @@ public class NrSaThputPerPrbHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vgClass  = ClassMapping.loadClass("v6.g", loader);
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> vaClass  = ClassMapping.loadClass("v6.a", loader);
+            Class<?> builderClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Class<?> labelClass   = Nsg.load(loader, Nsg.GRID_LABEL);
+            Class<?> textClass    = Nsg.load(loader, Nsg.GRID_MULTI);
+            Class<?> pageClass    = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> elementClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
+            attrClass = Nsg.load(loader, ATTR_MAIN);
+            Class<?> attrBaseClass = Nsg.load(loader, ATTR_BASE);
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+            builderLabelMethod = builderClass.getMethod("M",
                     float.class, float.class, float.class, float.class);
-            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
+            builderTextMethod = builderClass.getMethod("O",
                     float.class, float.class, float.class, float.class);
 
-            veF = veClass.getField("f");
-            veG = veClass.getField("g");
-            veH = veClass.getField("h");
+            labelText = labelClass.getField("f");
+            labelAlign = labelClass.getField("g");
+            labelSpan = labelClass.getField("h");
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            sysAFieldA = sysAClass.getDeclaredField("a");
-            sysAFieldB = sysAClass.getDeclaredField("b");
-            sysAFieldC = sysAClass.getDeclaredField("c");
-            sysAFieldA.setAccessible(true);
-            sysAFieldB.setAccessible(true);
-            sysAFieldC.setAccessible(true);
+            attrKey = attrBaseClass.getDeclaredField("a");
+            attrFormat = attrBaseClass.getDeclaredField("b");
+            attrIndex = attrBaseClass.getDeclaredField("c");
+            attrKey.setAccessible(true);
+            attrFormat.setAccessible(true);
+            attrIndex.setAccessible(true);
 
-            v6gGMethod = vgClass.getMethod("g", sysBClass, boolean.class);
-            v6gJMethod = vgClass.getMethod("j", int.class, int.class);
+            textBindMethod = textClass.getMethod("g", attrClass, boolean.class);
+            textColorMethod = textClass.getMethod("j", int.class, int.class);
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-            java.lang.reflect.Field unsafeField;
+            Field unsafeField;
             try {
                 unsafeField = unsafeClass.getDeclaredField("THE_ONE"); // Android/Dalvik
             } catch (NoSuchFieldException e2) {
@@ -124,12 +127,12 @@ public class NrSaThputPerPrbHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
-            k2aListField.setAccessible(true);
-            vaRowField = vaClass.getDeclaredField("b");
-            vaRowField.setAccessible(true);
+            builderListField = builderClass.getDeclaredField("b"); // ArrayList<xg0> (typed Object)
+            builderListField.setAccessible(true);
+            elementRowField = elementClass.getDeclaredField("b");
+            elementRowField.setAccessible(true);
 
-            v6bYField = v6bClass.getField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
+            pageBuilderField = pageClass.getField("X");
 
             ready = true;
         } catch (Exception e) {
@@ -143,14 +146,10 @@ public class NrSaThputPerPrbHook {
             return;
         }
         try {
-            Class<?> h8cClass = ClassMapping.loadClass("h8.c", loader);
-            if (h8cClass == null) {
-                Log.i(TAG, "NrSaThputPerPrbHook: h8.c not available on this flavor, skipping");
-                return;
-            }
-            Method l0Method = ClassMapping.getMethod(h8cClass, "h8.c", "l0", loader, Context.class);
+            Class<?> pageClass = Nsg.load(loader, Nsg.PAGE_SA_CA_MATRIX_UL);
+            Method buildMethod = pageClass.getMethod("h0", Context.class);
 
-            xposed.hook(l0Method).intercept(new Hooker() {
+            xposed.hook(buildMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -171,19 +170,19 @@ public class NrSaThputPerPrbHook {
 
     private void injectThputPerPrbRow(Object thiz, Context ctx) {
         try {
-            Object k2aObj = v6bYField.get(thiz);
-            if (k2aObj == null) {
-                Log.w(TAG, "NrSaThputPerPrbHook: this.Y is null after l0(), skipping");
+            Object builder = pageBuilderField.get(thiz);
+            if (builder == null) {
+                Log.w(TAG, "NrSaThputPerPrbHook: this.X is null after h0(), skipping");
                 return;
             }
 
             // Step 1: shift all elements at row >= 11.0 by +1.0
-            java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+            java.util.ArrayList<?> list = (java.util.ArrayList<?>) builderListField.get(builder);
             if (list != null) {
                 for (Object elem : list) {
-                    float elemRow = (float) vaRowField.get(elem);
+                    float elemRow = (float) elementRowField.get(elem);
                     if (elemRow >= 11.0f) {
-                        vaRowField.set(elem, elemRow + 1.0f);
+                        elementRowField.set(elem, elemRow + 1.0f);
                     }
                 }
             }
@@ -192,36 +191,36 @@ public class NrSaThputPerPrbHook {
             final float h = 1.0f;
 
             // Step 2: inject "TP/PRB/TTI" label at row=11.0, h=1.0, col=0.0, w=27.0
-            Object label = k2aRMethod.invoke(k2aObj, row, h, 0.0f, 27.0f);
+            Object label = builderLabelMethod.invoke(builder, row, h, 0.0f, 27.0f);
             if (label != null) {
-                veF.set(label, "TP/PRB/TTI");
-                veG.set(label, 0);
-                veH.set(label, 1);
+                labelText.set(label, "TP/PRB/TTI");
+                labelAlign.set(label, 0);
+                labelSpan.set(label, 1);
             }
 
             // Step 3: inject PCell text at row=11.0, h=1.0, col=30.0, w=34.0
-            Object pcellText = k2aTMethod.invoke(k2aObj, row, h, 30.0f, 34.0f);
+            Object pcellText = builderTextMethod.invoke(builder, row, h, 30.0f, 34.0f);
             if (pcellText != null) {
-                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, PCELL_KEY);
-                sysAFieldB.set(prop, "%.1f Bits");
-                sysAFieldC.set(prop, -1);
-                v6gGMethod.invoke(pcellText, prop, false);
+                Object prop = unsafeAllocateInstance.invoke(unsafe, attrClass);
+                attrKey.set(prop, PCELL_KEY);
+                attrFormat.set(prop, "%.1f Bits");
+                attrIndex.set(prop, -1);
+                textBindMethod.invoke(pcellText, prop, false);
             }
 
             // Step 4: inject SCell text at row=11.0, h=1.0, col=65.0, w=34.0
             //         Color-match with holo_purple, same as NSG's own SCell text rows.
-            Object scellText = k2aTMethod.invoke(k2aObj, row, h, 65.0f, 34.0f);
+            Object scellText = builderTextMethod.invoke(builder, row, h, 65.0f, 34.0f);
             if (scellText != null) {
-                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, SCELL_KEY);
-                sysAFieldB.set(prop, "%.1f Bits");
-                sysAFieldC.set(prop, 0);
-                v6gGMethod.invoke(scellText, prop, false);
-                if (v6gJMethod != null && ctx != null) {
+                Object prop = unsafeAllocateInstance.invoke(unsafe, attrClass);
+                attrKey.set(prop, SCELL_KEY);
+                attrFormat.set(prop, "%.1f Bits");
+                attrIndex.set(prop, 0);
+                textBindMethod.invoke(scellText, prop, false);
+                if (ctx != null) {
                     int color = ctx.getResources().getColor(
                             android.R.color.holo_purple, ctx.getTheme());
-                    v6gJMethod.invoke(scellText, 0, color);
+                    textColorMethod.invoke(scellText, 0, color);
                 }
             }
 

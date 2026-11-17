@@ -16,7 +16,7 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks a8.i (NRSACellsFragment) to add two columns to the NR-SA cell table:
+ * Hooks gb0 (NRSACellsFragment) to add two columns to the NR-SA cell table:
  *   - ARFCN  — inserted at column index 1 (before PCI), per-row value
  *   - BW     — inserted at column index 3 (after PCI, before Beam), serving rows only
  *
@@ -28,12 +28,20 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   [0] Serving  [1] ARFCN  [2] PCI  [3] BW  [4] Beam  [5] RSRP  [6] RSRQ  [7] SINR
  *
  * Data path (same as LteBandwidthColumnHook):
- *   Workspace.j → singleton; .a → moduleIndex; .c → DataSource; .g → cursor time
+ *   Workspace.j → singleton; .a → moduleIndex; .c → DataSource
  *   DataSource.getProperty(key, moduleIndex) → Property
- *   Property.b(cursorTime) → Iterator; .key() → long; Property.get(key) → Object
+ *   Property.b(sampleKey) → Iterator; .key() → long; .value() → Object
+ *
+ * v4.8.14 targets:
+ *   gb0  NRSACellsFragment (E = onCreateView), extends cq
+ *   cq   abstract cell-fragment base; b(DataSource,long,short,Object) = data callback
+ *   a10  cell adapter (R8-merged, switch field f); getView, d = bq[] sources,
+ *        f(int position) → Pair<bq bucket, Integer intraRow>
+ *   bq   adapter bucket; d(int column,int row) (inherited from dq) → formatted cell text
+ *   sd   cell-DB manager; e(String tech) → loaded DB or null
+ *   db0  NR-SA CA Matrix DL page; M = page shown, k0 = grid rebuild
  *
  * Adapter row→source mapping:
- *   a8.d$b.g(int position) → Pair<a8.d.a source, Integer intraRow>
  *   pair.first == sources[0]  → serving bucket (PCell + SCells)
  *   pair.second               → intraRow: 0=PCell, 1=SCell1, 2=SCell2 …
  *
@@ -44,7 +52,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   BW SCell N       : NR5G::Serving_Cell::SCell::NR_SCell_Bandwidth_DL  (index N-1)
  *
  * NOTE: Do NOT use NR5G::Serving_Cell::NR_ARFCN_SSB / NR_SCell_ARFCN_SSB for ARFCN.
- * Those are the metrics-page (g8.m / NRNSANRCC) keys which only cover SCells visible
+ * Those are the metrics-page (NRNSANRCC) keys which only cover SCells visible
  * on the NR-SA metrics tab. Aggregated SCells not on that page will show "-".
  *
  * Additionally (own toggle, default OFF) the same getView hook colours the PCI of
@@ -60,6 +68,12 @@ public class NrSaCellColumnsHook {
     private static final String TAG              = "NSGBandHook";
     private static final String TAG_COLS_INJECTED = "nsg_nrsa_cols_injected";
 
+    private static final String CELL_ADAPTER  = "a10"; // cell adapter (getView)
+    private static final String CELL_BUCKET   = "bq";  // adapter bucket
+    private static final String CELL_BASE     = "cq";  // cell fragment base (data callback)
+    private static final String CELL_FRAGMENT = "gb0"; // NRSACellsFragment
+    private static final String CELL_DB       = "sd";  // cell-DB manager (name unchanged)
+
     private final XposedInterface xposed;
     private final ClassLoader     loader;
 
@@ -74,19 +88,15 @@ public class NrSaCellColumnsHook {
     private Method iterKeyMethod;   // Property$Iterator.key() → long
     private Method iterValueMethod;
 
-    // Adapter reflection — a8.d$b
-    private Field  sourcesField; // actual bytecode name "d"  (JADX: f135d) — a8.d.a[]
-    private Method gMethod;      // g(int) → Pair<a8.d.a, Integer>
-    private Method bucketTextMethod; // a8.d$a.d(int,int) → formatted cell text (null = unavailable)
+    // Adapter reflection — a10
+    private Field  sourcesField; // a10.d: bq[] sources
+    private Method gMethod;      // a10.f(int) → Pair<bq, Integer>
+    private Method bucketTextMethod; // bq.d(int,int) (declared in dq) → formatted cell text
 
     private boolean ready = false;
     private static volatile boolean nrCellDbLoaded = false;
     private static boolean cellDbHookInstalled = false;
-    /**
-     * Sample key captured from a8.d.b(DataSource, long j10, …) callback.
-     * a8.d.a extends k8.b, NOT k8.c, so there is no f5509c field to read.
-     * Instead we hook the data-callback to capture j10 before getView() fires.
-     */
+    /** Sample key captured from the cq.b(DataSource, long, …) data callback before getView() fires. */
     private volatile long lastNrSaSampleKey = 0L;
 
     public NrSaCellColumnsHook(XposedInterface xposed, ClassLoader loader) {
@@ -97,23 +107,21 @@ public class NrSaCellColumnsHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            Class<?> dsClass   = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
-            Class<?> dbClass   = ClassMapping.loadClass("a8.d$b", loader);
+            Class<?> wsClass   = Nsg.load(loader, Nsg.WORKSPACE);
+            Class<?> dsClass   = Nsg.load(loader, Nsg.DATA_SOURCE);
+            Class<?> propClass = Nsg.load(loader, Nsg.PROPERTY);
+            Class<?> iterClass = Nsg.load(loader, Nsg.PROPERTY_ITER);
+            Class<?> adapterClass = Nsg.load(loader, CELL_ADAPTER);
+            Class<?> bucketClass  = Nsg.load(loader, CELL_BUCKET);
             if (wsClass == null || dsClass == null || propClass == null || iterClass == null
-                    || dbClass == null) {
+                    || adapterClass == null || bucketClass == null) {
                 Log.i(TAG, "NrSaCellColumnsHook: essential class missing, skipping");
                 return;
             }
 
-            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
-            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
-            wsSingleton    = wsClass.getField(wsJName);
-            wsModuleIndex  = wsClass.getField(wsAName);
-            wsDataSource   = wsClass.getField(wsCName);
+            wsSingleton    = wsClass.getField("j");   // Workspace.j: singleton instance
+            wsModuleIndex  = wsClass.getField("a");   // Workspace.a: module index (short)
+            wsDataSource   = wsClass.getField("c");   // Workspace.c: DataSource
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
@@ -121,28 +129,9 @@ public class NrSaCellColumnsHook {
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
 
-            String sourcesFieldName = ClassMapping.runtimeFieldName("a8.d$b", "d", loader);
-            sourcesField = dbClass.getField(sourcesFieldName);   // a8.d.a[] sources
-            gMethod      = ClassMapping.getMethod(dbClass, "a8.d$b", "g", loader, int.class);
-            // NOTE: a8.d.a extends k8.b (not k8.c), so there is no f5509c field.
-            // Sample key is captured via hookDataCallback() instead.
-
-            // Optional: formatted-column accessor on the bucket class, used only by
-            // the same-site PCI highlight. Resolved separately so a flavor mismatch
-            // cannot disable the column-injection features.
-            try {
-                Class<?> bucketClass = ClassMapping.loadClass("a8.d$a", loader);
-                if (bucketClass != null) {
-                    bucketTextMethod = ClassMapping.getMethod(bucketClass, "a8.d$a", "d",
-                            loader, int.class, int.class);
-                } else {
-                    Log.w(TAG, "NrSaCellColumnsHook: a8.d$a has no mapping on this flavor, "
-                            + "same-site PCI highlight disabled");
-                }
-            } catch (Throwable t) {
-                Log.w(TAG, "NrSaCellColumnsHook: bucket accessor unavailable, "
-                        + "same-site PCI highlight disabled: " + t);
-            }
+            sourcesField = adapterClass.getField("d");             // a10.d: bq[] sources
+            gMethod      = adapterClass.getMethod("f", int.class); // a10.f: position → Pair<bq, intraRow>
+            bucketTextMethod = bucketClass.getMethod("d", int.class, int.class); // dq.d: formatted cell text
 
             ready = true;
         } catch (Exception e) {
@@ -163,16 +152,16 @@ public class NrSaCellColumnsHook {
         hookDataCallback();
         hookGetView();
         hookOnCreateView();
-        hookH8bQ();
+        hookCaMatrixShown();
         Log.i(TAG, "NrSaCellColumnsHook: installed");
     }
 
     private void hookCellDbStatus() {
         if (cellDbHookInstalled) return;
         try {
-            Class<?> cls = ClassMapping.loadClass("f7.b", loader);
+            Class<?> cls = Nsg.load(loader, CELL_DB);
             if (cls == null) return;
-            Method dMethod = ClassMapping.getMethod(cls, "f7.b", "d", loader, String.class);
+            Method dMethod = cls.getMethod("e", String.class); // sd.e: load cell DB for tech
             xposed.hook(dMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
@@ -195,21 +184,21 @@ public class NrSaCellColumnsHook {
     // -----------------------------------------------------------------------
 
     /**
-     * Hook a8.d.b(DataSource, long j10, short, Object) — the Workspace.a callback
-     * invoked when new data arrives.  Captures j10 (arg index 1) into lastNrSaSampleKey.
+     * Hook cq.b(DataSource, long, short, Object) — the Workspace callback
+     * invoked when new data arrives.  Captures the sample key (arg index 1) into lastNrSaSampleKey.
      *
      * This runs BEFORE notifyDataSetChanged() / getView(), so by the time getView()
      * fires the field already holds the correct sample key for this render cycle.
      *
-     * All a8.d subclasses share this callback; capturing from any of them is fine
+     * All cq subclasses share this callback; capturing from any of them is fine
      * because they all receive the same monotonically-increasing sample key stream.
      */
     private void hookDataCallback() {
         try {
-            Class<?> dClass  = ClassMapping.loadClass("a8.d", loader);
-            Class<?> dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Class<?> dClass  = Nsg.load(loader, CELL_BASE);
+            Class<?> dsClass = Nsg.load(loader, Nsg.DATA_SOURCE);
             if (dClass == null || dsClass == null) {
-                Log.i(TAG, "NrSaCellColumnsHook: a8.d or DataSource missing, skipping data callback hook");
+                Log.i(TAG, "NrSaCellColumnsHook: cq or DataSource missing, skipping data callback hook");
                 return;
             }
             Method   bMethod = dClass.getDeclaredMethod("b",
@@ -235,12 +224,12 @@ public class NrSaCellColumnsHook {
 
     /** Read ARFCN for a row.
      *
-     * Uses the same Cell_Measurements keys that a8.i (NRSACellsFragment) itself registers:
+     * Uses the same Cell_Measurements keys that gb0 (NRSACellsFragment) itself registers:
      *   serving  → NR5G::Cell_Measurements::NR_Cells_ARFCN       (Integer[], index = intraRow)
      *   detected → NR5G::Detected_Cells::NR_DetectedCells_ARFCN  (Integer[], index = intraRow)
      *
      * Do NOT use NR5G::Serving_Cell::NR_ARFCN_SSB or NR_SCell_ARFCN_SSB here.
-     * Those are the metrics-page (Serving_Cell namespace) keys used by g8.m (NRNSANRCC).
+     * Those are the metrics-page (Serving_Cell namespace) keys used by NRNSANRCC.
      * SCells that are aggregated but not shown on the metrics page have no entry there,
      * so they would show "-". The Cell_Measurements array covers all cells in the table.
      *
@@ -287,7 +276,7 @@ public class NrSaCellColumnsHook {
                 return null;
             }
 
-            // Use iter.value() — matches NSG's own h8/b.java read pattern.
+            // Use iter.value() — matches NSG's own read pattern (dh0.a).
             // property.get(sk) returns null for array-type properties (e.g. SCell BW
             // Object[]) even though the iterator IS positioned at a valid sample key.
             long   sampleKey = (long) iterKeyMethod.invoke(iterator);
@@ -361,7 +350,7 @@ public class NrSaCellColumnsHook {
      */
     private static final int SAME_SITE_PCI_COLOR = 0xFF00BCD4;
 
-    /** Column indices inside an hb0 bucket (a8.d$a), see hb0's registration order. */
+    /** Column indices inside a gb0 bucket (bq), see gb0's registration order. */
     private static final int COL_SERVING_TYPE = 0;
     private static final int COL_ARFCN        = 1;
     private static final int COL_PCI          = 2;
@@ -445,14 +434,14 @@ public class NrSaCellColumnsHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook 1: a8.i$a.getView — inject ARFCN + BW columns, conditionally hide sub-row
+    // Hook 1: a10.getView — inject ARFCN + BW columns, conditionally hide sub-row
     // -----------------------------------------------------------------------
 
     private void hookGetView() {
         try {
-            Class<?> adapterClass  = ClassMapping.loadClass("a8.i$a", loader);
+            Class<?> adapterClass  = Nsg.load(loader, CELL_ADAPTER);
             if (adapterClass == null) {
-                Log.i(TAG, "NrSaCellColumnsHook: a8.i$a not available, skipping getView hook");
+                Log.i(TAG, "NrSaCellColumnsHook: a10 not available, skipping getView hook");
                 return;
             }
             Method   getViewMethod = adapterClass.getMethod("getView",
@@ -481,7 +470,7 @@ public class NrSaCellColumnsHook {
                     LinearLayout topRow = (LinearLayout) topChild;
                     if (topRow.getOrientation() != LinearLayout.HORIZONTAL) return result;
 
-                    // queryTime: use lastNrSaSampleKey captured from the a8.d.b() data
+                    // queryTime: use lastNrSaSampleKey captured from the cq.b() data
                     // callback (set before notifyDataSetChanged → getView).  Falls back
                     // to Long.MAX_VALUE on first render before any callback fires
                     // (live mode: MAX_VALUE = latest data = correct).
@@ -581,7 +570,7 @@ public class NrSaCellColumnsHook {
                     }
 
                     // Already injected — refresh text and color
-                    // (NSG's k0() has already set pciView's color correctly for this row)
+                    // (NSG's getView has already set pciView's color correctly for this row)
                     if (TAG_COLS_INJECTED.equals(topRow.getTag())) {
                         if (topRow.getChildCount() >= 8) {
                             // After injection layout is: [0]Serving [1]ARFCN [2]PCI [3]BW ...
@@ -666,17 +655,18 @@ public class NrSaCellColumnsHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook 2: a8.i.I (onCreateView) — inject header labels after layout posted
+    // Hook 2: gb0.E (onCreateView) — inject header labels after layout posted
     // -----------------------------------------------------------------------
 
     private void hookOnCreateView() {
         try {
-            Class<?> fragClass = ClassMapping.loadClass("a8.i", loader);
+            Class<?> fragClass = Nsg.load(loader, CELL_FRAGMENT);
             if (fragClass == null) {
-                Log.i(TAG, "NrSaCellColumnsHook: a8.i not available, skipping onCreateView hook");
+                Log.i(TAG, "NrSaCellColumnsHook: gb0 not available, skipping onCreateView hook");
                 return;
             }
-            Method   iMethod   = ClassMapping.getMethod(fragClass, "a8.i", "I", loader,
+            // gb0.E: onCreateView
+            Method   iMethod   = fragClass.getMethod("E",
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
             xposed.hook(iMethod).intercept(new Hooker() {
@@ -772,19 +762,19 @@ public class NrSaCellColumnsHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook 3: h8.b.Q() — force o0() rebuild when NR-SA CA Matrix becomes visible
+    // Hook 3: db0.M() — force k0() rebuild when NR-SA CA Matrix becomes visible
     // -----------------------------------------------------------------------
 
-    private void hookH8bQ() {
+    private void hookCaMatrixShown() {
         try {
-            Class<?> cls    = ClassMapping.loadClass("h8.b", loader);
+            Class<?> cls    = Nsg.load(loader, Nsg.PAGE_SA_CA_MATRIX_DL);
             if (cls == null) {
-                Log.i(TAG, "NrSaCellColumnsHook: h8.b not available, skipping h8.b.Q hook");
+                Log.i(TAG, "NrSaCellColumnsHook: db0 not available, skipping db0.M hook");
                 return;
             }
-            Method   qMeth  = ClassMapping.getDeclaredMethod(cls, "h8.b", "Q", loader);
+            Method   qMeth  = cls.getDeclaredMethod("M");  // db0.M: page shown
             qMeth.setAccessible(true);
-            Method   o0Meth = ClassMapping.getDeclaredMethod(cls, "h8.b", "o0", loader);
+            Method   o0Meth = cls.getDeclaredMethod("k0"); // db0.k0: rebuild grid
             o0Meth.setAccessible(true);
 
             xposed.hook(qMeth).intercept(new Hooker() {
@@ -796,13 +786,13 @@ public class NrSaCellColumnsHook {
                     try {
                         o0Meth.invoke(fragment);
                     } catch (Throwable t) {
-                        Log.w(TAG, "NrSaCellColumnsHook: h8.b.o0() invoke failed: " + t);
+                        Log.w(TAG, "NrSaCellColumnsHook: db0.k0() invoke failed: " + t);
                     }
                     return result;
                 }
             });
         } catch (Throwable t) {
-            Log.e(TAG, "NrSaCellColumnsHook: hookH8bQ failed: " + t);
+            Log.e(TAG, "NrSaCellColumnsHook: hookCaMatrixShown failed: " + t);
         }
     }
 }

@@ -14,24 +14,28 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Adds a "CSI SNR" row (PCell only) to the NR-SA CA Matrix DL page (h8.b).
+ * Adds a "CSI SNR" row (PCell only) to the NR-SA CA Matrix DL page (db0).
  *
- * Architecture:
- *   h8.b.o0() dispatches to k0(d1.g), l0(d1.g), or inline code based on SCell count.
- *   All paths end with:  v6.b bVarK0 = v6.b.k0(aVarL0);  [line 1104]
+ * v4.8.14 targets:
+ *   db0  NR-SA CA Matrix DL page; k0() builds the grid (three layout paths by SCell count,
+ *        all ending with yg0.g0(r31)); Z = carrier count (int)
+ *   yg0  grid page fragment; static g0(r31) stores the builder
+ *   r31  grid builder; b = ArrayList of grid elements; M(row,h,col,w) → bh0 label,
+ *        N(row,h,col,w) → ch0 bar
+ *   xg0  grid element base; b = row position (float)
+ *   bh0  label cell: f = text, g = alignment, h = span
+ *   ch0  bar cell: g = m8 attribute binding
+ *   l8 / m8  attribute binding (a = key, b = format, c = index); m8 is allocated via Unsafe
+ *   LegendManager  e = singleton; a(m8,double) → Integer color, b(m8,double) → float progress
  *
  * Strategy:
- *   Hook h8.b.o0() with a before+after wrapper that sets a ThreadLocal flag.
- *   Hook v6.b.k0(k2.a) — inject the CSI SNR row into the k2.a when flag is set.
+ *   Hook db0.k0() with a before+after wrapper that sets a ThreadLocal flag.
+ *   Hook yg0.g0(r31) — inject the CSI SNR row into the r31 when flag is set.
  *
- * Fallback:
- *   Also directly hook h8.b.k0(d1.g) and h8.b.l0(d1.g) in case the static
- *   v6.b.k0 hook doesn't fire (e.g. due to static dispatch issues).
- *
- * Row layout (float f8101b = row position, used via Math.floor for layout):
+ * Row layout (float xg0.b = row position, used via Math.floor for layout):
  *   20/21 = SS-SNR (existing)
  *   21.5  = CSI SNR injected — floors to row 21, placed at end of ArrayList
- *           but rows are layout-positioned by f8101b not insertion order
+ *           but rows are layout-positioned by xg0.b not insertion order
  *   22/23 = RBs (existing)
  */
 public class NrSaCsiSnrRowHook {
@@ -46,10 +50,10 @@ public class NrSaCsiSnrRowHook {
     static final ThreadLocal<Integer> carrierCountInO0 = new ThreadLocal<>();
 
     /**
-     * Maps k2.a builder instances created inside h8.b.o0() to their carrier count.
-     * Populated by the v6.b.k0 hook (which fires inside o0()).
-     * Used by NrSaCellColorHook to identify SA CA Matrix builders when v6.b.I() fires later.
-     * WeakHashMap so k2.a objects are not prevented from being GC'd.
+     * Maps r31 builder instances created inside db0.k0() to their carrier count.
+     * Populated by the yg0.g0 hook (which fires inside k0()).
+     * Used by NrSaCellColorHook to identify SA CA Matrix builders when yg0.E() fires later.
+     * WeakHashMap so r31 objects are not prevented from being GC'd.
      */
     static final Map<Object, Integer> saK2aCarriers =
             Collections.synchronizedMap(new WeakHashMap<>());
@@ -57,20 +61,23 @@ public class NrSaCsiSnrRowHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    private Method k2aRMethod;
-    private Method k2aSMethod;
+    private static final String ATTR_L8 = "l8";
+    private static final String ATTR_M8 = "m8";
+    private static final String LEGEND  = "com.qtrun.legend.LegendManager";
 
-    private Field veF8116f;
-    private Field veF8117g;
-    private Field veH;
+    private Method k2aRMethod; // r31.M: add label cell
+    private Method k2aSMethod; // r31.N: add bar cell
 
-    private Field vfF8120g;
+    private Field veText; // bh0.f: label text
+    private Field veAlign; // bh0.g: alignment
+    private Field veH;      // bh0.h: span
 
-    private Class<?> sysBClass;
-    // Fields on com.qtrun.sys.a (superclass of b) — actual bytecode names after JADX rename
-    private Field sysAFieldA; // "a" = key string   (JADX: f3868a), declared final
-    private Field sysAFieldB; // "b" = format string (JADX: f3869b), declared final
-    private Field sysAFieldC; // "c" = index int     (JADX: f3870c)
+    private Field vfBinding; // ch0.g: attribute binding
+
+    private Class<?> sysBClass; // m8
+    private Field sysAFieldA; // l8.a: key string, final
+    private Field sysAFieldB; // l8.b: format string, final
+    private Field sysAFieldC; // l8.c: index int
     private Object unsafe;    // sun.misc.Unsafe instance, held as Object to avoid compile dep
     private java.lang.reflect.Method unsafeAllocateInstance;
 
@@ -80,13 +87,12 @@ public class NrSaCsiSnrRowHook {
     private Object ssSinrLegendBVar;
     private static boolean pdschColorRedirectInstalled = false;
 
-    // h8.b.f5066a0 = carrier count (2 = PCell only/1SCell, 3 = 2SCells, ...)
-    // Actual bytecode field name after JADX rename: "a0"
+    // db0.Z = carrier count (2 = PCell only/1SCell, 3 = 2SCells, ...)
     private Field h8bCarrierCountField;
 
-    // k2.a ArrayList of v6.a elements — actual bytecode name "d" (JADX: f5437d)
+    // r31.b: ArrayList of grid elements
     private Field k2aListField;
-    // v6.a row position float — actual bytecode name "b" (JADX: f8101b)
+    // xg0.b: row position float
     private Field vaRowField;
 
     private boolean ready = false;
@@ -99,29 +105,25 @@ public class NrSaCsiSnrRowHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass  = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass   = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vfClass   = ClassMapping.loadClass("v6.f", loader);
+            Class<?> k2aClass  = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Class<?> veClass   = Nsg.load(loader, Nsg.GRID_LABEL);
+            Class<?> vfClass   = Nsg.load(loader, Nsg.GRID_VALUE);
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
-                    float.class, float.class, float.class, float.class);
-            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
-                    float.class, float.class, float.class, float.class);
+            k2aRMethod = k2aClass.getMethod("M", float.class, float.class, float.class, float.class);
+            k2aSMethod = k2aClass.getMethod("N", float.class, float.class, float.class, float.class);
 
-            // JADX renames fields to avoid collision with package names, e.g. "f" in package v6.f
-            // becomes "f8116f". The actual bytecode field names are the originals: "f", "g", "h".
-            veF8116f = veClass.getField("f"); // label text (renamed from "f" → "f8116f" by JADX)
-            veF8117g = veClass.getField("g"); // alignment  (renamed from "g" → "f8117g" by JADX)
-            veH      = veClass.getField("h"); // span       (not renamed)
+            veText = veClass.getField("f");
+            veAlign = veClass.getField("g");
+            veH      = veClass.getField("h");
 
-            // v6.f.g field type is com.qtrun.sys.b; ProGuard stripped b's constructor.
-            // Use Unsafe.allocateInstance(b.class) to create a real b instance without a ctor,
-            // then set the inherited final fields from a via Unsafe putObject/putInt.
-            vfF8120g = vfClass.getDeclaredField("g");
-            vfF8120g.setAccessible(true);
+            // ch0.g field type is m8; R8 stripped m8's constructor.
+            // Use Unsafe.allocateInstance(m8.class) to create a real m8 instance without a ctor,
+            // then set the inherited final fields from l8 via reflection.
+            vfBinding = vfClass.getDeclaredField("g");
+            vfBinding.setAccessible(true);
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            sysBClass = Nsg.load(loader, ATTR_M8);
+            Class<?> sysAClass = Nsg.load(loader, ATTR_L8);
             sysAFieldA = sysAClass.getDeclaredField("a"); // final String key
             sysAFieldB = sysAClass.getDeclaredField("b"); // final String format
             sysAFieldC = sysAClass.getDeclaredField("c"); // int index
@@ -141,15 +143,13 @@ public class NrSaCsiSnrRowHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            // h8.b.f5066a0 = carrier count field; JADX renames it "f5066a0", actual name "a0"
-            Class<?> h8bClass = ClassMapping.loadClass("h8.b", loader);
-            h8bCarrierCountField = h8bClass.getDeclaredField(ClassMapping.runtimeFieldName("h8.b", "a0", loader));
+            Class<?> h8bClass = Nsg.load(loader, Nsg.PAGE_SA_CA_MATRIX_DL);
+            h8bCarrierCountField = h8bClass.getDeclaredField("Z");
             h8bCarrierCountField.setAccessible(true);
 
-            // k2.a ArrayList field "d" (JADX: f5437d); v6.a row float field "b" (JADX: f8101b)
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
+            k2aListField = k2aClass.getDeclaredField("b");
             k2aListField.setAccessible(true);
-            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
+            Class<?> vaClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
             vaRowField = vaClass.getDeclaredField("b");
             vaRowField.setAccessible(true);
 
@@ -158,24 +158,14 @@ public class NrSaCsiSnrRowHook {
             // returns null for color and -1 for progress. We redirect the lookup to
             // NR_SS_SINR (which IS mapped to the NR SNR legend) so PDSCH SINR uses
             // the exact same dynamic color thresholds as SS-SNR/CSI-SNR.
-            Class<?> legendClass = ClassMapping.loadClass("com.qtrun.legend.LegendManager", loader);
+            Class<?> legendClass = Nsg.load(loader, LEGEND);
             if (legendClass != null) {
-                String singletonName = ClassMapping.runtimeFieldName(
-                        "com.qtrun.legend.LegendManager", "e", loader);
-                try {
-                    legendSingleton = legendClass.getDeclaredField(singletonName);
-                } catch (NoSuchFieldException nsfe) {
-                    legendSingleton = legendClass.getDeclaredField(ClassMapping.runtimeFieldName("com.qtrun.legend.LegendManager", "e", loader));
-                }
+                legendSingleton = legendClass.getDeclaredField("e"); // LegendManager.e: singleton
                 legendSingleton.setAccessible(true);
 
-                legendMethodC = ClassMapping.getDeclaredMethod(
-                        legendClass, "com.qtrun.legend.LegendManager", "c", loader,
-                        sysBClass, double.class);
+                legendMethodC = legendClass.getDeclaredMethod("b", sysBClass, double.class); // b(m8,double) → float progress
                 legendMethodC.setAccessible(true);
-                legendMethodA = ClassMapping.getDeclaredMethod(
-                        legendClass, "com.qtrun.legend.LegendManager", "a", loader,
-                        sysBClass, double.class);
+                legendMethodA = legendClass.getDeclaredMethod("a", sysBClass, double.class); // a(m8,double) → Integer color
                 legendMethodA.setAccessible(true);
 
                 ssSinrLegendBVar = unsafeAllocateInstance.invoke(unsafe, sysBClass);
@@ -195,8 +185,8 @@ public class NrSaCsiSnrRowHook {
             Log.w(TAG, "NrSaCsiSnrRowHook: skipping install — reflection not ready");
             return;
         }
-        installO0FlagHook();
-        installV6bK0Hook();
+        installCarrierFlagHook();
+        installGridPageHook();
         if (SettingsToggleHook.nrPdschSnrEnabled()) {
             installPdschColorRedirect();
         }
@@ -204,13 +194,13 @@ public class NrSaCsiSnrRowHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook 1: h8.b.o0() — set/clear ThreadLocal flag around execution
+    // Hook 1: db0.k0() — set/clear ThreadLocal flag around execution
     // -----------------------------------------------------------------------
 
-    private void installO0FlagHook() {
+    private void installCarrierFlagHook() {
         try {
-            Class<?> h8bClass = ClassMapping.loadClass("h8.b", loader);
-            Method   o0Method = ClassMapping.getMethod(h8bClass, "h8.b", "o0", loader);
+            Class<?> h8bClass = Nsg.load(loader, Nsg.PAGE_SA_CA_MATRIX_DL);
+            Method   o0Method = h8bClass.getDeclaredMethod("k0"); // db0.k0: rebuild grid
 
             xposed.hook(o0Method).intercept(new Hooker() {
                 @Override
@@ -230,19 +220,19 @@ public class NrSaCsiSnrRowHook {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "NrSaCsiSnrRowHook: o0 flag hook failed: " + e);
+            Log.e(TAG, "NrSaCsiSnrRowHook: db0.k0 flag hook failed: " + e);
         }
     }
 
     // -----------------------------------------------------------------------
-    // Hook 2: static v6.b.k0(k2.a) — inject when called from h8.b.o0()
+    // Hook 2: static yg0.g0(r31) — inject when called from db0.k0()
     // -----------------------------------------------------------------------
 
-    private void installV6bK0Hook() {
+    private void installGridPageHook() {
         try {
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Method   k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
+            Class<?> v6bClass = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> k2aClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Method   k0Method = v6bClass.getDeclaredMethod("g0", k2aClass); // yg0.g0(r31)
 
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
@@ -251,7 +241,7 @@ public class NrSaCsiSnrRowHook {
                     Integer carriers = carrierCountInO0.get();
                     boolean inO0 = carriers != null;
                     if (inO0 && k2aArg != null) {
-                        // Record this k2.a as belonging to the SA CA Matrix screen
+                        // Record this r31 as belonging to the SA CA Matrix screen
                         saK2aCarriers.put(k2aArg, carriers);
                         // carriers == 2: 1 SCell (Path A) — RSRP shift +2.0
                         // carriers == 3: 2 SCells (Path B) — RSRP shift +4.0
@@ -275,7 +265,7 @@ public class NrSaCsiSnrRowHook {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "NrSaCsiSnrRowHook: v6.b.k0 hook failed: " + e);
+            Log.e(TAG, "NrSaCsiSnrRowHook: yg0.g0 hook failed: " + e);
         }
     }
 
@@ -326,7 +316,7 @@ public class NrSaCsiSnrRowHook {
     }
 
     // -----------------------------------------------------------------------
-    // Injection: append CSI SNR + PDSCH SINR rows to k2.a builder
+    // Injection: append CSI SNR + PDSCH SINR rows to r31 builder
     // -----------------------------------------------------------------------
 
     private void injectCsiSnrRow(Object k2aObj, float row, int carriers, boolean pdschEnabled) {
@@ -352,8 +342,8 @@ public class NrSaCsiSnrRowHook {
             // Inject CSI SNR label at insertRow, col 0..27
             Object labelElem = k2aRMethod.invoke(k2aObj, insertRow, labelHeight, 0.0f, 27.0f);
             if (labelElem != null) {
-                veF8116f.set(labelElem, "CSI SNR");
-                veF8117g.set(labelElem, 0);
+                veText.set(labelElem, "CSI SNR");
+                veAlign.set(labelElem, 0);
                 veH.set(labelElem, 1);
             }
 
@@ -364,7 +354,7 @@ public class NrSaCsiSnrRowHook {
                 sysAFieldA.set(propBinding, "NR5G::Downlink_Measurements::NR_CSI_SINR");
                 sysAFieldB.set(propBinding, "%.1f dB");
                 sysAFieldC.set(propBinding, -1);
-                vfF8120g.set(barElem, propBinding);
+                vfBinding.set(barElem, propBinding);
             }
 
             // ── PDSCH SINR row (below CSI SNR, above RBs) — gated by toggle ──
@@ -387,8 +377,8 @@ public class NrSaCsiSnrRowHook {
             // Inject PDSCH SINR label
             Object pdschLabel = k2aRMethod.invoke(k2aObj, pdschRow, labelHeight, 0.0f, 27.0f);
             if (pdschLabel != null) {
-                veF8116f.set(pdschLabel, "PDSCH SINR");
-                veF8117g.set(pdschLabel, 0);
+                veText.set(pdschLabel, "PDSCH SINR");
+                veAlign.set(pdschLabel, 0);
                 veH.set(pdschLabel, 1);
             }
 
@@ -399,7 +389,7 @@ public class NrSaCsiSnrRowHook {
                 sysAFieldA.set(pdschProp, PDSCH_SINR_KEY);
                 sysAFieldB.set(pdschProp, "%.1f dB");
                 sysAFieldC.set(pdschProp, -1);
-                vfF8120g.set(pdschBar, pdschProp);
+                vfBinding.set(pdschBar, pdschProp);
             }
 
         } catch (Exception e) {

@@ -18,21 +18,27 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Colors SCell data-value labels (v6.g) on the NR-SA CA Matrix DL page by SCell index.
+ * Colors SCell data-value labels (dh0) on the NR-SA CA Matrix DL page by SCell index.
  *
- * Root cause of previous failures:
- *   - v6.b.k0(k2.a) only stores the builder reference; no TextViews exist yet.
- *   - k2.a.j(Context, int) is called from v6.b.I() (onCreateView), which fires on the
- *     UI thread during fragment attachment — AFTER h8.b.o0() has completed and cleared
- *     the carrierCountInO0 ThreadLocal. So guarding on that ThreadLocal always misses.
+ * v4.8.14 targets:
+ *   r31  grid builder; b = ArrayList of grid elements
+ *   xg0  grid element base: a = View, b = row (float), d = column (float)
+ *   yg0  grid page fragment: static g0(r31) stores the builder, X = r31, E = onCreateView
+ *   dh0  multi-attribute value cell: f = ArrayList of l8 bindings, i = text color
+ *   l8   attribute binding: c = SCell index
+ *   u00  formatter binding; e = case id (27 = Rank)
  *
- * Fix:
- *   Hook v6.b.I() as an after-hook. By then k2.a.j() has run, c() has been called on
- *   every element, and f8100a on each v6.g is a live, attached TextView.
- *   Identify SA CA Matrix fragments by looking up this.Y (the k2.a field) in
- *   NrSaCsiSnrRowHook.saK2aCarriers — a WeakHashMap populated during o0().
+ * k0-style rebuild (db0.k0) only stores the builder via yg0.g0(r31); no TextViews exist yet.
+ * yg0.E() (onCreateView) runs later on the UI thread, after db0.k0() has completed and cleared
+ * the carrierCountInO0 ThreadLocal, so guarding on that ThreadLocal would always miss.
  *
- * Also keep the v6.b.k0 hook to update f8126i so future c() calls (fragment recreation)
+ * Therefore:
+ *   Hook yg0.E() as an after-hook. By then every element has built its view and
+ *   xg0.a on each dh0 is a live, attached TextView.
+ *   Identify SA CA Matrix fragments by looking up this.X (the r31 field) in
+ *   NrSaCsiSnrRowHook.saK2aCarriers — a WeakHashMap populated during db0.k0().
+ *
+ * Also keep the yg0.g0 hook to update dh0.i so future view builds (fragment recreation)
  * also bake the correct color into new TextViews.
  *
  * Color mapping (0-based SCell index from binding field "c"):
@@ -58,20 +64,23 @@ public class NrSaCellColorHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // Shared map from NrSaCsiSnrRowHook: k2.a → carrier count, populated during o0()
+    // Shared map from NrSaCsiSnrRowHook: r31 → carrier count, populated during db0.k0()
     private final Map<Object, Integer> saK2aCarriers;
 
+    private static final String ATTR_L8 = "l8";   // attribute binding
+    private static final String FORMATTER_U00 = "u00"; // formatter binding with case id
+
     private Class<?> vgClass;
-    private Field vgBindingsField;   // v6.g "f": ArrayList<com.qtrun.sys.b>
-    private Field vgColorField;      // v6.g "i": int text color
-    private Field vgViewField;       // v6.a "a": View (TextView)
-    private Field sysACIndexField;   // com.qtrun.sys.a "c": int SCell index
-    private Field k2aElementsField;  // k2.a "d": ArrayList<v6.a>
-    private Field v6bYField;         // v6.b "Y": k2.a builder stored on the fragment
-    private Field v6aColField;       // v6.a "d" (f8103d): float column position
-    private Field v6aRowField;       // v6.a "b" (f8101b): float row position
-    private Class<?> rankBindingClass; // d7.i$k — Rank formatter; its c is always 0 in 3-carrier inline path
-    private Field rankCaseField;      // v00 "e" (int case id) — 27 for Rank, only on v4.8.9
+    private Field vgBindingsField;   // dh0.f: ArrayList<m8>
+    private Field vgColorField;      // dh0.i: int text color
+    private Field vgViewField;       // xg0.a: View (TextView)
+    private Field sysACIndexField;   // l8.c: int SCell index
+    private Field k2aElementsField;  // r31.b: ArrayList<xg0>
+    private Field v6bYField;         // yg0.X: r31 builder stored on the fragment
+    private Field v6aColField;       // xg0.d: float column position
+    private Field v6aRowField;       // xg0.b: float row position
+    private Class<?> rankBindingClass; // u00 — formatter binding; its c is always 0 in 3-carrier inline path
+    private Field rankCaseField;      // u00.e (int case id) — 27 for Rank
     private static final int RANK_CASE_ID = 27;
 
     private boolean ready = false;
@@ -86,11 +95,12 @@ public class NrSaCellColorHook {
 
     private void initReflection() {
         try {
-            vgClass = ClassMapping.loadClass("v6.g", loader);
-            Class<?> v6aClass  = ClassMapping.loadClass("v6.a", loader);
-            Class<?> v6bClass  = ClassMapping.loadClass("v6.b", loader);
-            Class<?> k2aClass  = ClassMapping.loadClass("k2.a", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            vgClass = Nsg.load(loader, Nsg.GRID_MULTI);
+            Class<?> v6aClass  = Nsg.load(loader, Nsg.GRID_ELEMENT);
+            Class<?> v6bClass  = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> k2aClass  = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Class<?> sysAClass = Nsg.load(loader, ATTR_L8);
+            rankBindingClass   = Nsg.load(loader, FORMATTER_U00);
 
             vgBindingsField = vgClass.getDeclaredField("f");
             vgBindingsField.setAccessible(true);
@@ -104,10 +114,10 @@ public class NrSaCellColorHook {
             sysACIndexField = sysAClass.getDeclaredField("c");
             sysACIndexField.setAccessible(true);
 
-            k2aElementsField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
+            k2aElementsField = k2aClass.getDeclaredField("b");
             k2aElementsField.setAccessible(true);
 
-            v6bYField = v6bClass.getDeclaredField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
+            v6bYField = v6bClass.getDeclaredField("X");
             v6bYField.setAccessible(true);
 
             v6aColField = v6aClass.getDeclaredField("d");
@@ -116,16 +126,8 @@ public class NrSaCellColorHook {
             v6aRowField = v6aClass.getDeclaredField("b");
             v6aRowField.setAccessible(true);
 
-            rankBindingClass = ClassMapping.loadClass("d7.i$k", loader);
-            if (rankBindingClass == null) {
-                Log.w(TAG, "NrSaCellColorHook: d7.i$k not available, Rank fallback disabled");
-            } else {
-                try {
-                    rankCaseField = rankBindingClass.getDeclaredField("e");
-                    rankCaseField.setAccessible(true);
-                } catch (NoSuchFieldException ignored) {
-                }
-            }
+            rankCaseField = rankBindingClass.getDeclaredField("e");
+            rankCaseField.setAccessible(true);
 
             ready = true;
         } catch (Exception e) {
@@ -139,12 +141,12 @@ public class NrSaCellColorHook {
             return;
         }
         try {
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
+            Class<?> v6bClass = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> k2aClass = Nsg.load(loader, Nsg.GRID_BUILDER);
 
-            // Hook 1: v6.b.k0(k2.a) — update f8126i on all matching v6.g objects so that
-            // any future c() call (e.g. fragment recreation) bakes the right color.
-            Method k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
+            // Hook 1: yg0.g0(r31) — update dh0.i on all matching dh0 objects so that
+            // any future view build (e.g. fragment recreation) bakes the right color.
+            Method k0Method = v6bClass.getDeclaredMethod("g0", k2aClass);
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
@@ -158,9 +160,9 @@ public class NrSaCellColorHook {
             });
             Log.i(TAG, "NrSaCellColorHook: installed");
 
-            // Hook 2: v6.b.I(LayoutInflater, ViewGroup, Bundle) — after k2.a.j() has run,
-            // all TextViews in f8100a are live. Walk this.Y's element list and setTextColor.
-            Method iMethod = ClassMapping.getMethod(v6bClass, "v6.b", "I", loader,
+            // Hook 2: yg0.E(LayoutInflater, ViewGroup, Bundle) — after the elements built their
+            // views, all TextViews in xg0.a are live. Walk this.X's element list and setTextColor.
+            Method iMethod = v6bClass.getDeclaredMethod("E",
                     android.view.LayoutInflater.class,
                     android.view.ViewGroup.class,
                     android.os.Bundle.class);
@@ -186,7 +188,7 @@ public class NrSaCellColorHook {
         }
     }
 
-    /** Update f8126i on all SCell v6.g elements (scell index > 0) for future c() calls. */
+    /** Update dh0.i on all SCell dh0 elements (scell index > 0) for future view builds. */
     private void updateFieldColors(Object k2aObj) {
         try {
             ArrayList<?> elements = (ArrayList<?>) k2aElementsField.get(k2aObj);
@@ -207,8 +209,8 @@ public class NrSaCellColorHook {
     }
 
     /**
-     * After v6.b.I() returns, c() has created fresh TextViews in f8100a.
-     * Walk all v6.g elements with SCell index > 0 and call setTextColor on the live view.
+     * After yg0.E() returns, fresh TextViews exist in xg0.a.
+     * Walk all dh0 elements with SCell index > 0 and call setTextColor on the live view.
      */
     private void applyLiveTextColors(Object k2aObj, int carriers) {
         try {
@@ -225,7 +227,7 @@ public class NrSaCellColorHook {
 
                 int targetColor = SCELL_COLORS[idx];
 
-                // Also patch f8126i in case fragment is recreated
+                // Also patch dh0.i in case fragment is recreated
                 vgColorField.set(elem, targetColor);
 
                 try {
@@ -242,16 +244,16 @@ public class NrSaCellColorHook {
     }
 
     /**
-     * Build a map from v6.g object → SCell index for all Rank elements (d7.i$k bindings).
+     * Build a map from dh0 object → SCell index for all Rank elements (u00 case-27 bindings).
      *
      * Strategy: collect ALL Rank bars regardless of column, sort globally by (col, row),
      * treat the first entry (smallest col, then smallest row) as the PCell and skip it,
      * then assign global SCell indices 0, 1, 2, … to the remaining elements in order.
      *
      * This correctly handles all three NSG layout paths:
-     *   2-carrier (k0):     col=30:[PCell]          col=65:[SCell0]            → idx 0
+     *   2-carrier (g0):     col=30:[PCell]          col=65:[SCell0]            → idx 0
      *   3-carrier (inline): col=30:[PCell]          col=65:[SCell0, SCell1]    → idx 0, 1
-     *   4-carrier (l0):     col=30:[PCell, SCell0]  col=65:[SCell1, SCell2]    → idx 0, 1, 2
+     *   4-carrier (h0):     col=30:[PCell, SCell0]  col=65:[SCell1, SCell2]    → idx 0, 1, 2
      *
      * The previous col<60 filter accidentally excluded SCell[0] at col=30 in the 4-carrier
      * path, causing SCell[1] and SCell[2] to be assigned indices 0 and 1 (off by one) and
@@ -260,7 +262,6 @@ public class NrSaCellColorHook {
      */
     private Map<Object, Integer> buildRankScellMap(ArrayList<?> elements) {
         Map<Object, Integer> result = new HashMap<>();
-        if (rankBindingClass == null) return result;
 
         ArrayList<Object> rankElems = new ArrayList<>();
         ArrayList<Float>  rankCols  = new ArrayList<>();
@@ -273,12 +274,7 @@ public class NrSaCellColorHook {
                 if (bindings == null || bindings.isEmpty()) continue;
                 Object b = bindings.get(0);
                 if (b == null || !rankBindingClass.isInstance(b)) continue;
-                if (rankCaseField != null) {
-                    try {
-                        int caseId = (int) rankCaseField.get(b);
-                        if (caseId != RANK_CASE_ID) continue;
-                    } catch (Exception ignored) { continue; }
-                }
+                if ((int) rankCaseField.get(b) != RANK_CASE_ID) continue;
                 rankElems.add(elem);
                 rankCols.add((float) v6aColField.get(elem));
                 rankRows.add((float) v6aRowField.get(elem));
@@ -309,8 +305,8 @@ public class NrSaCellColorHook {
     }
 
     /**
-     * Determine the SCell index for a v6.g element.
-     * rankMap overrides when provided (for d7.i$k elements with ambiguous c=0).
+     * Determine the SCell index for a dh0 element.
+     * rankMap overrides when provided (for Rank u00 bindings with ambiguous c=0).
      */
     private int resolveScellIndex(Object vgObj, Map<Object, Integer> rankMap) {
         // Check Rank override map first

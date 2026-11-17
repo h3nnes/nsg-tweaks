@@ -18,6 +18,14 @@ import java.util.List;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
+/**
+ * Long-press on the PLMN value cell of the NR-SA/NSA/LTE header (HeaderCGIFragment) shows the
+ * network operator name as a toast.
+ *
+ * <p>v4.8.14 targets: HeaderCGIFragment.b(DataSource,long,short,Object) (data update, hooked),
+ * HeaderCGIFragment.Z0 (dh0 PLMN value cell), xg0.a (grid element's View), Workspace.j (enum
+ * singleton) / Workspace.a (short module slot), TestService.o() (static) + a40.y() (replay active).
+ */
 public class PlmnOperatorToastHook {
 
     private static final String TAG = "NSGBandHook";
@@ -44,24 +52,21 @@ public class PlmnOperatorToastHook {
 
     public void install() {
         try {
-            Class<?> cgiClass = ClassMapping.loadClass(CGI_FRAGMENT, loader);
-            plmnValueField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "plmnValue", loader));
+            Class<?> cgiClass = Nsg.load(loader, CGI_FRAGMENT);
+            plmnValueField = cgiClass.getDeclaredField("Z0"); // dh0 PLMN value cell
             plmnValueField.setAccessible(true);
 
-            Class<?> cellBaseClass = ClassMapping.loadClass("v6.a", loader);
-            viewField = cellBaseClass.getDeclaredField("a");
+            Class<?> cellBaseClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
+            viewField = cellBaseClass.getDeclaredField("a"); // xg0.a: View
             viewField.setAccessible(true);
 
-            Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            wsSingletonField = wsClass.getField(
-                    ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader));
-            wsModuleSlotField = wsClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader));
+            Class<?> wsClass = Nsg.load(loader, Nsg.WORKSPACE);
+            wsSingletonField = wsClass.getField("j");
+            wsModuleSlotField = wsClass.getDeclaredField("a");
             wsModuleSlotField.setAccessible(true);
 
-            Class<?> dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            Method bMethod = ClassMapping.getDeclaredMethod(cgiClass, CGI_FRAGMENT, "b", loader,
+            Class<?> dsClass = Nsg.load(loader, Nsg.DATA_SOURCE);
+            Method bMethod = cgiClass.getDeclaredMethod("b",
                     dsClass, long.class, short.class, Object.class);
             bMethod.setAccessible(true);
 
@@ -124,7 +129,7 @@ public class PlmnOperatorToastHook {
                 Class<?> tsClass = Class.forName("com.qtrun.sys.TestService", false, loader);
                 testServiceGetInstance = tsClass.getMethod("o");
                 testServiceGetInstance.setAccessible(true);
-                Class<?> serviceClass = ClassMapping.loadClass("t7.g0", loader);
+                Class<?> serviceClass = Nsg.load(loader, "a40");
                 if (serviceClass == null) return false;
                 replayActiveMethod = serviceClass.getMethod("y");
                 replayActiveMethod.setAccessible(true);

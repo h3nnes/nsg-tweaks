@@ -14,7 +14,7 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Fixes the green carrier-count indicator on the NR-SA CA Matrix DL page (h8.b).
+ * Fixes the green carrier-count indicator on the NR-SA CA Matrix DL page (db0).
  *
  * The indicator at row 2 col 0 is bound to
  *   NR5G::Dedicated_Radio_Link::NR_CarrierCount
@@ -22,11 +22,20 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *
  * LTE CA Matrix works because LTE_ServingCarrier_Num actually exists in modem data.
  *
+ * v4.8.14 targets:
+ *   yg0  grid page fragment: static g0(r31) stores the builder
+ *   r31  grid builder; b = ArrayList of grid elements
+ *   dh0  multi-attribute value cell: f = ArrayList of l8 bindings, g = display string,
+ *        a(long, DataSource, short) = per-tick update
+ *   l8   attribute binding: a = key, c = index, d = Property
+ *   m8   attribute binding subclass (allocated via Unsafe, constructor stripped)
+ *   Workspace.j singleton, .a tick (short), .f(l8, int) → true if the attribute is live
+ *
  * Strategy:
- *   1. Hook v6.b.k0(k2.a) to find and track the carrier-count v6.g element
- *   2. Hook v6.g.a(long, DataSource, short) — the per-tick update method.
+ *   1. Hook yg0.g0(r31) to find and track the carrier-count dh0 element
+ *   2. Hook dh0.a(long, DataSource, short) — the per-tick update method.
  *      When the tracked element shows "-", compute the carrier count from
- *      SCell ARFCN/PCI array lengths (same logic as h8.b.n0()) and override.
+ *      SCell ARFCN/PCI array lengths (same logic as db0.j0()) and override.
  */
 public class NrSaCarrierCountHook {
 
@@ -46,8 +55,11 @@ public class NrSaCarrierCountHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    private Field vgF8124f;
-    private Field vgF8125g;
+    private static final String ATTR_L8 = "l8";
+    private static final String ATTR_M8 = "m8";
+
+    private Field vgBindingsField; // dh0.f: bindings
+    private Field vgTextField; // dh0.g: display string
 
     private Field sysAKeyField;
     private Field sysAPropField;
@@ -72,7 +84,7 @@ public class NrSaCarrierCountHook {
 
     private Field sysACField;
 
-    private Field k2aListField;
+    private Field k2aListField; // r31.b: ArrayList of grid elements
 
     private boolean ready = false;
 
@@ -86,13 +98,13 @@ public class NrSaCarrierCountHook {
 
     private void initReflection() {
         try {
-            vgClass = ClassMapping.loadClass("v6.g", loader);
-            vgF8124f = vgClass.getDeclaredField("f");
-            vgF8124f.setAccessible(true);
-            vgF8125g = vgClass.getDeclaredField("g");
-            vgF8125g.setAccessible(true);
+            vgClass = Nsg.load(loader, Nsg.GRID_MULTI);
+            vgBindingsField = vgClass.getDeclaredField("f");
+            vgBindingsField.setAccessible(true);
+            vgTextField = vgClass.getDeclaredField("g");
+            vgTextField.setAccessible(true);
 
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
+            Class<?> sysAClass = Nsg.load(loader, ATTR_L8);
             sysAKeyField = sysAClass.getDeclaredField("a");
             sysAKeyField.setAccessible(true);
             sysAPropField = sysAClass.getDeclaredField("d");
@@ -100,24 +112,22 @@ public class NrSaCarrierCountHook {
             sysACField = sysAClass.getDeclaredField("c");
             sysACField.setAccessible(true);
 
-            Class<?> workspaceClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            String wsSingletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            String wsTickName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
-            Field wjField = workspaceClass.getDeclaredField(wsSingletonName);
+            Class<?> workspaceClass = Nsg.load(loader, Nsg.WORKSPACE);
+            Field wjField = workspaceClass.getDeclaredField("j"); // Workspace.j: singleton
             wjField.setAccessible(true);
             workspaceInstance = wjField.get(null);
-            workspaceTickField = workspaceClass.getDeclaredField(wsTickName);
+            workspaceTickField = workspaceClass.getDeclaredField("a"); // Workspace.a: tick (short)
             workspaceTickField.setAccessible(true);
-            workspaceHMethod = ClassMapping.getMethod(workspaceClass, "com.qtrun.sys.Workspace", "h", loader, sysAClass, int.class);
+            workspaceHMethod = workspaceClass.getMethod("f", sysAClass, int.class); // Workspace.f: attribute live?
 
-            Class<?> propertyClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
+            Class<?> propertyClass = Nsg.load(loader, Nsg.PROPERTY);
             propertyBMethod = propertyClass.getMethod("b", long.class);
 
-            Class<?> iteratorClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> iteratorClass = Nsg.load(loader, Nsg.PROPERTY_ITER);
             iteratorEndMethod = iteratorClass.getMethod("end");
             iteratorValueMethod = iteratorClass.getMethod("value");
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
+            sysBClass = Nsg.load(loader, ATTR_M8);
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
             java.lang.reflect.Field unsafeField;
             try {
@@ -139,8 +149,8 @@ public class NrSaCarrierCountHook {
             unsafePutObject.invoke(unsafe, scellPciBinding, keyOffset, SCELL_PCI_KEY);
             sysACField.set(scellPciBinding, -1);
 
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
+            Class<?> k2aClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            k2aListField = k2aClass.getDeclaredField("b");
             k2aListField.setAccessible(true);
 
             ready = true;
@@ -154,16 +164,16 @@ public class NrSaCarrierCountHook {
             Log.w(TAG, "NrSaCarrierCountHook: skipping install — reflection not ready");
             return;
         }
-        installV6bK0Hook();
-        installV6gAHook();
+        installGridPageHook();
+        installValueCellHook();
         Log.i(TAG, "NrSaCarrierCountHook: installed");
     }
 
-    private void installV6bK0Hook() {
+    private void installGridPageHook() {
         try {
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Method k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
+            Class<?> v6bClass = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> k2aClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Method k0Method = v6bClass.getDeclaredMethod("g0", k2aClass); // yg0.g0(r31)
 
             xposed.hook(k0Method).intercept(new Hooker() {
                 @Override
@@ -177,7 +187,7 @@ public class NrSaCarrierCountHook {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "NrSaCarrierCountHook: v6.b.k0 hook failed: " + e);
+            Log.e(TAG, "NrSaCarrierCountHook: yg0.g0 hook failed: " + e);
         }
     }
 
@@ -191,7 +201,7 @@ public class NrSaCarrierCountHook {
                 if (!vgClass.isInstance(elem)) continue;
 
                 java.util.ArrayList<?> bindings =
-                        (java.util.ArrayList<?>) vgF8124f.get(elem);
+                        (java.util.ArrayList<?>) vgBindingsField.get(elem);
                 if (bindings == null) continue;
 
                 for (Object binding : bindings) {
@@ -207,11 +217,11 @@ public class NrSaCarrierCountHook {
         }
     }
 
-    private void installV6gAHook() {
+    private void installValueCellHook() {
         try {
-            Class<?> vgClass = ClassMapping.loadClass("v6.g", loader);
-            Class<?> dataSourceClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            Method aMethod = vgClass.getMethod("a", long.class, dataSourceClass, short.class);
+            Class<?> vgClass = Nsg.load(loader, Nsg.GRID_MULTI);
+            Class<?> dataSourceClass = Nsg.load(loader, Nsg.DATA_SOURCE);
+            Method aMethod = vgClass.getMethod("a", long.class, dataSourceClass, short.class); // dh0.a: per-tick update
 
             xposed.hook(aMethod).intercept(new Hooker() {
                 @Override
@@ -222,7 +232,7 @@ public class NrSaCarrierCountHook {
                         return result;
                     }
 
-                    String displayStr = (String) vgF8125g.get(chain.getThisObject());
+                    String displayStr = (String) vgTextField.get(chain.getThisObject());
                     if (!"-".equals(displayStr)) {
                         return result;
                     }
@@ -232,7 +242,7 @@ public class NrSaCarrierCountHook {
 
                     int carriers = computeCarrierCount(timestamp, tick);
                     if (carriers > 0) {
-                        vgF8125g.set(chain.getThisObject(),
+                        vgTextField.set(chain.getThisObject(),
                                 String.format("%d carrier(s)", carriers));
                         return Boolean.TRUE;
                     }
@@ -241,7 +251,7 @@ public class NrSaCarrierCountHook {
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "NrSaCarrierCountHook: v6.g.a hook failed: " + e);
+            Log.e(TAG, "NrSaCarrierCountHook: dh0.a hook failed: " + e);
         }
     }
 

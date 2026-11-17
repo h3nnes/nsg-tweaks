@@ -12,34 +12,38 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Adds an "RSRP" row immediately below the "Band/Width" row (above "SINR") on both
- * CA Matrix DL pages — LTE CA Matrix DL (e8.b) and NR-NSA EUTRA CA Matrix DL (g8.i) —
- * showing the RSRP value for PCell and each SCell.
+ * CA Matrix DL pages — LTE "CAMatrix" (w00) and NR-NSA "NRNSA_LTE_CA_Matrix" (ua0) —
+ * showing the RSRP value for PCell and each SCell. Further rows (Rank3/Rank4 usage,
+ * MCS Cwd 0/1) are inserted the same way, and the 5/6+ carrier layouts are rebuilt.
  *
- * g8.i is a parallel class to e8.b with identical row geometry and method/field
- * names; only the class name differs, so a single hook serves both pages. g8.i may
- * be absent on some flavors and is then skipped gracefully.
+ * ua0 is a parallel class to w00 with identical row geometry and member names, so one
+ * hook serves both pages.
  *
- * LTE has a single RSRP value per cell (no SS-RSRP / CSI-RSRP distinction).
- *
- * Architecture mirrors SACAMatrixDLHook / NrSaCsiSnrRowHook:
- *   e8.b.n0() / g8.i.n0() dispatch to k0(d1.g) [Z==1/2], inline code [Z==3], or
- *   l0(d1.g) [Z>=4], all paths end with v6.b.k0(k2.a).
+ * NSG v4.8.14 targets:
+ *   w00 / ua0 (page fragments): j0() dispatches on carrier count Y to g0(w4) [Y==1/2],
+ *     inline code [Y==3] or h0(w4) [Y>=4]; every path ends with static yg0.g0(r31).
+ *   r31 (grid builder): list b (ArrayList of elements); M/N/O(row, h, col, w) add a
+ *     label bh0 / bar ch0 / multi-value dh0 cell.
+ *   xg0 (element base): row b, height c, col d, width e.
+ *   bh0: text f, alignment g, span h.  ch0: binding g (m8), f(int,float) fixed colour/max.
+ *   dh0: bindings f, separator h, colour i, appearance j, gravity k.
+ *   l8 (attribute): key a, format b, index c; m8 extends l8.
  *
  * Strategy:
- *   Hook e8.b.n0() and g8.i.n0() to set a shared ThreadLocal<Integer> with the
- *   carrier count (field Z on the respective page class).
- *   Hook static v6.b.k0(k2.a) once — when the ThreadLocal is set, inject the rows.
+ *   Hook w00.j0() and ua0.j0() to set a shared ThreadLocal<Integer> with the carrier
+ *   count (field Y of the page).
+ *   Hook static yg0.g0(r31) once — when the ThreadLocal is set, inject the rows.
  *
  * Row geometry per carrier path:
  *
- *   Path A  Z==1 or Z==2  (1 SCell, k0())  — single-height rows (h=1.0)
+ *   Path A  Y==1 or Y==2  (1 SCell, g0(w4))  — single-height rows (h=1.0)
  *     Band/Width at row 10.  SINR at row 11.
  *     → Insert RSRP at row 11, shift ≥11 by +2.0.
  *     Label  col=0  w=27
  *     PCell  col=30 w=34  key=LTE_RSRP_PCell     index=-1
  *     SCell1 col=65 w=34  key=LTE_RSRP_SCell1    index=-1
  *
- *   Path B  Z==3  (2 SCells, inline n0())  — double-height rows (h=2.0)
+ *   Path B  Y==3  (2 SCells, inline j0())  — double-height rows (h=2.0)
  *     Band/Width at row 11 (h=2).  SINR at row 13 (h=2).
  *     → Insert RSRP at row 13, shift ≥13 by +2.0 (one logical h=2 row).
  *     Label      row=13  h=2.0  col=0  w=27
@@ -47,7 +51,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *     SCell1 bar row=13.0 h=1.0  col=65 w=34  key=LTE_RSRP_SCell1 index=-1
  *     SCell2 bar row=14.0 h=1.0  col=65 w=34  key=LTE_RSRP_SCell2 index=-1
  *
- *   Path C  Z>=4  (3 SCells, l0())  — single-height rows (h=1.0)
+ *   Path C  Y>=4  (3 SCells, h0(w4))  — single-height rows (h=1.0)
  *     Band/Width at rows 11–12 (h=1 each).  SINR at rows 13–14 (h=1 each).
  *     → Insert RSRP at row 13, shift ≥13 by +2.0 (two h=1 sub-rows).
  *     Label      row=13  h=2.0  col=0  w=27
@@ -66,7 +70,7 @@ public class CaMatrixDlHook {
 
     private static final String TAG = "NSGBandHook";
 
-    /** Set by the e8.b/g8.i n0() flag hooks while n0() executes; null otherwise. */
+    /** Set by the w00/ua0 j0() flag hooks while j0() executes; null otherwise. */
     static final ThreadLocal<Integer> carrierCountInN0 = new ThreadLocal<>();
 
     /** NSG R.color.color_deep_blue = #ff1080e0 (ARGB), used for Rank3/Rank4 bars. */
@@ -83,67 +87,61 @@ public class CaMatrixDlHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // Shared static reflection context — initialized exactly once (both pages use
-    // the same obfuscated runtime names via ClassMapping).
+    private static final String PAGE_LTE_CA_MATRIX = Nsg.PAGE_LTE_CA_MATRIX_DL;   // w00
+    private static final String PAGE_NSA_LTE_CA_MATRIX = Nsg.PAGE_NSA_LTE_CA_MATRIX; // ua0
+    /** Attribute class used for cell bindings. */
+    private static final String ATTR_CLASS = "l8";    // key a, format b, index c
+    private static final String BINDING_CLASS = "m8"; // l8 subclass bound to bar/multi cells
 
-    // k2.a builder methods
-    private static Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e  (label)
-    private static Method k2aSMethod; // s(float row, float h, float col, float w) → v6.f  (bar)
-    private static Method k2aTMethod; // t(float row, float h, float col, float w) → v6.g  (text)
+    // r31 grid builder
+    private static Method addLabel; // r31.M(float row, float h, float col, float w) -> bh0 (label)
+    private static Method addBar;   // r31.N(...) -> ch0 (bar)
+    private static Method addMulti; // r31.O(...) -> dh0 (multi value)
+    private static Field listField; // r31.b: ArrayList of grid elements
 
-    // v6.e label fields (actual bytecode names)
-    private static Field veF; // text   (JADX: f8116f)
-    private static Field veG; // align  (JADX: f8117g)
-    private static Field veH; // span
+    // xg0 element base fields
+    private static Field rowField;    // xg0.b
+    private static Field heightField; // xg0.c
+    private static Field colField;    // xg0.d
+    private static Field widthField;  // xg0.e
 
-    // v6.f bar data-binding field
-    private static Field vfF8120g; // g (JADX: f8120g) — data binding
+    // bh0 label fields
+    private static Field labelText;  // bh0.f
+    private static Field labelAlign; // bh0.g
+    private static Field labelSpan;  // bh0.h
 
-    // v6.f bar color/max/fixed fields (flavor-dependent)
-    private static Field barFixedField;
-    private static Field barColorField;
-    private static Field barMaxField;
+    // ch0 bar fields
+    private static Field barBinding;      // ch0.g (m8)
+    private static Field barFixedField;   // ch0.h (boolean)
+    private static Field barColorField;   // ch0.i
+    private static Field barMaxField;     // ch0.j
+    private static Method barFixedColor;  // ch0.f(int color, float max): fixed-colour bar mode
 
-    // v6.f bar color/max setter: f(int color, float max) enables fixed-color bar mode
-    private static Method vfFMethod;
+    // dh0 multi-value fields (for cloning)
+    private static Field multiBindings; // dh0.f
+    private static Field multiSep;      // dh0.h
+    private static Field multiColor;    // dh0.i
+    private static Field multiApp;      // dh0.j
+    private static Field multiGrav;     // dh0.k
 
-    // v6.g (eh0) fields for cloning
-    private static Field vgBindingsField;
-    private static Field vgColorField;
-    private static Field vgSepField;
-    private static Field vgAppField;
-    private static Field vgGravField;
+    // l8 attribute fields
+    private static Class<?> propClass; // m8
+    private static Field attrKey;      // l8.a
+    private static Field attrFormat;   // l8.b
+    private static Field attrIndex;    // l8.c
 
-    // v00 (d7.i$k) class and case field
-    private static Class<?> v00Class;
-    private static Field v00CaseField;
-
-    // com.qtrun.sys.b / a — property binding
-    private static Class<?> sysBClass;
-    private static Field sysAFieldA; // final String key
-    private static Field sysAFieldB; // final String format
-    private static Field sysAFieldC; // int index
-
-    // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
+    // Unsafe for allocateInstance (attribute constructors need arguments)
     private static Object unsafe;
     private static Method unsafeAllocateInstance;
 
-    // Page carrier count fields — actual bytecode name "Z"; null when the page
-    // class is unavailable on this flavor.
-    private static Field e8bCarrierCountField;
-    private static Field g8iCarrierCountField;
-
-    // k2.a list + v6.a fields
-    private static Field k2aListField;
-    private static Field vaRowField;
-    private static Field vaHeightField;
-    private static Field vaColField;
-    private static Field vaWidthField;
+    // Page carrier-count field Y (int) of w00 / ua0
+    private static Field ltePageCarrierCountField;
+    private static Field nsaPageCarrierCountField;
 
     // Element type classes for instanceof checks
-    private static Class<?> ch0Class;
-    private static Class<?> dh0Class;
-    private static Class<?> eh0Class;
+    private static Class<?> labelClass; // bh0
+    private static Class<?> barClass;   // ch0
+    private static Class<?> multiClass; // dh0
 
     /** Binding-class field cache for cloneBinding: flattened, pre-accessible,
      *  non-static instance fields (including superclass fields) per binding class. */
@@ -169,74 +167,64 @@ public class CaMatrixDlHook {
 
     private static void initReflection(ClassLoader loader) {
         try {
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
-            Class<?> vgClass  = ClassMapping.loadClass("v6.g", loader);
+            Class<?> builderClass = Nsg.load(loader, Nsg.GRID_BUILDER);   // r31
+            Class<?> elementClass = Nsg.load(loader, Nsg.GRID_ELEMENT);   // xg0
+            labelClass = Nsg.load(loader, Nsg.GRID_LABEL);                // bh0
+            barClass   = Nsg.load(loader, Nsg.GRID_VALUE);                // ch0
+            multiClass = Nsg.load(loader, Nsg.GRID_MULTI);                // dh0
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
-                    float.class, float.class, float.class, float.class);
-            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
-                    float.class, float.class, float.class, float.class);
-            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
-                    float.class, float.class, float.class, float.class);
+            addLabel = builderClass.getMethod("M", float.class, float.class, float.class, float.class);
+            addBar   = builderClass.getMethod("N", float.class, float.class, float.class, float.class);
+            addMulti = builderClass.getMethod("O", float.class, float.class, float.class, float.class);
+            listField = builderClass.getDeclaredField("b");
+            listField.setAccessible(true);
 
-            veF = veClass.getField("f");
-            veG = veClass.getField("g");
-            veH = veClass.getField("h");
+            rowField = elementClass.getDeclaredField("b");
+            heightField = elementClass.getDeclaredField("c");
+            colField = elementClass.getDeclaredField("d");
+            widthField = elementClass.getDeclaredField("e");
+            rowField.setAccessible(true);
+            heightField.setAccessible(true);
+            colField.setAccessible(true);
+            widthField.setAccessible(true);
 
-            vfF8120g = vfClass.getDeclaredField("g");
-            vfF8120g.setAccessible(true);
+            labelText = labelClass.getField("f");
+            labelAlign = labelClass.getField("g");
+            labelSpan = labelClass.getField("h");
 
-            vfFMethod = ClassMapping.getDeclaredMethod(vfClass, "v6.f", "f", loader,
-                    int.class, float.class);
-            vfFMethod.setAccessible(true);
-
-            boolean isGplay = FlavorDetector.detect(loader) == FlavorDetector.Flavor.GPLAY;
-            if (isGplay) {
-                barFixedField = vfClass.getDeclaredField("i");
-                barColorField = vfClass.getDeclaredField("j");
-                barMaxField = vfClass.getDeclaredField("k");
-            } else {
-                barFixedField = vfClass.getDeclaredField("h");
-                barColorField = vfClass.getDeclaredField("i");
-                barMaxField = vfClass.getDeclaredField("j");
-            }
+            barBinding = barClass.getDeclaredField("g");
+            barFixedField = barClass.getDeclaredField("h");
+            barColorField = barClass.getDeclaredField("i");
+            barMaxField = barClass.getDeclaredField("j");
+            barBinding.setAccessible(true);
             barFixedField.setAccessible(true);
             barColorField.setAccessible(true);
             barMaxField.setAccessible(true);
+            barFixedColor = barClass.getDeclaredMethod("f", int.class, float.class);
+            barFixedColor.setAccessible(true);
 
-            vgBindingsField = vgClass.getDeclaredField("f");
-            vgBindingsField.setAccessible(true);
-            vgColorField = vgClass.getDeclaredField("i");
-            vgColorField.setAccessible(true);
-            vgSepField = vgClass.getDeclaredField("h");
-            vgSepField.setAccessible(true);
-            vgAppField = vgClass.getDeclaredField("j");
-            vgAppField.setAccessible(true);
-            vgGravField = vgClass.getDeclaredField("k");
-            vgGravField.setAccessible(true);
+            multiBindings = multiClass.getDeclaredField("f");
+            multiSep = multiClass.getDeclaredField("h");
+            multiColor = multiClass.getDeclaredField("i");
+            multiApp = multiClass.getDeclaredField("j");
+            multiGrav = multiClass.getDeclaredField("k");
+            multiBindings.setAccessible(true);
+            multiSep.setAccessible(true);
+            multiColor.setAccessible(true);
+            multiApp.setAccessible(true);
+            multiGrav.setAccessible(true);
 
-            v00Class = ClassMapping.loadClass("d7.i$k", loader);
-            if (v00Class != null) {
-                try {
-                    v00CaseField = v00Class.getDeclaredField("e");
-                    v00CaseField.setAccessible(true);
-                } catch (NoSuchFieldException ignored) {
-                }
-            }
-
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            sysAFieldA = sysAClass.getDeclaredField("a");
-            sysAFieldB = sysAClass.getDeclaredField("b");
-            sysAFieldC = sysAClass.getDeclaredField("c");
-            sysAFieldA.setAccessible(true);
-            sysAFieldB.setAccessible(true);
-            sysAFieldC.setAccessible(true);
+            propClass = Nsg.load(loader, BINDING_CLASS);
+            Class<?> attrClass = Nsg.load(loader, ATTR_CLASS);
+            attrKey = attrClass.getDeclaredField("a");
+            attrFormat = attrClass.getDeclaredField("b");
+            attrIndex = attrClass.getDeclaredField("c");
+            attrKey.setAccessible(true);
+            attrFormat.setAccessible(true);
+            attrIndex.setAccessible(true);
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-            java.lang.reflect.Field unsafeField;
+            Field unsafeField;
             try {
                 unsafeField = unsafeClass.getDeclaredField("THE_ONE");   // Android/Dalvik
             } catch (NoSuchFieldException e2) {
@@ -246,26 +234,8 @@ public class CaMatrixDlHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
-            k2aListField.setAccessible(true);
-            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
-            vaRowField = vaClass.getDeclaredField("b");
-            vaRowField.setAccessible(true);
-            vaHeightField = vaClass.getDeclaredField("c");
-            vaHeightField.setAccessible(true);
-            vaColField = vaClass.getDeclaredField("d");
-            vaColField.setAccessible(true);
-            vaWidthField = vaClass.getDeclaredField("e");
-            vaWidthField.setAccessible(true);
-
-            ch0Class = veClass;
-            dh0Class = vfClass;
-            eh0Class = vgClass;
-
-            // Page carrier-count fields — resolved independently; a page class may
-            // be absent on some flavors (null → page skipped at install time).
-            e8bCarrierCountField = resolveCarrierCountField("e8.b", loader);
-            g8iCarrierCountField = resolveCarrierCountField("g8.i", loader);
+            ltePageCarrierCountField = resolveCarrierCountField(loader, PAGE_LTE_CA_MATRIX);
+            nsaPageCarrierCountField = resolveCarrierCountField(loader, PAGE_NSA_LTE_CA_MATRIX);
 
             ready = true;
         } catch (Exception e) {
@@ -273,18 +243,10 @@ public class CaMatrixDlHook {
         }
     }
 
-    private static Field resolveCarrierCountField(String logicalClass, ClassLoader loader) {
-        try {
-            Class<?> pageClass = ClassMapping.loadClass(logicalClass, loader);
-            if (pageClass == null) return null;
-            Field f = pageClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(logicalClass, "Z", loader));
-            f.setAccessible(true);
-            return f;
-        } catch (Exception e) {
-            Log.w(TAG, "could not resolve carrier count field for " + logicalClass + ": " + e);
-            return null;
-        }
+    private static Field resolveCarrierCountField(ClassLoader loader, String pageName) throws Exception {
+        Field f = Nsg.load(loader, pageName).getDeclaredField("Y"); // w00/ua0.Y: carrier count
+        f.setAccessible(true);
+        return f;
     }
 
     public void install() {
@@ -293,37 +255,26 @@ public class CaMatrixDlHook {
             return;
         }
         boolean anyPage = false;
-        anyPage |= installN0FlagHook("e8.b", e8bCarrierCountField);
-        anyPage |= installN0FlagHook("g8.i", g8iCarrierCountField);
+        anyPage |= installN0FlagHook(PAGE_LTE_CA_MATRIX, ltePageCarrierCountField);
+        anyPage |= installN0FlagHook(PAGE_NSA_LTE_CA_MATRIX, nsaPageCarrierCountField);
         if (!anyPage) {
-            Log.i(TAG, "CaMatrixDlHook: neither e8.b nor g8.i available, skipping install");
+            Log.w(TAG, "CaMatrixDlHook: no page hook installed, skipping");
             return;
         }
-        installV6bK0Hook();
+        installGridCallbackHook();
         Log.i(TAG, "CaMatrixDlHook: installed");
     }
 
     // -----------------------------------------------------------------------
-    // Hook 1: e8.b.n0() / g8.i.n0() — set/clear ThreadLocal flag around execution
+    // Hook 1: w00.j0() / ua0.j0() — set/clear ThreadLocal flag around execution
     // -----------------------------------------------------------------------
 
-    private boolean installN0FlagHook(String logicalClass, Field carrierCountField) {
-        if (carrierCountField == null) {
-            Log.i(TAG, "CaMatrixDlHook: " + logicalClass
-                    + " not available on this flavor, skipping n0 hook");
-            return false;
-        }
+    private boolean installN0FlagHook(String pageName, Field carrierCountField) {
         try {
-            Class<?> pageClass = ClassMapping.loadClass(logicalClass, loader);
-            if (pageClass == null) {
-                Log.i(TAG, "CaMatrixDlHook: " + logicalClass
-                        + " not available, skipping n0 hook");
-                return false;
-            }
-            Method   n0Method = ClassMapping.getMethod(pageClass, logicalClass, "n0", loader);
+            Method j0Method = Nsg.load(loader, pageName).getDeclaredMethod("j0");
             final Field carrierField = carrierCountField;
 
-            xposed.hook(n0Method).intercept(new Hooker() {
+            xposed.hook(j0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     int carriers = -1;
@@ -342,35 +293,34 @@ public class CaMatrixDlHook {
             });
             return true;
         } catch (Exception e) {
-            Log.e(TAG, "n0 flag hook failed: " + e);
+            Log.e(TAG, "j0 flag hook failed for " + pageName + ": " + e);
             return false;
         }
     }
 
     // -----------------------------------------------------------------------
-    // Hook 2: static v6.b.k0(k2.a) — inject rows when called from either page's n0()
+    // Hook 2: static yg0.g0(r31) — inject rows when called from either page's j0()
     // -----------------------------------------------------------------------
 
-    private void installV6bK0Hook() {
+    private void installGridCallbackHook() {
         try {
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Method   k0Method = ClassMapping.getMethod(v6bClass, "v6.b", "k0", loader, k2aClass);
+            Class<?> pageBase = Nsg.load(loader, Nsg.GRID_PAGE);      // yg0
+            Class<?> builderClass = Nsg.load(loader, Nsg.GRID_BUILDER); // r31
+            Method g0Method = pageBase.getDeclaredMethod("g0", builderClass);
 
-            xposed.hook(k0Method).intercept(new Hooker() {
+            xposed.hook(g0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                    Object  k2aArg   = chain.getArg(0);
-                    Integer carriers = carrierCountInN0.get();
-                    boolean inN0     = carriers != null;
-                    if (inN0 && k2aArg != null) {
-                        injectRsrpRow(k2aArg, carriers);
+                    Object  builderArg = chain.getArg(0);
+                    Integer carriers   = carrierCountInN0.get();
+                    if (carriers != null && builderArg != null) {
+                        injectRsrpRow(builderArg, carriers);
                     }
                     return chain.proceed();
                 }
             });
         } catch (Exception e) {
-            Log.e(TAG, "v6.b.k0 hook failed: " + e);
+            Log.e(TAG, "yg0.g0 hook failed: " + e);
         }
     }
 
@@ -378,7 +328,7 @@ public class CaMatrixDlHook {
     // Injection: insert RSRP row below Band/Width, above SINR
     // -----------------------------------------------------------------------
 
-    private void injectRsrpRow(Object k2aObj, int carriers) {
+    private void injectRsrpRow(Object builder, int carriers) {
         try {
             boolean isPathA = (carriers == 1 || carriers == 2);
             boolean isPathB = (carriers == 3);
@@ -387,7 +337,7 @@ public class CaMatrixDlHook {
             boolean isPathDE = isPathD || isPathE;
 
             if (isPathDE) {
-                transformGrid(k2aObj, carriers);
+                transformGrid(builder, carriers);
             }
 
             float rsrpRow;
@@ -433,53 +383,53 @@ public class CaMatrixDlHook {
             }
 
             java.util.ArrayList<?> list =
-                    (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+                    (java.util.ArrayList<?>) listField.get(builder);
             if (list != null) {
                 // Single pass: each threshold is checked against the running
                 // (already shifted) row value, preserving the original 3-loop
                 // semantics. Rank shifting is skipped entirely on path A.
                 for (Object elem : list) {
-                    float origRow = (float) vaRowField.get(elem);
+                    float origRow = (float) rowField.get(elem);
                     float row = origRow;
                     if (row >= shiftFrom) row += shiftAmount;
                     if (!isPathA && row >= rankRow) row += rankShift;
                     if (row >= mcsShiftFrom) row += mcsShiftAmount;
-                    if (row != origRow) vaRowField.set(elem, row);
+                    if (row != origRow) rowField.set(elem, row);
                 }
             }
 
             if (isPathA) {
-                injectRsrpRowPathA(k2aObj, rsrpRow);
+                injectRsrpRowPathA(builder, rsrpRow);
             } else if (isPathB) {
-                injectRsrpRowPathB(k2aObj, rsrpRow);
+                injectRsrpRowPathB(builder, rsrpRow);
             } else if (isPathD) {
-                injectRsrpRowPathD(k2aObj, rsrpRow);
+                injectRsrpRowPathD(builder, rsrpRow);
             } else if (isPathE) {
-                injectRsrpRowPathE(k2aObj, rsrpRow);
+                injectRsrpRowPathE(builder, rsrpRow);
             } else {
-                injectRsrpRowPathC(k2aObj, rsrpRow);
+                injectRsrpRowPathC(builder, rsrpRow);
             }
 
             if (isPathB) {
-                injectRankUsageRowPathB(k2aObj, rankRow);
+                injectRankUsageRowPathB(builder, rankRow);
             } else if (isPathD) {
-                injectRankUsageRowPathD(k2aObj, rankRow);
+                injectRankUsageRowPathD(builder, rankRow);
             } else if (isPathE) {
-                injectRankUsageRowPathE(k2aObj, rankRow);
+                injectRankUsageRowPathE(builder, rankRow);
             } else if (!isPathA) {
-                injectRankUsageRowPathC(k2aObj, rankRow);
+                injectRankUsageRowPathC(builder, rankRow);
             }
 
             if (isPathA) {
-                injectMcsRowPathA(k2aObj, mcsRow);
+                injectMcsRowPathA(builder, mcsRow);
             } else if (isPathB) {
-                injectMcsRowPathB(k2aObj, mcsRow);
+                injectMcsRowPathB(builder, mcsRow);
             } else if (isPathD) {
-                injectMcsRowPathD(k2aObj, mcsRow);
+                injectMcsRowPathD(builder, mcsRow);
             } else if (isPathE) {
-                injectMcsRowPathE(k2aObj, mcsRow);
+                injectMcsRowPathE(builder, mcsRow);
             } else {
-                injectMcsRowPathC(k2aObj, mcsRow);
+                injectMcsRowPathC(builder, mcsRow);
             }
 
         } catch (Exception e) {
@@ -488,38 +438,38 @@ public class CaMatrixDlHook {
     }
 
     /**
-     * Path A: Z==1 or Z==2 (1 SCell), single-height rows (h=1.0).
+     * Path A: Y==1 or Y==2 (1 SCell), single-height rows (h=1.0).
      *
      * RSRP row at rsrpRow:
      *   label col=0 w=27
      *   PCell bar col=30 w=34  key=LTE_RSRP_PCell  index=-1
      *   SCell1 bar col=65 w=34  key=LTE_RSRP_SCell1 index=-1
      */
-    private void injectRsrpRowPathA(Object k2aObj, float rsrpRow) throws Exception {
+    private void injectRsrpRowPathA(Object builder, float rsrpRow) throws Exception {
         final float h = 1.0f;
 
-        Object label = k2aRMethod.invoke(k2aObj, rsrpRow, h, 0.0f, 27.0f);
+        Object label = addLabel.invoke(builder, rsrpRow, h, 0.0f, 27.0f);
         if (label != null) {
-            veF.set(label, "RSRP");
-            veG.set(label, 0);
-            veH.set(label, 1);
+            labelText.set(label, "RSRP");
+            labelAlign.set(label, 0);
+            labelSpan.set(label, 1);
         }
 
-        Object pCellBar = k2aSMethod.invoke(k2aObj, rsrpRow, h, 30.0f, 34.0f);
+        Object pCellBar = addBar.invoke(builder, rsrpRow, h, 30.0f, 34.0f);
         if (pCellBar != null) {
-            vfF8120g.set(pCellBar, makeProp(
+            barBinding.set(pCellBar, makeProp(
                     "LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
         }
 
-        Object sCell1Bar = k2aSMethod.invoke(k2aObj, rsrpRow, h, 65.0f, 34.0f);
+        Object sCell1Bar = addBar.invoke(builder, rsrpRow, h, 65.0f, 34.0f);
         if (sCell1Bar != null) {
-            vfF8120g.set(sCell1Bar, makeProp(
+            barBinding.set(sCell1Bar, makeProp(
                     "LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
         }
     }
 
     /**
-     * Path B: Z==3 (2 SCells), double-height rows (label h=2.0, PCell barOffset=+0.3 h=1.4).
+     * Path B: Y==3 (2 SCells), double-height rows (label h=2.0, PCell barOffset=+0.3 h=1.4).
      * SCell bars stack at rsrpRow and rsrpRow+1 in col=65.
      *
      * RSRP label row=rsrpRow h=2.0 col=0 w=27
@@ -527,40 +477,40 @@ public class CaMatrixDlHook {
      * SCell1 bar row=rsrpRow     h=1.0 col=65 w=34
      * SCell2 bar row=rsrpRow+1   h=1.0 col=65 w=34
      */
-    private void injectRsrpRowPathB(Object k2aObj, float rsrpRow) throws Exception {
+    private void injectRsrpRowPathB(Object builder, float rsrpRow) throws Exception {
         final float labelH    = 2.0f;
         final float pcellBarH = 1.4f;
         final float pcellOff  = 0.3f;
         final float scellBarH = 1.0f;
 
-        Object label = k2aRMethod.invoke(k2aObj, rsrpRow, labelH, 0.0f, 27.0f);
+        Object label = addLabel.invoke(builder, rsrpRow, labelH, 0.0f, 27.0f);
         if (label != null) {
-            veF.set(label, "RSRP");
-            veG.set(label, 0);
-            veH.set(label, 1);
+            labelText.set(label, "RSRP");
+            labelAlign.set(label, 0);
+            labelSpan.set(label, 1);
         }
 
-        Object pCellBar = k2aSMethod.invoke(k2aObj, rsrpRow + pcellOff, pcellBarH, 30.0f, 34.0f);
+        Object pCellBar = addBar.invoke(builder, rsrpRow + pcellOff, pcellBarH, 30.0f, 34.0f);
         if (pCellBar != null) {
-            vfF8120g.set(pCellBar, makeProp(
+            barBinding.set(pCellBar, makeProp(
                     "LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
         }
 
-        Object sCell1Bar = k2aSMethod.invoke(k2aObj, rsrpRow, scellBarH, 65.0f, 34.0f);
+        Object sCell1Bar = addBar.invoke(builder, rsrpRow, scellBarH, 65.0f, 34.0f);
         if (sCell1Bar != null) {
-            vfF8120g.set(sCell1Bar, makeProp(
+            barBinding.set(sCell1Bar, makeProp(
                     "LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
         }
 
-        Object sCell2Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, scellBarH, 65.0f, 34.0f);
+        Object sCell2Bar = addBar.invoke(builder, rsrpRow + 1.0f, scellBarH, 65.0f, 34.0f);
         if (sCell2Bar != null) {
-            vfF8120g.set(sCell2Bar, makeProp(
+            barBinding.set(sCell2Bar, makeProp(
                     "LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2", -1));
         }
     }
 
     /**
-     * Path C: Z>=4 (3 SCells), single-height rows (h=1.0).
+     * Path C: Y>=4 (3 SCells), single-height rows (h=1.0).
      * Left panel (col=30): PCell at rsrpRow, SCell1 at rsrpRow+1.
      * Right panel (col=65): SCell2 at rsrpRow, SCell3 at rsrpRow+1.
      *
@@ -570,38 +520,38 @@ public class CaMatrixDlHook {
      * SCell2 bar row=rsrpRow   h=1.0 col=65 w=34
      * SCell3 bar row=rsrpRow+1 h=1.0 col=65 w=34
      */
-    private void injectRsrpRowPathC(Object k2aObj, float rsrpRow) throws Exception {
+    private void injectRsrpRowPathC(Object builder, float rsrpRow) throws Exception {
         final float labelH = 2.0f;
         final float barH   = 1.0f;
 
-        Object label = k2aRMethod.invoke(k2aObj, rsrpRow, labelH, 0.0f, 27.0f);
+        Object label = addLabel.invoke(builder, rsrpRow, labelH, 0.0f, 27.0f);
         if (label != null) {
-            veF.set(label, "RSRP");
-            veG.set(label, 0);
-            veH.set(label, 1);
+            labelText.set(label, "RSRP");
+            labelAlign.set(label, 0);
+            labelSpan.set(label, 1);
         }
 
-        Object pCellBar = k2aSMethod.invoke(k2aObj, rsrpRow, barH, 30.0f, 34.0f);
+        Object pCellBar = addBar.invoke(builder, rsrpRow, barH, 30.0f, 34.0f);
         if (pCellBar != null) {
-            vfF8120g.set(pCellBar, makeProp(
+            barBinding.set(pCellBar, makeProp(
                     "LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
         }
 
-        Object sCell1Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, barH, 30.0f, 34.0f);
+        Object sCell1Bar = addBar.invoke(builder, rsrpRow + 1.0f, barH, 30.0f, 34.0f);
         if (sCell1Bar != null) {
-            vfF8120g.set(sCell1Bar, makeProp(
+            barBinding.set(sCell1Bar, makeProp(
                     "LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
         }
 
-        Object sCell2Bar = k2aSMethod.invoke(k2aObj, rsrpRow, barH, 65.0f, 34.0f);
+        Object sCell2Bar = addBar.invoke(builder, rsrpRow, barH, 65.0f, 34.0f);
         if (sCell2Bar != null) {
-            vfF8120g.set(sCell2Bar, makeProp(
+            barBinding.set(sCell2Bar, makeProp(
                     "LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2", -1));
         }
 
-        Object sCell3Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, barH, 65.0f, 34.0f);
+        Object sCell3Bar = addBar.invoke(builder, rsrpRow + 1.0f, barH, 65.0f, 34.0f);
         if (sCell3Bar != null) {
-            vfF8120g.set(sCell3Bar, makeProp(
+            barBinding.set(sCell3Bar, makeProp(
                     "LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3", -1));
         }
     }
@@ -611,7 +561,7 @@ public class CaMatrixDlHook {
     // -----------------------------------------------------------------------
 
     /**
-     * Path B: Z==3 (2 SCells), double-height rows (label h=2.0, PCell barOffset=+0.3 h=1.4).
+     * Path B: Y==3 (2 SCells), double-height rows (label h=2.0, PCell barOffset=+0.3 h=1.4).
      * SCell bars stack at startRow and startRow+1 in col=65.  Rank4 at startRow+2.
      *
      * Rank3 Usage label row=startRow     h=2.0 col=0  w=27
@@ -624,70 +574,70 @@ public class CaMatrixDlHook {
      * Rank4 SCell1 bar row=startRow+2    h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell1
      * Rank4 SCell2 bar row=startRow+3    h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell2
      *
-     * Bars use v6.f.f(DEEP_BLUE, 100.0f) for fixed-color percentage bars.
+     * Bars use ch0.f(DEEP_BLUE, 100.0f) for fixed-color percentage bars.
      */
-    private void injectRankUsageRowPathB(Object k2aObj, float startRow) throws Exception {
+    private void injectRankUsageRowPathB(Object builder, float startRow) throws Exception {
         final float labelH    = 2.0f;
         final float pcellBarH = 1.4f;
         final float pcellOff  = 0.3f;
         final float scellBarH = 1.0f;
 
         // Rank3 Usage
-        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        Object rank3Label = addLabel.invoke(builder, startRow, labelH, 0.0f, 27.0f);
         if (rank3Label != null) {
-            veF.set(rank3Label, "Rank3 Usage");
-            veG.set(rank3Label, 0);
-            veH.set(rank3Label, 1);
+            labelText.set(rank3Label, "Rank3 Usage");
+            labelAlign.set(rank3Label, 0);
+            labelSpan.set(rank3Label, 1);
         }
-        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow + pcellOff, pcellBarH, 30.0f, 34.0f);
+        Object rank3PCell = addBar.invoke(builder, startRow + pcellOff, pcellBarH, 30.0f, 34.0f);
         if (rank3PCell != null) {
-            vfF8120g.set(rank3PCell, makeRankProp(
+            barBinding.set(rank3PCell, makeRankProp(
                     "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
-            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow, scellBarH, 65.0f, 34.0f);
+        Object rank3SCell1 = addBar.invoke(builder, startRow, scellBarH, 65.0f, 34.0f);
         if (rank3SCell1 != null) {
-            vfF8120g.set(rank3SCell1, makeRankProp(
+            barBinding.set(rank3SCell1, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
-            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, scellBarH, 65.0f, 34.0f);
+        Object rank3SCell2 = addBar.invoke(builder, startRow + 1.0f, scellBarH, 65.0f, 34.0f);
         if (rank3SCell2 != null) {
-            vfF8120g.set(rank3SCell2, makeRankProp(
+            barBinding.set(rank3SCell2, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
-            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
         }
 
         // Rank4 Usage at startRow + 2
         float rank4Row = startRow + 2.0f;
-        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        Object rank4Label = addLabel.invoke(builder, rank4Row, labelH, 0.0f, 27.0f);
         if (rank4Label != null) {
-            veF.set(rank4Label, "Rank4 Usage");
-            veG.set(rank4Label, 0);
-            veH.set(rank4Label, 1);
+            labelText.set(rank4Label, "Rank4 Usage");
+            labelAlign.set(rank4Label, 0);
+            labelSpan.set(rank4Label, 1);
         }
-        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row + pcellOff, pcellBarH, 30.0f, 34.0f);
+        Object rank4PCell = addBar.invoke(builder, rank4Row + pcellOff, pcellBarH, 30.0f, 34.0f);
         if (rank4PCell != null) {
-            vfF8120g.set(rank4PCell, makeRankProp(
+            barBinding.set(rank4PCell, makeRankProp(
                     "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
-            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row, scellBarH, 65.0f, 34.0f);
+        Object rank4SCell1 = addBar.invoke(builder, rank4Row, scellBarH, 65.0f, 34.0f);
         if (rank4SCell1 != null) {
-            vfF8120g.set(rank4SCell1, makeRankProp(
+            barBinding.set(rank4SCell1, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
-            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, scellBarH, 65.0f, 34.0f);
+        Object rank4SCell2 = addBar.invoke(builder, rank4Row + 1.0f, scellBarH, 65.0f, 34.0f);
         if (rank4SCell2 != null) {
-            vfF8120g.set(rank4SCell2, makeRankProp(
+            barBinding.set(rank4SCell2, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
-            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
         }
     }
 
     /**
-     * Path C: Z>=4 (3 SCells), single-height rows (h=1.0).
+     * Path C: Y>=4 (3 SCells), single-height rows (h=1.0).
      * Left panel (col=30): PCell at startRow, SCell1 at startRow+1.
      * Right panel (col=65): SCell2 at startRow, SCell3 at startRow+1.  Rank4 at startRow+2.
      *
@@ -703,75 +653,75 @@ public class CaMatrixDlHook {
      * Rank4 SCell2 bar row=startRow+2  h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell2
      * Rank4 SCell3 bar row=startRow+3  h=1.0 col=65 w=34  key=LTE_Rank4_Usage_SCell3
      *
-     * Bars use v6.f.f(DEEP_BLUE, 100.0f) for fixed-color percentage bars.
+     * Bars use ch0.f(DEEP_BLUE, 100.0f) for fixed-color percentage bars.
      */
-    private void injectRankUsageRowPathC(Object k2aObj, float startRow) throws Exception {
+    private void injectRankUsageRowPathC(Object builder, float startRow) throws Exception {
         final float labelH = 2.0f;
         final float barH   = 1.0f;
 
         // Rank3 Usage
-        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
+        Object rank3Label = addLabel.invoke(builder, startRow, labelH, 0.0f, 27.0f);
         if (rank3Label != null) {
-            veF.set(rank3Label, "Rank3 Usage");
-            veG.set(rank3Label, 0);
-            veH.set(rank3Label, 1);
+            labelText.set(rank3Label, "Rank3 Usage");
+            labelAlign.set(rank3Label, 0);
+            labelSpan.set(rank3Label, 1);
         }
-        Object rank3PCell = k2aSMethod.invoke(k2aObj, startRow, barH, 30.0f, 34.0f);
+        Object rank3PCell = addBar.invoke(builder, startRow, barH, 30.0f, 34.0f);
         if (rank3PCell != null) {
-            vfF8120g.set(rank3PCell, makeRankProp(
+            barBinding.set(rank3PCell, makeRankProp(
                     "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL", -1));
-            vfFMethod.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank3PCell, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank3SCell1 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 30.0f, 34.0f);
+        Object rank3SCell1 = addBar.invoke(builder, startRow + 1.0f, barH, 30.0f, 34.0f);
         if (rank3SCell1 != null) {
-            vfF8120g.set(rank3SCell1, makeRankProp(
+            barBinding.set(rank3SCell1, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL", -1));
-            vfFMethod.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank3SCell1, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank3SCell2 = k2aSMethod.invoke(k2aObj, startRow, barH, 65.0f, 34.0f);
+        Object rank3SCell2 = addBar.invoke(builder, startRow, barH, 65.0f, 34.0f);
         if (rank3SCell2 != null) {
-            vfF8120g.set(rank3SCell2, makeRankProp(
+            barBinding.set(rank3SCell2, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL", -1));
-            vfFMethod.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank3SCell2, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank3SCell3 = k2aSMethod.invoke(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f);
+        Object rank3SCell3 = addBar.invoke(builder, startRow + 1.0f, barH, 65.0f, 34.0f);
         if (rank3SCell3 != null) {
-            vfF8120g.set(rank3SCell3, makeRankProp(
+            barBinding.set(rank3SCell3, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL", -1));
-            vfFMethod.invoke(rank3SCell3, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank3SCell3, DEEP_BLUE, RANK_BAR_MAX);
         }
 
         // Rank4 Usage at startRow + 2
         float rank4Row = startRow + 2.0f;
-        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
+        Object rank4Label = addLabel.invoke(builder, rank4Row, labelH, 0.0f, 27.0f);
         if (rank4Label != null) {
-            veF.set(rank4Label, "Rank4 Usage");
-            veG.set(rank4Label, 0);
-            veH.set(rank4Label, 1);
+            labelText.set(rank4Label, "Rank4 Usage");
+            labelAlign.set(rank4Label, 0);
+            labelSpan.set(rank4Label, 1);
         }
-        Object rank4PCell = k2aSMethod.invoke(k2aObj, rank4Row, barH, 30.0f, 34.0f);
+        Object rank4PCell = addBar.invoke(builder, rank4Row, barH, 30.0f, 34.0f);
         if (rank4PCell != null) {
-            vfF8120g.set(rank4PCell, makeRankProp(
+            barBinding.set(rank4PCell, makeRankProp(
                     "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL", -1));
-            vfFMethod.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank4PCell, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank4SCell1 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 30.0f, 34.0f);
+        Object rank4SCell1 = addBar.invoke(builder, rank4Row + 1.0f, barH, 30.0f, 34.0f);
         if (rank4SCell1 != null) {
-            vfF8120g.set(rank4SCell1, makeRankProp(
+            barBinding.set(rank4SCell1, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL", -1));
-            vfFMethod.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank4SCell1, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank4SCell2 = k2aSMethod.invoke(k2aObj, rank4Row, barH, 65.0f, 34.0f);
+        Object rank4SCell2 = addBar.invoke(builder, rank4Row, barH, 65.0f, 34.0f);
         if (rank4SCell2 != null) {
-            vfF8120g.set(rank4SCell2, makeRankProp(
+            barBinding.set(rank4SCell2, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL", -1));
-            vfFMethod.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank4SCell2, DEEP_BLUE, RANK_BAR_MAX);
         }
-        Object rank4SCell3 = k2aSMethod.invoke(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f);
+        Object rank4SCell3 = addBar.invoke(builder, rank4Row + 1.0f, barH, 65.0f, 34.0f);
         if (rank4SCell3 != null) {
-            vfF8120g.set(rank4SCell3, makeRankProp(
+            barBinding.set(rank4SCell3, makeRankProp(
                     "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL", -1));
-            vfFMethod.invoke(rank4SCell3, DEEP_BLUE, RANK_BAR_MAX);
+            barFixedColor.invoke(rank4SCell3, DEEP_BLUE, RANK_BAR_MAX);
         }
     }
 
@@ -779,82 +729,82 @@ public class CaMatrixDlHook {
     // MCS Cwd 0/1 row injection — between CQI and Mod
     // -----------------------------------------------------------------------
 
-    private void injectMcsRowPathA(Object k2aObj, float row) throws Exception {
+    private void injectMcsRowPathA(Object builder, float row) throws Exception {
         final float h = 1.0f;
-        Object label = k2aRMethod.invoke(k2aObj, row, h, 0.0f, 27.0f);
+        Object label = addLabel.invoke(builder, row, h, 0.0f, 27.0f);
         if (label != null) {
-            veF.set(label, "MCS Cwd 0/1");
-            veG.set(label, 0);
-            veH.set(label, 1);
+            labelText.set(label, "MCS Cwd 0/1");
+            labelAlign.set(label, 0);
+            labelSpan.set(label, 1);
         }
-        injectMcsBar(k2aObj, row, h, 30.0f, 16.5f,
+        injectMcsBar(builder, row, h, 30.0f, 16.5f,
                 "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
-        injectMcsBar(k2aObj, row, h, 47.0f, 17.0f,
+        injectMcsBar(builder, row, h, 47.0f, 17.0f,
                 "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
-        injectMcsBar(k2aObj, row, h, 65.0f, 16.5f,
+        injectMcsBar(builder, row, h, 65.0f, 16.5f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
-        injectMcsBar(k2aObj, row, h, 82.0f, 17.0f,
+        injectMcsBar(builder, row, h, 82.0f, 17.0f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
     }
 
-    private void injectMcsRowPathB(Object k2aObj, float row) throws Exception {
+    private void injectMcsRowPathB(Object builder, float row) throws Exception {
         final float labelH    = 2.0f;
         final float pcellBarH = 1.4f;
         final float pcellOff  = 0.3f;
         final float scellBarH = 1.0f;
-        Object label = k2aRMethod.invoke(k2aObj, row, labelH, 0.0f, 27.0f);
+        Object label = addLabel.invoke(builder, row, labelH, 0.0f, 27.0f);
         if (label != null) {
-            veF.set(label, "MCS Cwd 0/1");
-            veG.set(label, 0);
-            veH.set(label, 1);
+            labelText.set(label, "MCS Cwd 0/1");
+            labelAlign.set(label, 0);
+            labelSpan.set(label, 1);
         }
-        injectMcsBar(k2aObj, row + pcellOff, pcellBarH, 30.0f, 16.5f,
+        injectMcsBar(builder, row + pcellOff, pcellBarH, 30.0f, 16.5f,
                 "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
-        injectMcsBar(k2aObj, row + pcellOff, pcellBarH, 47.0f, 17.0f,
+        injectMcsBar(builder, row + pcellOff, pcellBarH, 47.0f, 17.0f,
                 "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
-        injectMcsBar(k2aObj, row, scellBarH, 65.0f, 16.5f,
+        injectMcsBar(builder, row, scellBarH, 65.0f, 16.5f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
-        injectMcsBar(k2aObj, row, scellBarH, 82.0f, 17.0f,
+        injectMcsBar(builder, row, scellBarH, 82.0f, 17.0f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
-        injectMcsBar(k2aObj, row + 1.0f, scellBarH, 65.0f, 16.5f,
+        injectMcsBar(builder, row + 1.0f, scellBarH, 65.0f, 16.5f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
-        injectMcsBar(k2aObj, row + 1.0f, scellBarH, 82.0f, 17.0f,
+        injectMcsBar(builder, row + 1.0f, scellBarH, 82.0f, 17.0f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
     }
 
-    private void injectMcsRowPathC(Object k2aObj, float row) throws Exception {
+    private void injectMcsRowPathC(Object builder, float row) throws Exception {
         final float labelH = 2.0f;
         final float barH   = 1.0f;
-        Object label = k2aRMethod.invoke(k2aObj, row, labelH, 0.0f, 27.0f);
+        Object label = addLabel.invoke(builder, row, labelH, 0.0f, 27.0f);
         if (label != null) {
-            veF.set(label, "MCS Cwd 0/1");
-            veG.set(label, 0);
-            veH.set(label, 1);
+            labelText.set(label, "MCS Cwd 0/1");
+            labelAlign.set(label, 0);
+            labelSpan.set(label, 1);
         }
-        injectMcsBar(k2aObj, row, barH, 30.0f, 16.5f,
+        injectMcsBar(builder, row, barH, 30.0f, 16.5f,
                 "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
-        injectMcsBar(k2aObj, row, barH, 47.0f, 17.0f,
+        injectMcsBar(builder, row, barH, 47.0f, 17.0f,
                 "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 30.0f, 16.5f,
+        injectMcsBar(builder, row + 1.0f, barH, 30.0f, 16.5f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 47.0f, 17.0f,
+        injectMcsBar(builder, row + 1.0f, barH, 47.0f, 17.0f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
-        injectMcsBar(k2aObj, row, barH, 65.0f, 16.5f,
+        injectMcsBar(builder, row, barH, 65.0f, 16.5f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
-        injectMcsBar(k2aObj, row, barH, 82.0f, 17.0f,
+        injectMcsBar(builder, row, barH, 82.0f, 17.0f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 65.0f, 16.5f,
+        injectMcsBar(builder, row + 1.0f, barH, 65.0f, 16.5f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell3_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 82.0f, 17.0f,
+        injectMcsBar(builder, row + 1.0f, barH, 82.0f, 17.0f,
                 "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell3_DL");
     }
 
-    private void injectMcsBar(Object k2aObj, float row, float h, float col, float w,
+    private void injectMcsBar(Object builder, float row, float h, float col, float w,
                               String key) throws Exception {
-        Object bar = k2aSMethod.invoke(k2aObj, row, h, col, w);
+        Object bar = addBar.invoke(builder, row, h, col, w);
         if (bar != null) {
-            vfF8120g.set(bar, makeMcsProp(key));
-            vfFMethod.invoke(bar, DEEP_BLUE, MCS_BAR_MAX);
+            barBinding.set(bar, makeMcsProp(key));
+            barFixedColor.invoke(bar, DEEP_BLUE, MCS_BAR_MAX);
         }
     }
 
@@ -863,32 +813,32 @@ public class CaMatrixDlHook {
     // -----------------------------------------------------------------------
 
     private Object makeProp(String key, int index) throws Exception {
-        Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-        sysAFieldA.set(prop, key);
-        sysAFieldB.set(prop, "%.1f dBm");
-        sysAFieldC.set(prop, index);
+        Object prop = unsafeAllocateInstance.invoke(unsafe, propClass);
+        attrKey.set(prop, key);
+        attrFormat.set(prop, "%.1f dBm");
+        attrIndex.set(prop, index);
         return prop;
     }
 
     private Object makeRankProp(String key, int index) throws Exception {
-        Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-        sysAFieldA.set(prop, key);
-        sysAFieldB.set(prop, "%.1f %%");
-        sysAFieldC.set(prop, index);
+        Object prop = unsafeAllocateInstance.invoke(unsafe, propClass);
+        attrKey.set(prop, key);
+        attrFormat.set(prop, "%.1f %%");
+        attrIndex.set(prop, index);
         return prop;
     }
 
     private Object makeMcsProp(String key) throws Exception {
-        Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-        sysAFieldA.set(prop, key);
-        sysAFieldB.set(prop, "%d");
-        sysAFieldC.set(prop, -1);
+        Object prop = unsafeAllocateInstance.invoke(unsafe, propClass);
+        attrKey.set(prop, key);
+        attrFormat.set(prop, "%d");
+        attrIndex.set(prop, -1);
         return prop;
     }
 
     @SuppressWarnings("unchecked")
-    private void transformGrid(Object k2aObj, int carriers) throws Exception {
-        java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+    private void transformGrid(Object builder, int carriers) throws Exception {
+        java.util.ArrayList<?> list = (java.util.ArrayList<?>) listField.get(builder);
         if (list == null) return;
 
         boolean isPathD = (carriers == 5);
@@ -902,9 +852,9 @@ public class CaMatrixDlHook {
         // independent of each other.
         Object[][] templates = new Object[13][4];
         for (Object elem : originals) {
-            float row = (float) vaRowField.get(elem);
+            float row = (float) rowField.get(elem);
             if (row < 9.0f) continue;
-            float col = (float) vaColField.get(elem);
+            float col = (float) colField.get(elem);
             int oldRowInt = (int) row;
             int l = (oldRowInt - 9) / 2;
             boolean isFirstSubRow = ((oldRowInt - 9) % 2) == 0;
@@ -928,27 +878,27 @@ public class CaMatrixDlHook {
             if (isPathE) {
                 newRow = isFirstSubRow ? 9 + 3*l : 10 + 3*l;
                 if (col < 5.0f) {
-                    float h = (float) vaHeightField.get(elem);
-                    if (h >= 1.9f) vaHeightField.set(elem, 3.0f);
+                    float h = (float) heightField.get(elem);
+                    if (h >= 1.9f) heightField.set(elem, 3.0f);
                 }
             } else {
                 if (col < 5.0f) {
                     newRow = 9 + 3*l;
-                    float h = (float) vaHeightField.get(elem);
-                    if (h >= 1.9f) vaHeightField.set(elem, 3.0f);
+                    float h = (float) heightField.get(elem);
+                    if (h >= 1.9f) heightField.set(elem, 3.0f);
                 } else if (col < 50.0f) {
                     if (isFirstSubRow) {
                         newRow = 9.15f + 3*l;
-                        vaHeightField.set(elem, 1.2f);
+                        heightField.set(elem, 1.2f);
                     } else {
                         newRow = 10.65f + 3*l;
-                        vaHeightField.set(elem, 1.2f);
+                        heightField.set(elem, 1.2f);
                     }
                 } else {
                     newRow = isFirstSubRow ? 9 + 3*l : 10 + 3*l;
                 }
             }
-            vaRowField.set(elem, newRow);
+            rowField.set(elem, newRow);
         }
 
         for (int l = 0; l < 13; l++) {
@@ -957,18 +907,18 @@ public class CaMatrixDlHook {
 
             if (isPathE) {
                 if (templates[l][0] != null)
-                    cloneElement(k2aObj, templates[l][0], newRow, 30.0f, newH, 1, 2);
+                    cloneElement(builder, templates[l][0], newRow, 30.0f, newH, 1, 2);
                 if (templates[l][1] != null)
-                    cloneElement(k2aObj, templates[l][1], newRow, 47.0f, newH, 1, 2);
+                    cloneElement(builder, templates[l][1], newRow, 47.0f, newH, 1, 2);
                 if (templates[l][2] != null)
-                    cloneElement(k2aObj, templates[l][2], newRow, 65.0f, newH, 4, 5);
+                    cloneElement(builder, templates[l][2], newRow, 65.0f, newH, 4, 5);
                 if (templates[l][3] != null)
-                    cloneElement(k2aObj, templates[l][3], newRow, 82.0f, newH, 4, 5);
+                    cloneElement(builder, templates[l][3], newRow, 82.0f, newH, 4, 5);
             } else {
                 if (templates[l][2] != null)
-                    cloneElement(k2aObj, templates[l][2], newRow, 65.0f, newH, 3, 4);
+                    cloneElement(builder, templates[l][2], newRow, 65.0f, newH, 3, 4);
                 if (templates[l][3] != null)
-                    cloneElement(k2aObj, templates[l][3], newRow, 82.0f, newH, 3, 4);
+                    cloneElement(builder, templates[l][3], newRow, 82.0f, newH, 3, 4);
             }
         }
 
@@ -984,11 +934,11 @@ public class CaMatrixDlHook {
     private void replaceScellInElement(Object elem, int oldIdx, int newIdx) throws Exception {
         String oldStr = "SCell" + oldIdx;
         String newStr = "SCell" + newIdx;
-        if (dh0Class.isInstance(elem)) {
-            Object binding = vfF8120g.get(elem);
+        if (barClass.isInstance(elem)) {
+            Object binding = barBinding.get(elem);
             if (binding != null) replaceScellInBinding(binding, oldStr, newStr);
-        } else if (eh0Class.isInstance(elem)) {
-            java.util.ArrayList<?> bindings = (java.util.ArrayList<?>) vgBindingsField.get(elem);
+        } else if (multiClass.isInstance(elem)) {
+            java.util.ArrayList<?> bindings = (java.util.ArrayList<?>) multiBindings.get(elem);
             if (bindings != null) {
                 for (Object binding : bindings) {
                     if (binding != null) replaceScellInBinding(binding, oldStr, newStr);
@@ -998,55 +948,55 @@ public class CaMatrixDlHook {
     }
 
     private void replaceScellInBinding(Object binding, String oldStr, String newStr) throws Exception {
-        String key = (String) sysAFieldA.get(binding);
+        String key = (String) attrKey.get(binding);
         if (key != null && key.contains(oldStr)) {
-            sysAFieldA.set(binding, key.replace(oldStr, newStr));
+            attrKey.set(binding, key.replace(oldStr, newStr));
         }
     }
 
-    private void cloneElement(Object k2aObj, Object template, float newRow, float newCol, float newH,
+    private void cloneElement(Object builder, Object template, float newRow, float newCol, float newH,
                               int oldScellIdx, int newScellIdx) throws Exception {
         String oldStr = "SCell" + oldScellIdx;
         String newStr = "SCell" + newScellIdx;
-        float w = (float) vaWidthField.get(template);
+        float w = (float) widthField.get(template);
 
-        if (ch0Class.isInstance(template)) {
-            Object newElem = k2aRMethod.invoke(k2aObj, newRow, newH, newCol, w);
+        if (labelClass.isInstance(template)) {
+            Object newElem = addLabel.invoke(builder, newRow, newH, newCol, w);
             if (newElem != null) {
-                veF.set(newElem, veF.get(template));
-                veG.set(newElem, veG.get(template));
-                veH.set(newElem, veH.get(template));
+                labelText.set(newElem, labelText.get(template));
+                labelAlign.set(newElem, labelAlign.get(template));
+                labelSpan.set(newElem, labelSpan.get(template));
             }
-        } else if (dh0Class.isInstance(template)) {
-            Object newElem = k2aSMethod.invoke(k2aObj, newRow, newH, newCol, w);
+        } else if (barClass.isInstance(template)) {
+            Object newElem = addBar.invoke(builder, newRow, newH, newCol, w);
             if (newElem != null) {
-                Object binding = vfF8120g.get(template);
+                Object binding = barBinding.get(template);
                 if (binding != null) {
                     Object newBinding = cloneBinding(binding, oldStr, newStr);
-                    vfF8120g.set(newElem, newBinding);
+                    barBinding.set(newElem, newBinding);
                 }
                 boolean fixed = barFixedField.getBoolean(template);
                 if (fixed) {
                     int color = barColorField.getInt(template);
                     float max = barMaxField.getFloat(template);
-                    vfFMethod.invoke(newElem, color, max);
+                    barFixedColor.invoke(newElem, color, max);
                 }
             }
-        } else if (eh0Class.isInstance(template)) {
-            Object newElem = k2aTMethod.invoke(k2aObj, newRow, newH, newCol, w);
+        } else if (multiClass.isInstance(template)) {
+            Object newElem = addMulti.invoke(builder, newRow, newH, newCol, w);
             if (newElem != null) {
-                java.util.ArrayList<?> bindings = (java.util.ArrayList<?>) vgBindingsField.get(template);
+                java.util.ArrayList<?> bindings = (java.util.ArrayList<?>) multiBindings.get(template);
                 if (bindings != null) {
                     java.util.ArrayList<Object> newBindings = new java.util.ArrayList<>();
                     for (Object binding : bindings) {
                         newBindings.add(cloneBinding(binding, oldStr, newStr));
                     }
-                    vgBindingsField.set(newElem, newBindings);
+                    multiBindings.set(newElem, newBindings);
                 }
-                vgSepField.set(newElem, vgSepField.get(template));
-                vgColorField.set(newElem, vgColorField.get(template));
-                vgAppField.set(newElem, vgAppField.get(template));
-                vgGravField.set(newElem, vgGravField.get(template));
+                multiSep.set(newElem, multiSep.get(template));
+                multiColor.set(newElem, multiColor.get(template));
+                multiApp.set(newElem, multiApp.get(template));
+                multiGrav.set(newElem, multiGrav.get(template));
             }
         }
     }
@@ -1092,155 +1042,155 @@ public class CaMatrixDlHook {
 
     private void updateHeaderText(java.util.ArrayList<?> list, float col, String text) throws Exception {
         for (Object elem : list) {
-            float row = (float) vaRowField.get(elem);
+            float row = (float) rowField.get(elem);
             if (Math.abs(row - 8.0f) > 0.1f) continue;
-            float c = (float) vaColField.get(elem);
+            float c = (float) colField.get(elem);
             if (Math.abs(c - col) > 0.1f) continue;
-            if (ch0Class.isInstance(elem)) {
-                veF.set(elem, text);
+            if (labelClass.isInstance(elem)) {
+                labelText.set(elem, text);
             }
         }
     }
 
-    private void injectRsrpRowPathD(Object k2aObj, float rsrpRow) throws Exception {
+    private void injectRsrpRowPathD(Object builder, float rsrpRow) throws Exception {
         final float labelH = 3.0f;
         final float leftH = 1.2f;
         final float barH = 1.0f;
 
-        Object label = k2aRMethod.invoke(k2aObj, rsrpRow, labelH, 0.0f, 27.0f);
-        if (label != null) { veF.set(label, "RSRP"); veG.set(label, 0); veH.set(label, 1); }
+        Object label = addLabel.invoke(builder, rsrpRow, labelH, 0.0f, 27.0f);
+        if (label != null) { labelText.set(label, "RSRP"); labelAlign.set(label, 0); labelSpan.set(label, 1); }
 
-        Object pCellBar = k2aSMethod.invoke(k2aObj, rsrpRow + 0.15f, leftH, 30.0f, 34.0f);
-        if (pCellBar != null) vfF8120g.set(pCellBar, makeProp("LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
+        Object pCellBar = addBar.invoke(builder, rsrpRow + 0.15f, leftH, 30.0f, 34.0f);
+        if (pCellBar != null) barBinding.set(pCellBar, makeProp("LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
 
-        Object sCell1Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.65f, leftH, 30.0f, 34.0f);
-        if (sCell1Bar != null) vfF8120g.set(sCell1Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
+        Object sCell1Bar = addBar.invoke(builder, rsrpRow + 1.65f, leftH, 30.0f, 34.0f);
+        if (sCell1Bar != null) barBinding.set(sCell1Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
 
-        Object sCell2Bar = k2aSMethod.invoke(k2aObj, rsrpRow, barH, 65.0f, 34.0f);
-        if (sCell2Bar != null) vfF8120g.set(sCell2Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2", -1));
+        Object sCell2Bar = addBar.invoke(builder, rsrpRow, barH, 65.0f, 34.0f);
+        if (sCell2Bar != null) barBinding.set(sCell2Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2", -1));
 
-        Object sCell3Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, barH, 65.0f, 34.0f);
-        if (sCell3Bar != null) vfF8120g.set(sCell3Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3", -1));
+        Object sCell3Bar = addBar.invoke(builder, rsrpRow + 1.0f, barH, 65.0f, 34.0f);
+        if (sCell3Bar != null) barBinding.set(sCell3Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3", -1));
 
-        Object sCell4Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 2.0f, barH, 65.0f, 34.0f);
-        if (sCell4Bar != null) vfF8120g.set(sCell4Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell4", -1));
+        Object sCell4Bar = addBar.invoke(builder, rsrpRow + 2.0f, barH, 65.0f, 34.0f);
+        if (sCell4Bar != null) barBinding.set(sCell4Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell4", -1));
     }
 
-    private void injectRsrpRowPathE(Object k2aObj, float rsrpRow) throws Exception {
+    private void injectRsrpRowPathE(Object builder, float rsrpRow) throws Exception {
         final float labelH = 3.0f;
         final float barH = 1.0f;
 
-        Object label = k2aRMethod.invoke(k2aObj, rsrpRow, labelH, 0.0f, 27.0f);
-        if (label != null) { veF.set(label, "RSRP"); veG.set(label, 0); veH.set(label, 1); }
+        Object label = addLabel.invoke(builder, rsrpRow, labelH, 0.0f, 27.0f);
+        if (label != null) { labelText.set(label, "RSRP"); labelAlign.set(label, 0); labelSpan.set(label, 1); }
 
-        Object pCellBar = k2aSMethod.invoke(k2aObj, rsrpRow, barH, 30.0f, 34.0f);
-        if (pCellBar != null) vfF8120g.set(pCellBar, makeProp("LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
+        Object pCellBar = addBar.invoke(builder, rsrpRow, barH, 30.0f, 34.0f);
+        if (pCellBar != null) barBinding.set(pCellBar, makeProp("LTE::Downlink_Measurements::LTE_RSRP_PCell", -1));
 
-        Object sCell1Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, barH, 30.0f, 34.0f);
-        if (sCell1Bar != null) vfF8120g.set(sCell1Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
+        Object sCell1Bar = addBar.invoke(builder, rsrpRow + 1.0f, barH, 30.0f, 34.0f);
+        if (sCell1Bar != null) barBinding.set(sCell1Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell1", -1));
 
-        Object sCell2Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 2.0f, barH, 30.0f, 34.0f);
-        if (sCell2Bar != null) vfF8120g.set(sCell2Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2", -1));
+        Object sCell2Bar = addBar.invoke(builder, rsrpRow + 2.0f, barH, 30.0f, 34.0f);
+        if (sCell2Bar != null) barBinding.set(sCell2Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell2", -1));
 
-        Object sCell3Bar = k2aSMethod.invoke(k2aObj, rsrpRow, barH, 65.0f, 34.0f);
-        if (sCell3Bar != null) vfF8120g.set(sCell3Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3", -1));
+        Object sCell3Bar = addBar.invoke(builder, rsrpRow, barH, 65.0f, 34.0f);
+        if (sCell3Bar != null) barBinding.set(sCell3Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell3", -1));
 
-        Object sCell4Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 1.0f, barH, 65.0f, 34.0f);
-        if (sCell4Bar != null) vfF8120g.set(sCell4Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell4", -1));
+        Object sCell4Bar = addBar.invoke(builder, rsrpRow + 1.0f, barH, 65.0f, 34.0f);
+        if (sCell4Bar != null) barBinding.set(sCell4Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell4", -1));
 
-        Object sCell5Bar = k2aSMethod.invoke(k2aObj, rsrpRow + 2.0f, barH, 65.0f, 34.0f);
-        if (sCell5Bar != null) vfF8120g.set(sCell5Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell5", -1));
+        Object sCell5Bar = addBar.invoke(builder, rsrpRow + 2.0f, barH, 65.0f, 34.0f);
+        if (sCell5Bar != null) barBinding.set(sCell5Bar, makeProp("LTE::Downlink_Measurements::SCC::LTE_RSRP_SCell5", -1));
     }
 
-    private void injectRankUsageRowPathD(Object k2aObj, float startRow) throws Exception {
+    private void injectRankUsageRowPathD(Object builder, float startRow) throws Exception {
         final float labelH = 3.0f;
         final float leftH = 1.2f;
         final float barH = 1.0f;
 
-        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
-        if (rank3Label != null) { veF.set(rank3Label, "Rank3 Usage"); veG.set(rank3Label, 0); veH.set(rank3Label, 1); }
-        injectRankBar(k2aObj, startRow + 0.15f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL");
-        injectRankBar(k2aObj, startRow + 1.65f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL");
-        injectRankBar(k2aObj, startRow, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL");
-        injectRankBar(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL");
-        injectRankBar(k2aObj, startRow + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell4_DL");
+        Object rank3Label = addLabel.invoke(builder, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) { labelText.set(rank3Label, "Rank3 Usage"); labelAlign.set(rank3Label, 0); labelSpan.set(rank3Label, 1); }
+        injectRankBar(builder, startRow + 0.15f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL");
+        injectRankBar(builder, startRow + 1.65f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL");
+        injectRankBar(builder, startRow, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL");
+        injectRankBar(builder, startRow + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL");
+        injectRankBar(builder, startRow + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell4_DL");
 
         float rank4Row = startRow + 3.0f;
-        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
-        if (rank4Label != null) { veF.set(rank4Label, "Rank4 Usage"); veG.set(rank4Label, 0); veH.set(rank4Label, 1); }
-        injectRankBar(k2aObj, rank4Row + 0.15f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL");
-        injectRankBar(k2aObj, rank4Row + 1.65f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL");
-        injectRankBar(k2aObj, rank4Row, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL");
-        injectRankBar(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL");
-        injectRankBar(k2aObj, rank4Row + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell4_DL");
+        Object rank4Label = addLabel.invoke(builder, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) { labelText.set(rank4Label, "Rank4 Usage"); labelAlign.set(rank4Label, 0); labelSpan.set(rank4Label, 1); }
+        injectRankBar(builder, rank4Row + 0.15f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL");
+        injectRankBar(builder, rank4Row + 1.65f, leftH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL");
+        injectRankBar(builder, rank4Row, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL");
+        injectRankBar(builder, rank4Row + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL");
+        injectRankBar(builder, rank4Row + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell4_DL");
     }
 
-    private void injectRankUsageRowPathE(Object k2aObj, float startRow) throws Exception {
+    private void injectRankUsageRowPathE(Object builder, float startRow) throws Exception {
         final float labelH = 3.0f;
         final float barH = 1.0f;
 
-        Object rank3Label = k2aRMethod.invoke(k2aObj, startRow, labelH, 0.0f, 27.0f);
-        if (rank3Label != null) { veF.set(rank3Label, "Rank3 Usage"); veG.set(rank3Label, 0); veH.set(rank3Label, 1); }
-        injectRankBar(k2aObj, startRow, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL");
-        injectRankBar(k2aObj, startRow + 1.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL");
-        injectRankBar(k2aObj, startRow + 2.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL");
-        injectRankBar(k2aObj, startRow, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL");
-        injectRankBar(k2aObj, startRow + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell4_DL");
-        injectRankBar(k2aObj, startRow + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell5_DL");
+        Object rank3Label = addLabel.invoke(builder, startRow, labelH, 0.0f, 27.0f);
+        if (rank3Label != null) { labelText.set(rank3Label, "Rank3 Usage"); labelAlign.set(rank3Label, 0); labelSpan.set(rank3Label, 1); }
+        injectRankBar(builder, startRow, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank3_Usage_PCell_DL");
+        injectRankBar(builder, startRow + 1.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell1_DL");
+        injectRankBar(builder, startRow + 2.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell2_DL");
+        injectRankBar(builder, startRow, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell3_DL");
+        injectRankBar(builder, startRow + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell4_DL");
+        injectRankBar(builder, startRow + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank3_Usage_SCell5_DL");
 
         float rank4Row = startRow + 3.0f;
-        Object rank4Label = k2aRMethod.invoke(k2aObj, rank4Row, labelH, 0.0f, 27.0f);
-        if (rank4Label != null) { veF.set(rank4Label, "Rank4 Usage"); veG.set(rank4Label, 0); veH.set(rank4Label, 1); }
-        injectRankBar(k2aObj, rank4Row, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL");
-        injectRankBar(k2aObj, rank4Row + 1.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL");
-        injectRankBar(k2aObj, rank4Row + 2.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL");
-        injectRankBar(k2aObj, rank4Row, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL");
-        injectRankBar(k2aObj, rank4Row + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell4_DL");
-        injectRankBar(k2aObj, rank4Row + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell5_DL");
+        Object rank4Label = addLabel.invoke(builder, rank4Row, labelH, 0.0f, 27.0f);
+        if (rank4Label != null) { labelText.set(rank4Label, "Rank4 Usage"); labelAlign.set(rank4Label, 0); labelSpan.set(rank4Label, 1); }
+        injectRankBar(builder, rank4Row, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::PCC::LTE_Rank4_Usage_PCell_DL");
+        injectRankBar(builder, rank4Row + 1.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell1_DL");
+        injectRankBar(builder, rank4Row + 2.0f, barH, 30.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell2_DL");
+        injectRankBar(builder, rank4Row, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell3_DL");
+        injectRankBar(builder, rank4Row + 1.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell4_DL");
+        injectRankBar(builder, rank4Row + 2.0f, barH, 65.0f, 34.0f, "LTE::Downlink_Measurements::SCC::LTE_Rank4_Usage_SCell5_DL");
     }
 
-    private void injectRankBar(Object k2aObj, float row, float h, float col, float w, String key) throws Exception {
-        Object bar = k2aSMethod.invoke(k2aObj, row, h, col, w);
+    private void injectRankBar(Object builder, float row, float h, float col, float w, String key) throws Exception {
+        Object bar = addBar.invoke(builder, row, h, col, w);
         if (bar != null) {
-            vfF8120g.set(bar, makeRankProp(key, -1));
-            vfFMethod.invoke(bar, DEEP_BLUE, RANK_BAR_MAX);
+            barBinding.set(bar, makeRankProp(key, -1));
+            barFixedColor.invoke(bar, DEEP_BLUE, RANK_BAR_MAX);
         }
     }
 
-    private void injectMcsRowPathD(Object k2aObj, float row) throws Exception {
+    private void injectMcsRowPathD(Object builder, float row) throws Exception {
         final float labelH = 3.0f;
         final float leftH = 1.2f;
         final float barH = 1.0f;
-        Object label = k2aRMethod.invoke(k2aObj, row, labelH, 0.0f, 27.0f);
-        if (label != null) { veF.set(label, "MCS Cwd 0/1"); veG.set(label, 0); veH.set(label, 1); }
-        injectMcsBar(k2aObj, row + 0.15f, leftH, 30.0f, 16.5f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
-        injectMcsBar(k2aObj, row + 0.15f, leftH, 47.0f, 17.0f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
-        injectMcsBar(k2aObj, row + 1.65f, leftH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
-        injectMcsBar(k2aObj, row + 1.65f, leftH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
-        injectMcsBar(k2aObj, row, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
-        injectMcsBar(k2aObj, row, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell3_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell3_DL");
-        injectMcsBar(k2aObj, row + 2.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell4_DL");
-        injectMcsBar(k2aObj, row + 2.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell4_DL");
+        Object label = addLabel.invoke(builder, row, labelH, 0.0f, 27.0f);
+        if (label != null) { labelText.set(label, "MCS Cwd 0/1"); labelAlign.set(label, 0); labelSpan.set(label, 1); }
+        injectMcsBar(builder, row + 0.15f, leftH, 30.0f, 16.5f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
+        injectMcsBar(builder, row + 0.15f, leftH, 47.0f, 17.0f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
+        injectMcsBar(builder, row + 1.65f, leftH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
+        injectMcsBar(builder, row + 1.65f, leftH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
+        injectMcsBar(builder, row, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
+        injectMcsBar(builder, row, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
+        injectMcsBar(builder, row + 1.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell3_DL");
+        injectMcsBar(builder, row + 1.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell3_DL");
+        injectMcsBar(builder, row + 2.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell4_DL");
+        injectMcsBar(builder, row + 2.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell4_DL");
     }
 
-    private void injectMcsRowPathE(Object k2aObj, float row) throws Exception {
+    private void injectMcsRowPathE(Object builder, float row) throws Exception {
         final float labelH = 3.0f;
         final float barH = 1.0f;
-        Object label = k2aRMethod.invoke(k2aObj, row, labelH, 0.0f, 27.0f);
-        if (label != null) { veF.set(label, "MCS Cwd 0/1"); veG.set(label, 0); veH.set(label, 1); }
-        injectMcsBar(k2aObj, row, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
-        injectMcsBar(k2aObj, row, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
-        injectMcsBar(k2aObj, row + 2.0f, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
-        injectMcsBar(k2aObj, row + 2.0f, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
-        injectMcsBar(k2aObj, row, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell3_DL");
-        injectMcsBar(k2aObj, row, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell3_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell4_DL");
-        injectMcsBar(k2aObj, row + 1.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell4_DL");
-        injectMcsBar(k2aObj, row + 2.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell5_DL");
-        injectMcsBar(k2aObj, row + 2.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell5_DL");
+        Object label = addLabel.invoke(builder, row, labelH, 0.0f, 27.0f);
+        if (label != null) { labelText.set(label, "MCS Cwd 0/1"); labelAlign.set(label, 0); labelSpan.set(label, 1); }
+        injectMcsBar(builder, row, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd0_PCell_DL");
+        injectMcsBar(builder, row, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::PCC::LTE_MCS_Cwd1_PCell_DL");
+        injectMcsBar(builder, row + 1.0f, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell1_DL");
+        injectMcsBar(builder, row + 1.0f, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell1_DL");
+        injectMcsBar(builder, row + 2.0f, barH, 30.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell2_DL");
+        injectMcsBar(builder, row + 2.0f, barH, 47.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell2_DL");
+        injectMcsBar(builder, row, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell3_DL");
+        injectMcsBar(builder, row, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell3_DL");
+        injectMcsBar(builder, row + 1.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell4_DL");
+        injectMcsBar(builder, row + 1.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell4_DL");
+        injectMcsBar(builder, row + 2.0f, barH, 65.0f, 16.5f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd0_SCell5_DL");
+        injectMcsBar(builder, row + 2.0f, barH, 82.0f, 17.0f, "LTE::Downlink_Measurements::SCC::LTE_MCS_Cwd1_SCell5_DL");
     }
 }

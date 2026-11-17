@@ -13,7 +13,7 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks t7.t.i0(String) — NSG's Experiment onCreatePreferences — to inject
+ * Hooks yp.f0(String) — NSG's Experiment settings fragment onCreatePreferences — to inject
  * SwitchPreferenceCompat toggles into the PreferenceScreen root.
  *
  * All androidx.preference classes are loaded from NSG's classloader (compileOnly
@@ -204,7 +204,10 @@ public class SettingsToggleHook {
         return sSameSitePci;
     }
 
-    private static final String FRAGMENT_CLS = "t7.t";
+    /** Experiment settings fragment (extends PreferenceFragmentCompat if0). */
+    private static final String FRAGMENT_CLS = "yp";
+    /** PreferenceFragmentCompat; field X = PreferenceManager nf0. */
+    private static final String PREF_FRAGMENT_BASE = "if0";
 
     private final XposedInterface xposed;
     private final ClassLoader     loader;
@@ -216,15 +219,12 @@ public class SettingsToggleHook {
 
     public void install() {
         try {
-            Class<?> fragCls = ClassMapping.loadClass(FRAGMENT_CLS, loader);
-            if (fragCls == null) {
-                Log.i(TAG, "SettingsToggleHook: " + FRAGMENT_CLS
-                        + " not available on this flavor, skipping");
-                return;
-            }
-            Method i0 = ClassMapping.getDeclaredMethod(fragCls, FRAGMENT_CLS, "i0", loader, String.class);
+            Class<?> fragCls = Nsg.load(loader, FRAGMENT_CLS);
+            if (fragCls == null) return;
+            // yp.f0(String): onCreatePreferences
+            Method f0 = fragCls.getDeclaredMethod("f0", String.class);
 
-            xposed.hook(i0).intercept(new Hooker() {
+            xposed.hook(f0).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -246,17 +246,17 @@ public class SettingsToggleHook {
 
     private void injectToggle(Object fragment) throws Throwable {
         // --- 1. Get PreferenceScreen via field reflection ---
-        // fragment.Y  →  PreferenceManager (androidx.preference.f)
+        // if0.X  →  PreferenceManager (nf0)
         // prefManager.<field of type PreferenceScreen>  →  PreferenceScreen
-        Class<?> baseCls = ClassMapping.loadClass("androidx.preference.c", loader);
-        Field yField = baseCls.getField(ClassMapping.runtimeFieldName("androidx.preference.c", "Y", loader));
+        Class<?> baseCls = Nsg.load(loader, PREF_FRAGMENT_BASE);
+        Field yField = baseCls.getField("X");
         Object prefManager = yField.get(fragment);
         if (prefManager == null) {
-            Log.w(TAG, "PreferenceManager (Y) is null — aborting");
+            Log.w(TAG, "PreferenceManager (X) is null — aborting");
             return;
         }
 
-        Class<?> prefScreenCls = ClassMapping.loadClass("androidx.preference.PreferenceScreen", loader);
+        Class<?> prefScreenCls = Nsg.load(loader, "androidx.preference.PreferenceScreen");
         Class<?> prefMgrCls    = prefManager.getClass();
 
         Field screenField = null;
@@ -286,7 +286,7 @@ public class SettingsToggleHook {
         // --- 2. Guard against double-injection ---
         // findPreference generic signature <T extends Preference> T F(CharSequence) erases
         // return type to Object at runtime — match on CharSequence parameter only.
-        Class<?> prefCls = ClassMapping.loadClass("androidx.preference.Preference", loader);
+        Class<?> prefCls = Nsg.load(loader, "androidx.preference.Preference");
         Method findPref = null;
         for (Method m : prefScreenCls.getMethods()) {
             Class<?>[] p = m.getParameterTypes();
@@ -313,7 +313,7 @@ public class SettingsToggleHook {
         Context ctx = (Context) reqCtx.invoke(fragment);
 
         // --- 4. Locate SwitchPreferenceCompat constructor ---
-        Class<?> swCls = ClassMapping.loadClass("androidx.preference.SwitchPreferenceCompat", loader);
+        Class<?> swCls = Nsg.load(loader, "androidx.preference.SwitchPreferenceCompat");
         java.lang.reflect.Constructor<?> swCtor = null;
         for (java.lang.reflect.Constructor<?> c : swCls.getDeclaredConstructors()) {
             Class<?>[] p = c.getParameterTypes();
@@ -328,7 +328,7 @@ public class SettingsToggleHook {
         swCtor.setAccessible(true);
 
         // --- 5. Locate key/title/summary/iconSpaceReserved fields on Preference ---
-        Class<?> prefBaseCls = ClassMapping.loadClass("androidx.preference.Preference", loader);
+        Class<?> prefBaseCls = Nsg.load(loader, "androidx.preference.Preference");
         Field keyField     = null;
         Field titleField   = null;
         Field summaryField = null;
@@ -347,11 +347,10 @@ public class SettingsToggleHook {
         if (titleField != null) titleField.setAccessible(true);
         if (summaryField != null) summaryField.setAccessible(true);
 
-        // iconSpaceReserved field (named "C" in v4.8.6)
+        // iconSpaceReserved field: Preference.B (final boolean)
         Field iconSpaceField = null;
         try {
-            String iconSpaceName = ClassMapping.runtimeFieldName("androidx.preference.Preference", "C", loader);
-            iconSpaceField = prefBaseCls.getDeclaredField(iconSpaceName);
+            iconSpaceField = prefBaseCls.getDeclaredField("B");
             iconSpaceField.setAccessible(true);
         } catch (Throwable ignored) {}
 
@@ -385,7 +384,7 @@ public class SettingsToggleHook {
         if (attachMethod != null) attachMethod.setAccessible(true);
 
         // parent (PreferenceGroup) field on Preference
-        Class<?> prefGroupCls = ClassMapping.loadClass("androidx.preference.PreferenceGroup", loader);
+        Class<?> prefGroupCls = Nsg.load(loader, "androidx.preference.PreferenceGroup");
         Field parentField = null;
         outer2:
         for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
@@ -506,8 +505,8 @@ public class SettingsToggleHook {
         }
 
         // --- 7. Trigger adapter refresh ---
-        // Send handler message 1 — replicates what j0() does when view is already created.
-        // If the view is not yet created the adapter is built fresh from Q in onViewCreated.
+        // Send handler message 1 — replicates what if0.h0() does when view is already created.
+        // If the view is not yet created the adapter is built fresh in onViewCreated.
         try {
             android.os.Handler handler = null;
             for (Class<?> c = fragment.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {

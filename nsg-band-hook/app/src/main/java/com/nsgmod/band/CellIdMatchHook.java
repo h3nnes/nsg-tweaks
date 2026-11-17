@@ -13,7 +13,7 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks ma.a.j(String, Integer, Integer, Double, Double) — NSG's cell-DB WHERE-clause builder —
+ * Hooks o21.d(String, Integer, Integer, Double, Double) — NSG's cell-DB WHERE-clause builder —
  * to substitute ECellID-based matching for LTE instead of the default PCI-based matching.
  *
  * Default NSG behaviour (PCI matching):
@@ -26,15 +26,15 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * is no longer blanked by a single serving-cell ECellID.
  *
  * The live LTE serving-cell signals are read via NSG's Property/Workspace system:
- *   - A com.qtrun.sys.a wrapper is created for the signal path
- *   - Workspace.j.h(aVar, moduleIndex) binds it to the live Property (field "d")
+ *   - An l8 attribute wrapper is created for the signal path
+ *   - Workspace.j.f(l8, moduleIndex) binds it to the live Property (field "d")
  *   - Property.Iterator.reverse() + value() reads the most recent value
  * Serving PCI (LTE::Serving_Cell::LTE_PCI_PCell), DL EARFCN
  * (LTE::Serving_Cell::LTE_EARFCN_PCell_DL) and ECellID (LTE::Serving_Cell::LTE_Uu_RRC_ECI)
  * are read fresh per query. If any serving signal is unavailable, or the row is not the
  * serving cell, the hook falls back to the original PCI-based WHERE clause transparently.
  *
- * In ma.a.j(): arg3 (d2) = Latitude (fVar.Z = Location_Latitude),
+ * In o21.d(): arg3 (d2) = Latitude (fVar.Z = Location_Latitude),
  *              arg4 (d10) = Longitude (fVar.Y = Location_Longitude).
  *
  * Only applies to LTE ("LTE" technology string). All other RATs are unaffected.
@@ -45,7 +45,10 @@ public class CellIdMatchHook {
 
     private static final String TAG = "NSGBandHook";
 
-    // Signal paths for the live LTE serving cell (all 28/validity-checked at read time)
+    // Signal paths for the live LTE serving cell (validity-checked at read time)
+    /** Signal attribute class (path/format/Property field "d"). */
+    private static final String ATTRIBUTE = "l8";
+
     private static final String SIGNAL_LTE_ECI    = "LTE::Serving_Cell::LTE_Uu_RRC_ECI";
     private static final String SIGNAL_LTE_PCI    = "LTE::Serving_Cell::LTE_PCI_PCell";
     private static final String SIGNAL_LTE_EARFCN = "LTE::Serving_Cell::LTE_EARFCN_PCell_DL";
@@ -60,12 +63,9 @@ public class CellIdMatchHook {
 
     public void install() {
         try {
-            Class<?> cls = ClassMapping.loadClass("ma.a", loader);
-            if (cls == null) {
-                Log.i(TAG, "CellIdMatchHook: ma.a not available on this flavor, skipping");
-                return;
-            }
-            Method method = ClassMapping.getDeclaredMethod(cls, "ma.a", "j", loader,
+            Class<?> cls = Nsg.load(loader, "o21");
+            if (cls == null) return;
+            Method method = cls.getDeclaredMethod("d",
                     String.class, Integer.class, Integer.class, Double.class, Double.class);
             method.setAccessible(true);
 
@@ -126,7 +126,7 @@ public class CellIdMatchHook {
 
                     // Build EARFCN + ECellID WHERE clause.
                     // Use Locale.US so decimal separator is always '.' regardless of device locale.
-                    // Column name ECellID matches the DB schema in h7/d.java.
+                    // Column name ECellID matches the cell DB schema.
                     String where = "earfcn=" + arfcn
                             + " and ECellID=" + eci
                             + String.format(Locale.US,
@@ -149,8 +149,8 @@ public class CellIdMatchHook {
      * Property/Workspace system.
      *
      * Approach:
-     *   1. Create a com.qtrun.sys.a wrapper for the signal path string
-     *   2. Call Workspace.j.h(aVar, moduleIndex) for each known module index (0..3)
+     *   1. Create an l8 attribute wrapper for the signal path string
+     *   2. Call Workspace.j.f(l8, moduleIndex) for each known module index (0..3)
      *      to bind the wrapper to the live Property handle (stored in field "d")
      *   3. Create a Property.Iterator, call reverse() to seek to the latest sample,
      *      then read value() — returns Integer or Long
@@ -175,20 +175,18 @@ public class CellIdMatchHook {
     private synchronized void resolveEciHandles() {
         if (eciHandlesReady) return;
         try {
-            Class<?> a = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            Class<?> ws = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            Class<?> prop = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iter = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> a = Nsg.load(loader, ATTRIBUTE);
+            Class<?> ws = Nsg.load(loader, Nsg.WORKSPACE);
+            Class<?> prop = Nsg.load(loader, Nsg.PROPERTY);
+            Class<?> iter = Nsg.load(loader, Nsg.PROPERTY_ITER);
             if (a == null || ws == null || prop == null || iter == null) return; // retry next call
 
             java.lang.reflect.Constructor<?> aCtor = a.getDeclaredConstructor(String.class);
             Field d = a.getDeclaredField("d");
             d.setAccessible(true);
-            Field wsField = ws.getDeclaredField(
-                    ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader));
+            Field wsField = ws.getDeclaredField("j"); // enum singleton
             wsField.setAccessible(true);
-            Method h = ClassMapping.getDeclaredMethod(ws, "com.qtrun.sys.Workspace", "h",
-                    loader, a, int.class);
+            Method h = ws.getDeclaredMethod("f", a, int.class); // bind(l8, module) -> boolean
             h.setAccessible(true);
             java.lang.reflect.Constructor<?> itCtor = iter.getDeclaredConstructor(prop);
 
@@ -219,7 +217,7 @@ public class CellIdMatchHook {
                 return -1;
             }
 
-            // --- 1. Create com.qtrun.sys.a wrapper for the signal path (fresh) ---
+            // --- 1. Create l8 wrapper for the signal path (fresh) ---
             Object aVar = attrCtor.newInstance(path);
 
             // --- 2. Get Workspace singleton (fresh read) ---
@@ -229,7 +227,7 @@ public class CellIdMatchHook {
                 return -1;
             }
 
-            // Try module indices 0..3 — h(com.qtrun.sys.a, int) binds the
+            // Try module indices 0..3 — f(l8, int) binds the
             // Property (field "d") if the signal is live. Fresh bind per call.
             boolean bound = false;
             for (int moduleIdx = 0; moduleIdx <= 3; moduleIdx++) {

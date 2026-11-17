@@ -36,10 +36,11 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks NSG 4.8.4 (com.qtrun.QuickTest) to inject a search bar UI at the top
+ * Hooks NSG v4.8.14 (com.qtrun.QuickTest) to inject a search bar UI at the top
  * of the signaling message detail popup.
  *
- * Hook: u7.a.onItemClick (after-hook)
+ * Hook: rp.onItemClick (after-hook; rp = synthetic click listener of the
+ * signaling fragment x80, popup in x80.e0)
  *   - Finds the FrameLayout content view of the popup.
  *   - Adds a semi-transparent search bar LinearLayout pinned to the top.
  *   - Supports async search (to avoid freezing on long messages) with yellow/orange highlights
@@ -53,19 +54,19 @@ public class SignalingSearchHook {
     private static final String TAG = "NSGBandHook";
     private static final String SEARCH_BAR_TAG = "nsg_search_bar_added";
 
-    private int idDetailText = 0x7f0900dc;
+    private int idDetailText = 0x7f0900de; // R.id.detail
     private boolean resIdsResolved = false;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // --- u7.a reflection ---
-    private Method onItemClickMethod;
-    private Field  u7aFieldA;
-    private Field  u7aFieldB;
+    private static final String LISTENER_CLASS = "rp";   // synthetic OnItemClickListener
+    private static final String FRAGMENT_CLASS = "x80";  // signaling message list fragment
 
-    // --- u7.f reflection ---
-    private Field  u7fPopupField;
+    private Method onItemClickMethod;  // rp.onItemClick(AdapterView, View, int, long)
+    private Field  listenerSelector;   // rp.a (int): 0 = other list (tp), 1 = signaling
+    private Field  listenerFragment;   // rp.b (id0): owning fragment (x80)
+    private Field  fragmentPopup;      // x80.e0 (PopupWindow): detail popup
 
     private boolean reflectionReady = false;
 
@@ -81,47 +82,30 @@ public class SignalingSearchHook {
 
     private void initReflection() {
         try {
-            Class<?> u7aClass = ClassMapping.loadClass("u7.a", loader);
-            Class<?> u7fClass = ClassMapping.loadClass("u7.f", loader);
-            if (u7aClass == null || u7fClass == null) {
-                Log.i(TAG, "SignalingSearchHook: u7.a or u7.f missing, skipping");
+            Class<?> listenerClass = Nsg.load(loader, LISTENER_CLASS);
+            Class<?> fragmentClass = Nsg.load(loader, FRAGMENT_CLASS);
+            if (listenerClass == null || fragmentClass == null) {
+                Log.i(TAG, "SignalingSearchHook: rp or x80 missing, skipping");
                 return;
             }
 
-            onItemClickMethod = u7aClass.getMethod("onItemClick",
+            onItemClickMethod = listenerClass.getMethod("onItemClick",
                     android.widget.AdapterView.class,
                     android.view.View.class,
                     int.class,
                     long.class);
 
-            String u7aFieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
-            String u7aFieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
-            u7aFieldA = u7aClass.getDeclaredField(u7aFieldAName);
-            u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField(u7aFieldBName);
-            u7aFieldB.setAccessible(true);
-
-            u7fPopupField = findFieldByType(u7fClass, PopupWindow.class);
-            if (u7fPopupField == null) {
-                throw new NoSuchFieldException("No PopupWindow field found in u7.f");
-            }
-            u7fPopupField.setAccessible(true);
+            listenerSelector = listenerClass.getDeclaredField("a");
+            listenerSelector.setAccessible(true);
+            listenerFragment = listenerClass.getDeclaredField("b");
+            listenerFragment.setAccessible(true);
+            fragmentPopup = fragmentClass.getDeclaredField("e0");
+            fragmentPopup.setAccessible(true);
 
             reflectionReady = true;
         } catch (Exception e) {
             Log.e(TAG, "SignalingSearchHook: initReflection failed: " + e);
         }
-    }
-
-    private static Field findFieldByType(Class<?> clazz, Class<?> targetType) {
-        for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (Field f : c.getDeclaredFields()) {
-                if (f.getType() == targetType) {
-                    return f;
-                }
-            }
-        }
-        return null;
     }
 
     private void ensureResIds(Context ctx) {
@@ -194,15 +178,15 @@ public class SignalingSearchHook {
                     Object result = chain.proceed();
 
                     try {
-                        Object listener = chain.getThisObject(); // u7.a instance
+                        Object listener = chain.getThisObject(); // rp instance
 
-                        int selector = (int) u7aFieldA.get(listener);
+                        int selector = (int) listenerSelector.get(listener);
                         if (selector == 0) return result;
 
-                        Object fragment = u7aFieldB.get(listener);
+                        Object fragment = listenerFragment.get(listener);
                         if (fragment == null) return result;
 
-                        PopupWindow popup = (PopupWindow) u7fPopupField.get(fragment);
+                        PopupWindow popup = (PopupWindow) fragmentPopup.get(fragment);
                         if (popup == null) return result;
 
                         View contentView = popup.getContentView();

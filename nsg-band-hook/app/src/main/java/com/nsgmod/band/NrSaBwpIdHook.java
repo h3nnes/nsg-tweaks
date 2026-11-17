@@ -12,51 +12,55 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Adds a "BWP-ID" column to the NR-SA status panel (d8.i),
+ * Adds a "BWP-ID" column to the NR-SA status panel (lb0),
  * resizing the existing 4 columns and adding a 5th column
  * showing the active DL BWP ID.
  *
- * Hook: AFTER d8.i.l0(Context)
+ * Hook: AFTER lb0.h0(Context)
  */
 public class NrSaBwpIdHook {
 
     private static final String TAG = "NSGBandHook";
 
+    private static final String STATUS_PAGE = "lb0"; // NR-SA status panel page (yg0 subclass)
+    private static final String ATTR_BASE = "l8";   // attribute base: key a, format b, index c
+    private static final String ATTR_MAIN = "m8";   // attribute subclass (instantiated via Unsafe)
+
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // k2.a builder methods
-    private Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e (label)
-    private Method k2aTMethod; // t(float row, float h, float col, float w) → v6.g (value cell)
+    // r31 grid builder methods
+    private Method builderLabelMethod; // M(float row, float h, float col, float w) → bh0 (label)
+    private Method builderValueMethod; // O(float row, float h, float col, float w) → dh0 (value cell)
 
-    // v6.e label fields
-    private Field veF; // text   (f)
-    private Field veG; // appearance (g)
-    private Field veH; // gravity (h)
+    // bh0 label fields
+    private Field labelText;  // f
+    private Field labelAlign; // g
+    private Field labelSpan;  // h
 
-    // v6.a element fields
-    private Field vaRowField;   // b (row float)
-    private Field vaColField;   // d (col float)
-    private Field vaWidthField; // e (width float)
+    // xg0 element fields
+    private Field elementRowField;   // b (row float)
+    private Field elementColField;   // d (col float)
+    private Field elementWidthField; // e (width float)
 
-    // v6.g value cell fields and method
-    private Method vgGMethod; // g(com.qtrun.sys.b, boolean)
-    private Field vgJ;        // appearance (j)
-    private Field vgK;        // gravity (k)
+    // dh0 value cell fields and method
+    private Method valueBindMethod; // g(m8, boolean)
+    private Field valueAppearance;  // j
+    private Field valueGravity;     // k
 
-    // com.qtrun.sys.b / a — property binding
-    private Class<?> sysBClass;
-    private Field sysAFieldA; // final String key
-    private Field sysAFieldB; // final String format
-    private Field sysAFieldC; // int index
+    // l8 / m8 — property binding
+    private Class<?> attrClass;
+    private Field attrKey;    // final String a
+    private Field attrFormat; // final String b
+    private Field attrIndex;  // int c
 
-    // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
+    // Unsafe for allocateInstance (m8 ctor is not usable here)
     private Object unsafe;
     private Method unsafeAllocateInstance;
 
-    // k2.a list + v6.b.Y field
-    private Field k2aListField;
-    private Field v6bYField;
+    // r31 element list + yg0.X field
+    private Field builderListField;
+    private Field pageBuilderField;
 
     private boolean ready = false;
 
@@ -68,45 +72,45 @@ public class NrSaBwpIdHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vgClass  = ClassMapping.loadClass("v6.g", loader);
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> vaClass  = ClassMapping.loadClass("v6.a", loader);
+            Class<?> builderClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Class<?> labelClass   = Nsg.load(loader, Nsg.GRID_LABEL);
+            Class<?> valueClass   = Nsg.load(loader, Nsg.GRID_MULTI);
+            Class<?> pageClass    = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> elementClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+            builderLabelMethod = builderClass.getMethod("M",
                     float.class, float.class, float.class, float.class);
-            k2aTMethod = ClassMapping.getMethod(k2aClass, "k2.a", "t", loader,
+            builderValueMethod = builderClass.getMethod("O",
                     float.class, float.class, float.class, float.class);
 
-            veF = veClass.getField("f");
-            veG = veClass.getField("g");
-            veH = veClass.getField("h");
+            labelText = labelClass.getField("f");
+            labelAlign = labelClass.getField("g");
+            labelSpan = labelClass.getField("h");
 
-            vaRowField   = vaClass.getDeclaredField("b");
-            vaColField   = vaClass.getDeclaredField("d");
-            vaWidthField = vaClass.getDeclaredField("e");
-            vaRowField.setAccessible(true);
-            vaColField.setAccessible(true);
-            vaWidthField.setAccessible(true);
+            elementRowField   = elementClass.getDeclaredField("b");
+            elementColField   = elementClass.getDeclaredField("d");
+            elementWidthField = elementClass.getDeclaredField("e");
+            elementRowField.setAccessible(true);
+            elementColField.setAccessible(true);
+            elementWidthField.setAccessible(true);
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            sysAFieldA = sysAClass.getDeclaredField("a");
-            sysAFieldB = sysAClass.getDeclaredField("b");
-            sysAFieldC = sysAClass.getDeclaredField("c");
-            sysAFieldA.setAccessible(true);
-            sysAFieldB.setAccessible(true);
-            sysAFieldC.setAccessible(true);
+            attrClass = Nsg.load(loader, ATTR_MAIN);
+            Class<?> attrBaseClass = Nsg.load(loader, ATTR_BASE);
+            attrKey = attrBaseClass.getDeclaredField("a");
+            attrFormat = attrBaseClass.getDeclaredField("b");
+            attrIndex = attrBaseClass.getDeclaredField("c");
+            attrKey.setAccessible(true);
+            attrFormat.setAccessible(true);
+            attrIndex.setAccessible(true);
 
-            vgGMethod = vgClass.getMethod("g", sysBClass, boolean.class);
-            vgJ = vgClass.getDeclaredField("j");
-            vgK = vgClass.getDeclaredField("k");
-            vgJ.setAccessible(true);
-            vgK.setAccessible(true);
+            valueBindMethod = valueClass.getMethod("g", attrClass, boolean.class);
+            valueAppearance = valueClass.getDeclaredField("j");
+            valueGravity = valueClass.getDeclaredField("k");
+            valueAppearance.setAccessible(true);
+            valueGravity.setAccessible(true);
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-            java.lang.reflect.Field unsafeField;
+            Field unsafeField;
             try {
                 unsafeField = unsafeClass.getDeclaredField("THE_ONE"); // Android/Dalvik
             } catch (NoSuchFieldException e2) {
@@ -116,10 +120,9 @@ public class NrSaBwpIdHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
-            k2aListField.setAccessible(true);
-
-            v6bYField = v6bClass.getField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
+            builderListField = builderClass.getDeclaredField("b"); // ArrayList<xg0> (typed Object)
+            builderListField.setAccessible(true);
+            pageBuilderField = pageClass.getField("X");
 
             ready = true;
         } catch (Exception e) {
@@ -133,14 +136,10 @@ public class NrSaBwpIdHook {
             return;
         }
         try {
-            Class<?> d8iClass = ClassMapping.loadClass("d8.i", loader);
-            if (d8iClass == null) {
-                Log.i(TAG, "NrSaBwpIdHook: d8.i not available on this flavor, skipping");
-                return;
-            }
-            Method l0Method = ClassMapping.getMethod(d8iClass, "d8.i", "l0", loader, Context.class);
+            Class<?> pageClass = Nsg.load(loader, STATUS_PAGE);
+            Method buildMethod = pageClass.getMethod("h0", Context.class);
 
-            xposed.hook(l0Method).intercept(new Hooker() {
+            xposed.hook(buildMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -159,35 +158,35 @@ public class NrSaBwpIdHook {
 
     private void injectBwpIdColumn(Object thiz) {
         try {
-            Object k2aObj = v6bYField.get(thiz);
-            if (k2aObj == null) {
-                Log.w(TAG, "NrSaBwpIdHook: this.Y is null after l0(), skipping");
+            Object builder = pageBuilderField.get(thiz);
+            if (builder == null) {
+                Log.w(TAG, "NrSaBwpIdHook: this.X is null after h0(), skipping");
                 return;
             }
 
             // Step 1: resize existing columns in row 0.0f and row 1.0f
-            java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+            java.util.ArrayList<?> list = (java.util.ArrayList<?>) builderListField.get(builder);
             if (list != null) {
                 for (Object elem : list) {
-                    float row = (float) vaRowField.get(elem);
+                    float row = (float) elementRowField.get(elem);
                     if (row == 0.0f || row == 1.0f) {
-                        float col = (float) vaColField.get(elem);
+                        float col = (float) elementColField.get(elem);
                         if (col < 1.0f) {
                             // First column (was col 0, width 25)
-                            vaColField.set(elem, 0.0f);
-                            vaWidthField.set(elem, 20.0f);
+                            elementColField.set(elem, 0.0f);
+                            elementWidthField.set(elem, 20.0f);
                         } else if (col >= 25.0f && col < 27.0f) {
                             // Second column (was col 26, width 25)
-                            vaColField.set(elem, 20.0f);
-                            vaWidthField.set(elem, 20.0f);
+                            elementColField.set(elem, 20.0f);
+                            elementWidthField.set(elem, 20.0f);
                         } else if (col >= 51.0f && col < 53.0f) {
                             // Third column (was col 52, width 25)
-                            vaColField.set(elem, 40.0f);
-                            vaWidthField.set(elem, 20.0f);
+                            elementColField.set(elem, 40.0f);
+                            elementWidthField.set(elem, 20.0f);
                         } else if (col >= 77.0f && col < 79.0f) {
                             // Fourth column (was col 78, width 21)
-                            vaColField.set(elem, 60.0f);
-                            vaWidthField.set(elem, 20.0f);
+                            elementColField.set(elem, 60.0f);
+                            elementWidthField.set(elem, 20.0f);
                         }
                     }
                 }
@@ -196,24 +195,24 @@ public class NrSaBwpIdHook {
             final float h = 1.0f;
 
             // Step 2: create new label at row=0.0f, col=80.0f, width=20.0f
-            Object label = k2aRMethod.invoke(k2aObj, 0.0f, h, 80.0f, 20.0f);
+            Object label = builderLabelMethod.invoke(builder, 0.0f, h, 80.0f, 20.0f);
             if (label != null) {
-                veF.set(label, "BWP-ID");
-                veG.set(label, 0);  // appearance
-                veH.set(label, 2);  // gravity
+                labelText.set(label, "BWP-ID");
+                labelAlign.set(label, 0);  // appearance
+                labelSpan.set(label, 2);  // gravity
             }
 
             // Step 3: create new value cell at row=1.0f, col=80.0f, width=20.0f
-            Object valueCell = k2aTMethod.invoke(k2aObj, 1.0f, h, 80.0f, 20.0f);
+            Object valueCell = builderValueMethod.invoke(builder, 1.0f, h, 80.0f, 20.0f);
             if (valueCell != null) {
-                vgJ.set(valueCell, 0);  // appearance
-                vgK.set(valueCell, 2);  // gravity
+                valueAppearance.set(valueCell, 0);  // appearance
+                valueGravity.set(valueCell, 2);  // gravity
 
-                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, "NR5G::Dedicated_Radio_Link::BWP::NR_PCell_BWP_ID_DL");
-                sysAFieldB.set(prop, null); // no format
-                sysAFieldC.set(prop, 0);    // index
-                vgGMethod.invoke(valueCell, prop, true);
+                Object prop = unsafeAllocateInstance.invoke(unsafe, attrClass);
+                attrKey.set(prop, "NR5G::Dedicated_Radio_Link::BWP::NR_PCell_BWP_ID_DL");
+                attrFormat.set(prop, null); // no format
+                attrIndex.set(prop, 0);    // index
+                valueBindMethod.invoke(valueCell, prop, true);
             }
 
         } catch (Exception e) {

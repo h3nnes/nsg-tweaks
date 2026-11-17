@@ -10,8 +10,17 @@ import java.util.ArrayList;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
+/**
+ * Adds the LTE "CAMatrixUL" page (v00) to the NR-NSA page list, right after the
+ * NR-NSA "NRNSA_LTE_CA_Matrix" page (ua0).
+ *
+ * NSG v4.8.14 targets (page list manager ss):
+ *   ss.g(int rat): ArrayList of page fragments for the RAT mode (return hook).
+ *   ss.m(int rat, ArrayList): stores the page list for the RAT mode (cache hook).
+ */
 public class LteCaMatrixUlInNsaHook {
     private static final String TAG = "NSGBandHook";
+    private static final String PAGE_LIST_MANAGER = "ss";
     private static final int RAT_NR_NSA = 8;
 
     private final XposedInterface xposed;
@@ -29,13 +38,8 @@ public class LteCaMatrixUlInNsaHook {
 
     private void installCacheHook() {
         try {
-            Class<?> pageListManagerClass = ClassMapping.loadClass("ts", loader);
-            if (pageListManagerClass == null) {
-                Log.w(TAG, "LteCaMatrixUlInNsaHook: page list manager class not found");
-                return;
-            }
-            String methodName = ClassMapping.runtimeMethodName("ts", "m", loader);
-            Method method = pageListManagerClass.getDeclaredMethod(methodName, int.class, ArrayList.class);
+            Class<?> pageListManagerClass = Nsg.load(loader, PAGE_LIST_MANAGER);
+            Method method = pageListManagerClass.getDeclaredMethod("m", int.class, ArrayList.class);
 
             xposed.hook(method).intercept(new Hooker() {
                 @Override
@@ -63,12 +67,8 @@ public class LteCaMatrixUlInNsaHook {
 
     private void installReturnHook() {
         try {
-            Class<?> pageListManagerClass = ClassMapping.loadClass("ts", loader);
-            if (pageListManagerClass == null) {
-                return;
-            }
-            String methodName = ClassMapping.runtimeMethodName("ts", "g", loader);
-            Method method = pageListManagerClass.getDeclaredMethod(methodName, int.class);
+            Class<?> pageListManagerClass = Nsg.load(loader, PAGE_LIST_MANAGER);
+            Method method = pageListManagerClass.getDeclaredMethod("g", int.class);
 
             xposed.hook(method).intercept(new Hooker() {
                 @Override
@@ -94,11 +94,7 @@ public class LteCaMatrixUlInNsaHook {
 
     @SuppressWarnings("unchecked")
     private void injectLteCaMatrixUl(ArrayList<Object> pageList) throws Throwable {
-        Class<?> lteCaMatrixUlClass = ClassMapping.loadClass("e8.a", loader);
-        if (lteCaMatrixUlClass == null) {
-            Log.w(TAG, "LteCaMatrixUlInNsaHook: LTE CA Matrix UL class not found");
-            return;
-        }
+        Class<?> lteCaMatrixUlClass = Nsg.load(loader, Nsg.PAGE_LTE_CA_MATRIX_UL); // v00
 
         for (Object page : pageList) {
             if (lteCaMatrixUlClass.isInstance(page)) {
@@ -106,14 +102,12 @@ public class LteCaMatrixUlInNsaHook {
             }
         }
 
-        Class<?> eutraCaMatrixClass = ClassMapping.loadClass("g8.i", loader);
+        Class<?> eutraCaMatrixClass = Nsg.load(loader, Nsg.PAGE_NSA_LTE_CA_MATRIX); // ua0
         int insertIndex = -1;
-        if (eutraCaMatrixClass != null) {
-            for (int i = 0; i < pageList.size(); i++) {
-                if (eutraCaMatrixClass.isInstance(pageList.get(i))) {
-                    insertIndex = i + 1;
-                    break;
-                }
+        for (int i = 0; i < pageList.size(); i++) {
+            if (eutraCaMatrixClass.isInstance(pageList.get(i))) {
+                insertIndex = i + 1;
+                break;
             }
         }
 

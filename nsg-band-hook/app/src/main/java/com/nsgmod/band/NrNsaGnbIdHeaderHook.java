@@ -84,9 +84,9 @@ public class NrNsaGnbIdHeaderHook {
 
     // Identity of the header cell objects the adjusted geometry was last
     // applied to. NSG's per-tick b() path never rewrites the col/width fields
-    // (verified against decompiled HeaderCGIFragment on qtrun v4.8.9 and gplay
-    // v4.8.8: per-tick it only updates cell texts/values via h0 -> k2.a.j ->
-    // v6.a.e(); geometry fields are only assigned at grid build time), so the
+    // (verified against decompiled HeaderCGIFragment v4.8.14: per-tick it only
+    // updates cell texts/values via b() -> r31.j -> xg0.a()/xg0.e(); geometry
+    // fields are only assigned at grid build time), so the
     // 8 setFloat + forceOnLayout sequence only needs to run when the target
     // cell instances change (view rebuild) or after restoreGeometry() ran.
     private Object appliedTacLabel;
@@ -107,8 +107,8 @@ public class NrNsaGnbIdHeaderHook {
                 return;
             }
 
-            Class<?> dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            Method bMethod = ClassMapping.getDeclaredMethod(cgiClass, CGI_FRAGMENT, "b", loader,
+            Class<?> dsClass = Nsg.load(loader, Nsg.DATA_SOURCE);
+            Method bMethod = cgiClass.getDeclaredMethod("b",
                     dsClass, long.class, short.class, Object.class);
             bMethod.setAccessible(true);
 
@@ -142,48 +142,46 @@ public class NrNsaGnbIdHeaderHook {
 
     private void initReflection() {
         try {
-            cgiClass = ClassMapping.loadClass(CGI_FRAGMENT, loader);
+            cgiClass = Nsg.load(loader, CGI_FRAGMENT);
+            if (cgiClass == null) return;
 
-            ecellIdValueField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "c1", loader));
+            // The four label/value cells of the CGI grid (built in E(): labels V0/W0/X0/Y0
+            // at col 0/36/65/21, values Z0/a1/b1/c1 in the same columns).
+            // ECellID = 3rd column (label X0 + value b1), TAC = 2nd column (W0 + a1).
+            ecellIdValueField = cgiClass.getDeclaredField("b1");
             ecellIdValueField.setAccessible(true);
 
-            ecellIdLabelField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "Y0", loader));
+            ecellIdLabelField = cgiClass.getDeclaredField("X0");
             ecellIdLabelField.setAccessible(true);
 
-            tacValueField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "b1", loader));
+            tacValueField = cgiClass.getDeclaredField("a1");
             tacValueField.setAccessible(true);
 
-            tacLabelField = cgiClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName(CGI_FRAGMENT, "X0", loader));
+            tacLabelField = cgiClass.getDeclaredField("W0");
             tacLabelField.setAccessible(true);
 
-            Class<?> eh0Class = ClassMapping.loadClass("v6.g", loader);
-            gField = eh0Class.getDeclaredField("g");
+            Class<?> multiCellClass = Nsg.load(loader, Nsg.GRID_MULTI);
+            gField = multiCellClass.getDeclaredField("g");
             gField.setAccessible(true);
 
-            Class<?> yg0Class = ClassMapping.loadClass("v6.a", loader);
-            viewField = yg0Class.getDeclaredField("a");
+            Class<?> elemClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
+            viewField = elemClass.getDeclaredField("a");
             viewField.setAccessible(true);
-            colField = yg0Class.getDeclaredField("d");
+            colField = elemClass.getDeclaredField("d");
             colField.setAccessible(true);
-            widthField = yg0Class.getDeclaredField("e");
+            widthField = elemClass.getDeclaredField("e");
             widthField.setAccessible(true);
 
-            Class<?> wsClass = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            wsSingletonField = wsClass.getField(
-                    ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader));
-            wsRatField = wsClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "d", loader));
+            Class<?> wsClass = Nsg.load(loader, Nsg.WORKSPACE);
+            wsSingletonField = wsClass.getField("j");
+            wsRatField = wsClass.getDeclaredField("d");
             wsRatField.setAccessible(true);
 
-            wsModuleSlotField = wsClass.getDeclaredField(
-                    ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader));
+            wsModuleSlotField = wsClass.getDeclaredField("a");
             wsModuleSlotField.setAccessible(true);
 
-            Class<?> sdClass = ClassMapping.loadClass("f7.b", loader);
+            // Cell database: class merged with other helpers in v4.8.14.
+            Class<?> sdClass = Nsg.load(loader, "sd");
             for (Field f : sdClass.getDeclaredFields()) {
                 if (Modifier.isStatic(f.getModifiers()) && f.getType() == sdClass) {
                     sdSingletonField = f;
@@ -193,7 +191,7 @@ public class NrNsaGnbIdHeaderHook {
             }
             if (sdSingletonField == null) throw new NoSuchFieldException("sd singleton not found");
 
-            sdEMethod = ClassMapping.getDeclaredMethod(sdClass, "f7.b", "d", loader, String.class);
+            sdEMethod = sdClass.getDeclaredMethod("e", String.class);
             sdEMethod.setAccessible(true);
 
             for (Method m : sdClass.getDeclaredMethods()) {
@@ -208,11 +206,11 @@ public class NrNsaGnbIdHeaderHook {
             }
             if (sdIMethod == null) throw new NoSuchMethodException("sd query method not found");
 
-            Class<?> dsClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
+            Class<?> dsClass = Nsg.load(loader, Nsg.DATA_SOURCE);
             dsGetPropertyMethod = dsClass.getMethod("getProperty", String.class, int.class);
 
-            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
+            Class<?> propClass = Nsg.load(loader, Nsg.PROPERTY);
+            Class<?> iterClass = Nsg.load(loader, Nsg.PROPERTY_ITER);
             iterConstructor = iterClass.getDeclaredConstructor(propClass);
             iterConstructor.setAccessible(true);
             iterReverseLongMethod = iterClass.getDeclaredMethod("reverse", long.class);
@@ -222,33 +220,31 @@ public class NrNsaGnbIdHeaderHook {
             iterValueMethod = iterClass.getDeclaredMethod("value");
             iterValueMethod.setAccessible(true);
 
-            Class<?> ydClass = ClassMapping.loadClass("h7.e", loader);
-            ydGCellIdField = ydClass.getDeclaredField("g");
+            Class<?> cellRowClass = Nsg.load(loader, "ka0");
+            ydGCellIdField = cellRowClass.getDeclaredField("g");
             ydGCellIdField.setAccessible(true);
 
-            // Coordinate fields live on the base row class h7.b ("a"=lon, "b"=lat),
-            // so they must be looked up with getDeclaredField on h7.b, not h7.e.
-            Class<?> ydBaseClass = ClassMapping.loadClass("h7.b", loader);
+            // Coordinate fields live on the base row class yd ("a"=lon, "b"=lat),
+            // so they must be looked up on yd, not on the derived row class.
+            Class<?> ydBaseClass = Nsg.load(loader, "yd");
             ydLonField = ydBaseClass.getDeclaredField("a");
             ydLonField.setAccessible(true);
             ydLatField = ydBaseClass.getDeclaredField("b");
             ydLatField.setAccessible(true);
 
             try {
-                Class<?> settingsClass = ClassMapping.loadClass("d7.a", loader);
+                Class<?> settingsClass = Nsg.load(loader, "xa");
                 if (settingsClass != null) {
-                    settingsSingletonField = settingsClass.getDeclaredField(
-                            ClassMapping.runtimeFieldName("d7.a", "l", loader));
+                    settingsSingletonField = settingsClass.getDeclaredField("l");
                     settingsSingletonField.setAccessible(true);
-                    gnbLengthField = settingsClass.getDeclaredField(
-                            ClassMapping.runtimeFieldName("d7.a", "k", loader));
+                    gnbLengthField = settingsClass.getDeclaredField("k");
                     gnbLengthField.setAccessible(true);
                 }
             } catch (Throwable ignored) {
             }
 
             try {
-                Class<?> layoutClass = ClassMapping.loadClass("v6.d", loader);
+                Class<?> layoutClass = Nsg.load(loader, Nsg.GRID_D);
                 onLayoutMethod = layoutClass.getDeclaredMethod("onLayout",
                         boolean.class, int.class, int.class, int.class, int.class);
             } catch (Throwable t) {

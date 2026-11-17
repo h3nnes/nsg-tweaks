@@ -11,7 +11,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -20,41 +19,38 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Single-interceptor dispatcher for the homepage cell-table adapter getView
- * methods (logical a8.f$a LTE and a8.h$a NR-NSA).
+ * Single-interceptor dispatcher for the cell-table adapter {@code nc.getView}.
  *
- * On qtrun v4.8.9 both logical classes collapse to the same runtime class
- * (nc), so all four features (BandColumnHook, NrNsaBandwidthColumnHook,
- * LteBandwidthColumnHook, CellRowHeightHook) previously installed FOUR
- * separate interceptors on the SAME runtime getView method. Each interceptor
- * independently re-resolved the adapter type, the sources array, the
- * h(position) pair and the f5509c sample key per row.
+ * <p>In v4.8.14 every cell-table adapter (LTE, NR-NSA, WCDMA, ...) is the same class
+ * {@code nc extends q00}; {@code nc.f} (int) selects the table type (4 = LTE, 6 = NR-NSA).
+ * Four features (BandColumnHook, NrNsaBandwidthColumnHook, LteBandwidthColumnHook,
+ * CellRowHeightHook) need to post-process the returned row view. This dispatcher
+ * installs ONE interceptor on {@code nc.getView(int, View, ViewGroup)}, resolves the
+ * shared per-call row context once, and invokes each feature's row processor.
  *
- * This dispatcher installs exactly ONE interceptor per distinct runtime
- * Method (deduped by Method identity), resolves the shared per-call row
- * context once, and invokes each feature's row processor in the exact
- * effective order the four interceptors ran before:
+ * <p>libxposed runs same-priority interceptors in registration order, so post-proceed
+ * bodies would run in reverse registration order. The dispatcher keeps that order:
+ * {@code beforeProceed()} ascending, {@code afterProceed()} descending. MainHook registers
+ * NrNsaBandwidthColumnHook, BandColumnHook, LteBandwidthColumnHook, CellRowHeightHook, so the
+ * effective post order is CellRowHeightHook -> LteBandwidthColumnHook -> BandColumnHook ->
+ * NrNsaBandwidthColumnHook.
  *
- *   - libxposed invokes same-priority interceptors in registration order
- *     (first registered = outermost), so POST-proceed bodies run in REVERSE
- *     registration order.
- *   - MainHook registers NrNsaBandwidthColumnHook, BandColumnHook,
- *     LteBandwidthColumnHook, CellRowHeightHook (in that order), so today the
- *     effective order on a runtime getView method is:
- *       pre : CellRowHeightHook checks (toggle + adapter type)
- *       post: CellRowHeightHook -> LteBandwidthColumnHook -> BandColumnHook
- *             -> NrNsaBandwidthColumnHook   (per-method subsets on gplay)
- *   - The dispatcher therefore runs beforeProceed() in ascending registration
- *     order and afterProceed() in descending registration order.
+ * <p>Error isolation: an exception in one processor's beforeProceed drops that processor for
+ * this call; an exception in afterProceed is logged and the remaining processors still run.
+ * The original result is always returned unchanged.
  *
- * Error isolation matches libxposed's PROTECTIVE exception mode: an exception
- * in one processor's beforeProceed drops that processor for this call; an
- * exception in afterProceed is logged (Log.e) and the remaining processors
- * still run, with the original proceed() result returned unchanged.
+ * <p>Row context: {@code nc.g(int)} maps a list position to Pair(source {@code de},
+ * intraRow); {@code nc.e} is the {@code de[]} sources array; {@code q00.c} (long) is the
+ * sample key of the adapter's current data.
  */
 final class CellTableRowDispatcher {
 
     private static final String TAG = "NSGBandHook";
+
+    /** Cell-table adapter class (extends q00) */
+    static final String ADAPTER = "nc";
+    private static final String ADAPTER_BASE = "q00";
+    private static final String METHOD_ADAPTER_PAIR = "g"; // nc.g(int) -> Pair
 
     private CellTableRowDispatcher() {
     }
@@ -75,11 +71,11 @@ final class CellTableRowDispatcher {
 
     // -----------------------------------------------------------------------
     // Per-call row context — resolved lazily, shared by all processors.
-    // Resolution semantics mirror the legacy per-hook code exactly:
+    // Resolution semantics:
     //   * adapter type read failure / missing field -> adapterType stays null
-    //     -> every feature runs (legacy: catch ignored / guard skipped).
+    //     -> every feature runs.
     //   * pair resolution failure -> defaults (intraRow=position, isSource0=false,
-    //     sampleKey=-1), one Log.w (legacy logged once per hook).
+    //     sampleKey=-1) and one Log.w.
     // -----------------------------------------------------------------------
 
     static final class RowContext {
@@ -109,7 +105,7 @@ final class CellTableRowDispatcher {
             this.intraRow = position;
         }
 
-        /** Legacy type-check parity: passes when the field is missing/unreadable. */
+        /** Passes when the type field is missing/unreadable. */
         boolean isAdapterType(int expected) {
             resolveType();
             return adapterType == null || adapterType == expected;
@@ -129,7 +125,7 @@ final class CellTableRowDispatcher {
             return isSource0;
         }
 
-        /** Raw f5509c sample key, or -1 when unavailable (callers map <= 0 to MAX_VALUE). */
+        /** Raw q00.c sample key, or -1 when unavailable (callers map <= 0 to MAX_VALUE). */
         long sampleKey() {
             resolvePair();
             return sampleKey;
@@ -155,7 +151,7 @@ final class CellTableRowDispatcher {
                 try {
                     adapterType = h.adapterTypeField.getInt(adapter);
                 } catch (Exception ignored) {
-                    // legacy: catch (Exception ignored) {} -> feature stays active
+                    // feature stays active
                 }
             }
         }
@@ -168,17 +164,17 @@ final class CellTableRowDispatcher {
             try {
                 sources = (Object[]) h.eField.get(adapter);
                 android.util.Pair<?, ?> pair =
-                        (android.util.Pair<?, ?>) h.hMethod.invoke(adapter, position);
+                        (android.util.Pair<?, ?>) h.pairMethod.invoke(adapter, position);
                 if (pair != null && pair.second != null) {
                     intraRow  = (int) pair.second;
                     isSource0 = (pair.first != null && sources != null
                             && sources.length > 0 && pair.first == sources[0]);
                 }
-                if (h.f5509cField != null && sources != null && sources.length > 0) {
-                    sampleKey = h.f5509cField.getLong(sources[0]);
+                if (h.sampleKeyField != null && sources != null && sources.length > 0) {
+                    sampleKey = h.sampleKeyField.getLong(sources[0]);
                 }
             } catch (Exception e) {
-                Log.w(TAG, "CellTableRowDispatcher: h(position) failed: " + e);
+                Log.w(TAG, "CellTableRowDispatcher: g(position) failed: " + e);
             }
         }
 
@@ -203,63 +199,49 @@ final class CellTableRowDispatcher {
     // -----------------------------------------------------------------------
 
     private static final class Handles {
-        Field  eField;           // a8.b$b.e — Object[] sources array
-        Method hMethod;          // a8.b$b.h(int) — Pair<source, intraRow>
-        Field  f5509cField;      // k8.c.c — adapter's current data sample key
-        Field  adapterTypeField; // a8.b$b.f — adapter type (4=LTE, 6=NR-NSA)
+        Field  eField;            // nc.e — de[] sources array
+        Method pairMethod;        // nc.g(int) — Pair<source, intraRow>
+        Field  sampleKeyField;    // q00.c — adapter's current data sample key (long)
+        Field  adapterTypeField;  // nc.f — adapter type (4=LTE, 6=NR-NSA)
         boolean pairReady;
 
         // Workspace singleton / module index / data source — resolved once so
-        // every RowProcessor can share them via RowContext instead of each
-        // independently doing 3 reflective field reads per row per frame.
-        Field wsSingleton;   // com.qtrun.sys.Workspace — static singleton field
-        Field wsModuleIndex; // com.qtrun.sys.Workspace — module index field
-        Field wsDataSource;  // com.qtrun.sys.Workspace — data source field
+        // every RowProcessor can share them via RowContext.
+        Field wsSingleton;   // Workspace.j — enum singleton
+        Field wsModuleIndex; // Workspace.a — short module index
+        Field wsDataSource;  // Workspace.c — DataSource
 
         static Handles resolve(ClassLoader loader) {
             Handles h = new Handles();
+            Class<?> ncClass = Nsg.load(loader, ADAPTER);
+            Class<?> baseClass = Nsg.load(loader, ADAPTER_BASE);
+            if (ncClass == null || baseClass == null) {
+                return h;
+            }
             try {
-                Class<?> bbClass  = ClassMapping.loadClass("a8.b$b", loader);
-                Class<?> k8cClass = ClassMapping.loadClass("k8.c", loader);
-                if (bbClass == null || k8cClass == null) {
-                    Log.i(TAG, "CellTableRowDispatcher: adapter base class missing, degrading");
-                    return h;
+                Field f = ncClass.getDeclaredField("f");
+                if (f.getType() == int.class) {
+                    f.setAccessible(true);
+                    h.adapterTypeField = f;
                 }
-                try {
-                    Field f = bbClass.getDeclaredField("f");
-                    if (f.getType() == int.class) {
-                        h.adapterTypeField = f;
-                        h.adapterTypeField.setAccessible(true);
-                    }
-                } catch (NoSuchFieldException ignored) {
-                }
-                try {
-                    h.eField = bbClass.getField(ClassMapping.runtimeFieldName("a8.b$b", "e", loader));
-                    h.hMethod = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
-                    h.f5509cField = k8cClass.getField(
-                            ClassMapping.runtimeFieldName("k8.c", "c", loader));
-                    h.pairReady = true;
-                } catch (Exception e) {
-                    Log.w(TAG, "CellTableRowDispatcher: pair resolution handles unavailable: " + e);
-                }
-                try {
-                    Class<?> wsClass = ClassMapping.loadClass(
-                            "com.qtrun.sys.Workspace", loader);
-                    if (wsClass != null) {
-                        h.wsSingleton = wsClass.getField(
-                                ClassMapping.runtimeFieldName(
-                                        "com.qtrun.sys.Workspace", "j", loader));
-                        h.wsModuleIndex = wsClass.getField(
-                                ClassMapping.runtimeFieldName(
-                                        "com.qtrun.sys.Workspace", "a", loader));
-                        h.wsDataSource = wsClass.getField(
-                                ClassMapping.runtimeFieldName(
-                                        "com.qtrun.sys.Workspace", "c", loader));
-                    }
-                } catch (Exception ignored) {
-                }
+            } catch (NoSuchFieldException ignored) {
+            }
+            try {
+                h.eField = ncClass.getField("e");
+                h.pairMethod = ncClass.getMethod(METHOD_ADAPTER_PAIR, int.class);
+                h.sampleKeyField = baseClass.getField("c");
+                h.pairReady = true;
             } catch (Exception e) {
-                Log.w(TAG, "CellTableRowDispatcher: handle resolution failed: " + e);
+                Log.w(TAG, "CellTableRowDispatcher: pair resolution handles unavailable: " + e);
+            }
+            try {
+                Class<?> wsClass = Nsg.load(loader, Nsg.WORKSPACE);
+                if (wsClass != null) {
+                    h.wsSingleton = wsClass.getField("j");
+                    h.wsModuleIndex = wsClass.getField("a");
+                    h.wsDataSource = wsClass.getField("c");
+                }
+            } catch (Exception ignored) {
             }
             return h;
         }
@@ -283,79 +265,53 @@ final class CellTableRowDispatcher {
         }
     }
 
-    /**
-     * Per-runtime-Method slot holding the processor list and a volatile
-     * snapshot array. The snapshot is published via a volatile write in
-     * register() and read lock-free in the interceptor hot path, so a
-     * getView call does NOT acquire a monitor or allocate an array.
-     */
-    private static final class MethodSlot {
-        final List<Entry> processors = new ArrayList<>();
-        volatile Entry[] entries = new Entry[0];
-    }
-
-    /** Runtime getView Method -> slot. */
-    private static final Map<Method, MethodSlot> SLOTS = new IdentityHashMap<>();
+    private static final List<Entry> PROCESSORS = new ArrayList<>();
+    private static volatile Entry[] entries = new Entry[0];
     private static long seqCounter = 0;
+    private static boolean interceptorInstalled = false;
 
     /**
-     * Registers a row processor for the getView method of the given logical
-     * adapter class and installs the single shared interceptor on the first
-     * registration for that runtime Method.
+     * Registers a row processor for {@code nc.getView} and installs the single shared
+     * interceptor on the first registration.
      *
-     * Call order must mirror MainHook install order so that the effective
-     * before/after ordering matches the legacy multi-interceptor chain.
+     * Call order must mirror MainHook install order so that the before/after ordering
+     * is as documented above.
      */
     static synchronized boolean register(XposedInterface xposed, ClassLoader loader,
-                                         String logicalAdapterClass, String featureName,
-                                         RowProcessor processor) {
+                                         String featureName, RowProcessor processor) {
         if (handles == null) {
             handles = Handles.resolve(loader);
         }
-        Class<?> adapterClass = ClassMapping.loadClass(logicalAdapterClass, loader);
-        if (adapterClass == null) {
-            Log.i(TAG, "CellTableRowDispatcher: " + logicalAdapterClass
-                    + " not available, skipping " + featureName);
-            return false;
-        }
-        Method getViewMethod;
-        try {
-            getViewMethod = adapterClass.getDeclaredMethod(
-                    "getView", int.class, View.class, ViewGroup.class);
-            getViewMethod.setAccessible(true);
-        } catch (Throwable t) {
+        if (!interceptorInstalled) {
+            Class<?> adapterClass = Nsg.load(loader, ADAPTER);
+            if (adapterClass == null) {
+                Log.w(TAG, "CellTableRowDispatcher: " + ADAPTER + " not available, skipping "
+                        + featureName);
+                return false;
+            }
+            Method getViewMethod;
             try {
                 getViewMethod = adapterClass.getMethod(
                         "getView", int.class, View.class, ViewGroup.class);
-            } catch (Throwable t2) {
-                Log.w(TAG, "CellTableRowDispatcher: getView not found on "
-                        + logicalAdapterClass + " for " + featureName + ": " + t2);
+            } catch (Throwable t) {
+                Log.w(TAG, "CellTableRowDispatcher: getView not found for " + featureName + ": " + t);
                 return false;
             }
-        }
-
-        MethodSlot slot = SLOTS.get(getViewMethod);
-        if (slot == null) {
-            slot = new MethodSlot();
-            SLOTS.put(getViewMethod, slot);
-        }
-        slot.processors.add(new Entry(processor, seqCounter++, featureName));
-        slot.entries = slot.processors.toArray(new Entry[0]);
-
-        if (slot.processors.size() == 1) {
-            installInterceptor(xposed, getViewMethod, slot);
+            installInterceptor(xposed, getViewMethod);
+            interceptorInstalled = true;
             Log.i(TAG, "CellTableRowDispatcher: installed single getView interceptor on "
-                    + getViewMethod.getDeclaringClass().getName());
+                    + adapterClass.getName());
         }
+        PROCESSORS.add(new Entry(processor, seqCounter++, featureName));
+        entries = PROCESSORS.toArray(new Entry[0]);
         return true;
     }
 
-    private static void installInterceptor(XposedInterface xposed, final Method method,
-                                           final MethodSlot slot) {
+    private static void installInterceptor(XposedInterface xposed, final Method method) {
         xposed.hook(method).intercept(new Hooker() {
             @Override
             public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
-                final Entry[] entries = slot.entries;
+                final Entry[] entries = CellTableRowDispatcher.entries;
                 RowContext ctx = new RowContext(chain.getThisObject(), (int) chain.getArg(0));
 
                 // Pre-proceed phase — registration (chain) order.
@@ -365,8 +321,8 @@ final class CellTableRowDispatcher {
                     try {
                         entries[i].processor.beforeProceed(ctx);
                     } catch (Throwable t) {
-                        // PROTECTIVE parity: hook that throws pre-proceed is
-                        // dropped from the chain for this call.
+                        // a processor that throws pre-proceed is skipped
+                        // post-proceed for this call.
                         postAllowed[i] = false;
                         Log.e(TAG, entries[i].name + " getView pre-check failed: " + t);
                     }
@@ -375,15 +331,14 @@ final class CellTableRowDispatcher {
                 // The original getView is invoked exactly once per call.
                 Object result = chain.proceed();
 
-                // Post-proceed phase — REVERSE registration order (legacy chain
-                // unwind order).
+                // Post-proceed phase — REVERSE registration order.
                 for (int i = entries.length - 1; i >= 0; i--) {
                     if (!postAllowed[i]) continue;
                     try {
                         entries[i].processor.afterProceed(ctx, result);
                     } catch (Throwable t) {
-                        // PROTECTIVE parity: log and continue; result returned
-                        // by the original proceed() is passed on unchanged.
+                        // log and continue; the original result is returned
+                        // unchanged.
                         Log.e(TAG, entries[i].name + " getView processing failed: " + t);
                     }
                 }

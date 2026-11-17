@@ -14,7 +14,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Adds "PUCCH TX" and "QPSK Util." rows on the LTE CA Matrix UL page
- * (e8.a), between Band/Width (row 10) and TxPower (row 11).
+ * (v00, "LTECAMatrixUL"), between Band/Width (row 10) and TxPower (row 11).
  *
  * PUCCH TX is inserted at row 11.0, shifting all original rows >= 11.0 by
  * +1.0. QPSK Util. is then inserted at row 20.0 (the original row 19.0
@@ -23,9 +23,12 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * PUCCH TX is PCell-only and uses LegendManager auto-coloring (no
  * manual .f(color, max) call).
  *
- * Architecture:
- *   e8.a extends v6.b; l0(Context) builds directly on this.Y (k2.a).
- *   Hook is an after-hook on e8.a.l0(Context).
+ * NSG v4.8.14 targets:
+ *   v00 extends yg0; h0(Context) builds directly on yg0.X (r31 grid builder).
+ *   Hook is an after-hook on v00.h0(Context).
+ *   r31: list b, M/N(row, h, col, w) add a label bh0 / bar ch0 cell.
+ *   xg0: row b.  bh0: text f, align g, span h.  ch0: binding g, f(int, float).
+ *   l8 (attribute): key a, format b, index c; m8 extends l8.
  */
 public class LteCaMatrixUlQpskHook {
 
@@ -40,35 +43,35 @@ public class LteCaMatrixUlQpskHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // k2.a builder methods
-    private Method k2aRMethod; // r(float row, float h, float col, float w) -> v6.e (label)
-    private Method k2aSMethod; // s(float row, float h, float col, float w) -> v6.f (bar)
+    // r31 grid builder
+    private Method addLabel; // M(float row, float h, float col, float w) -> bh0 (label)
+    private Method addBar;   // N(float row, float h, float col, float w) -> ch0 (bar)
+    private Field listField; // r31.b: ArrayList of grid elements
 
-    // v6.e label fields
-    private Field veF; // text
-    private Field veG; // align
-    private Field veH; // span
+    // bh0 label fields
+    private Field labelText;  // f
+    private Field labelAlign; // g
+    private Field labelSpan;  // h
 
-    // v6.f bar fields + style method
-    private Field vfF8120g; // g - data binding
-    private Method vfFMethod; // void f(int color, float max)
+    // ch0 bar fields + style method
+    private Field barBinding;       // g - data binding (m8)
+    private Method barFixedColor;   // void f(int color, float max)
 
-    // com.qtrun.sys.b / a
-    private Class<?> sysBClass;
-    private Field sysAFieldA; // key String
-    private Field sysAFieldB; // format String
-    private Field sysAFieldC; // index int
+    // l8 attribute (m8 subclass is instantiated)
+    private Class<?> propClass;     // m8
+    private Field attrKey;          // l8.a key String
+    private Field attrFormat;       // l8.b format String
+    private Field attrIndex;        // l8.c index int
 
-    // Unsafe (com.qtrun.sys.b ctor stripped by ProGuard)
+    // Unsafe (attribute constructors need arguments)
     private Object unsafe;
     private Method unsafeAllocateInstance;
 
-    // k2.a list + v6.a row field
-    private Field k2aListField;
-    private Field vaRowField;
+    // xg0 row field
+    private Field rowField;         // b
 
-    // v6.b.Y field - k2.a builder on the fragment
-    private Field v6bYField;
+    // yg0.X field - r31 builder on the fragment
+    private Field pageBuilderField;
 
     // Deep blue color (cached from host app resources)
     private int deepBlueColor = 0;
@@ -83,35 +86,34 @@ public class LteCaMatrixUlQpskHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> builderClass = Nsg.load(loader, Nsg.GRID_BUILDER);  // r31
+            Class<?> elementClass = Nsg.load(loader, Nsg.GRID_ELEMENT);  // xg0
+            Class<?> labelClass   = Nsg.load(loader, Nsg.GRID_LABEL);    // bh0
+            Class<?> barClass     = Nsg.load(loader, Nsg.GRID_VALUE);    // ch0
+            Class<?> pageClass    = Nsg.load(loader, Nsg.GRID_PAGE);     // yg0
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
-                    float.class, float.class, float.class, float.class);
-            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
-                    float.class, float.class, float.class, float.class);
+            addLabel = builderClass.getMethod("M", float.class, float.class, float.class, float.class);
+            addBar   = builderClass.getMethod("N", float.class, float.class, float.class, float.class);
 
-            veF = veClass.getField("f");
-            veG = veClass.getField("g");
-            veH = veClass.getField("h");
+            labelText = labelClass.getField("f");
+            labelAlign = labelClass.getField("g");
+            labelSpan = labelClass.getField("h");
 
-            vfF8120g = vfClass.getDeclaredField("g");
-            vfF8120g.setAccessible(true);
-            vfFMethod = vfClass.getMethod("f", int.class, float.class);
+            barBinding = barClass.getDeclaredField("g");
+            barBinding.setAccessible(true);
+            barFixedColor = barClass.getMethod("f", int.class, float.class);
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            sysAFieldA = sysAClass.getDeclaredField("a");
-            sysAFieldB = sysAClass.getDeclaredField("b");
-            sysAFieldC = sysAClass.getDeclaredField("c");
-            sysAFieldA.setAccessible(true);
-            sysAFieldB.setAccessible(true);
-            sysAFieldC.setAccessible(true);
+            propClass = Nsg.load(loader, "m8");
+            Class<?> attrClass = Nsg.load(loader, "l8");
+            attrKey = attrClass.getDeclaredField("a");
+            attrFormat = attrClass.getDeclaredField("b");
+            attrIndex = attrClass.getDeclaredField("c");
+            attrKey.setAccessible(true);
+            attrFormat.setAccessible(true);
+            attrIndex.setAccessible(true);
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-            java.lang.reflect.Field unsafeField;
+            Field unsafeField;
             try {
                 unsafeField = unsafeClass.getDeclaredField("THE_ONE");
             } catch (NoSuchFieldException e2) {
@@ -121,13 +123,12 @@ public class LteCaMatrixUlQpskHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
-            k2aListField.setAccessible(true);
-            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
-            vaRowField = vaClass.getDeclaredField("b");
-            vaRowField.setAccessible(true);
+            listField = builderClass.getDeclaredField("b");
+            listField.setAccessible(true);
+            rowField = elementClass.getDeclaredField("b");
+            rowField.setAccessible(true);
 
-            v6bYField = v6bClass.getField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
+            pageBuilderField = pageClass.getField("X");
 
             // Resolve deep blue color from host app resources
             try {
@@ -163,15 +164,10 @@ public class LteCaMatrixUlQpskHook {
             return;
         }
         try {
-            Class<?> e8aClass = ClassMapping.loadClass("e8.a", loader);
-            if (e8aClass == null) {
-                Log.i(TAG, "LteCaMatrixUlQpskHook: e8.a not available, skipping");
-                return;
-            }
-            Class<?> contextClass = Class.forName("android.content.Context");
-            Method l0Method = ClassMapping.getMethod(e8aClass, "e8.a", "l0", loader, contextClass);
+            Class<?> pageClass = Nsg.load(loader, Nsg.PAGE_LTE_CA_MATRIX_UL); // v00
+            Method h0Method = pageClass.getDeclaredMethod("h0", Context.class);
 
-            xposed.hook(l0Method).intercept(new Hooker() {
+            xposed.hook(h0Method).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -188,82 +184,82 @@ public class LteCaMatrixUlQpskHook {
         }
     }
 
-    private void injectTxBar(Object k2aObj, float row, String key) throws Exception {
-        Object bar = k2aSMethod.invoke(k2aObj, row, 1.0f, 30.0f, 34.0f);
+    private void injectTxBar(Object builder, float row, String key) throws Exception {
+        Object bar = addBar.invoke(builder, row, 1.0f, 30.0f, 34.0f);
         if (bar != null) {
-            Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-            sysAFieldA.set(prop, key);
-            sysAFieldB.set(prop, "%.1f dBm");
-            sysAFieldC.set(prop, -1);
-            vfF8120g.set(bar, prop);
+            Object prop = unsafeAllocateInstance.invoke(unsafe, propClass);
+            attrKey.set(prop, key);
+            attrFormat.set(prop, "%.1f dBm");
+            attrIndex.set(prop, -1);
+            barBinding.set(bar, prop);
         }
     }
 
     private void injectQpskRow(Object thiz) {
         try {
-            Object k2aObj = v6bYField.get(thiz);
-            if (k2aObj == null) {
-                Log.w(TAG, "LteCaMatrixUlQpskHook: this.Y is null after l0(), skipping");
+            Object builder = pageBuilderField.get(thiz);
+            if (builder == null) {
+                Log.w(TAG, "LteCaMatrixUlQpskHook: yg0.X is null after h0(), skipping");
                 return;
             }
 
             final float h = 1.0f;
 
-            java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+            java.util.ArrayList<?> list = (java.util.ArrayList<?>) listField.get(builder);
             if (list != null) {
                 for (Object elem : list) {
-                    float elemRow = (float) vaRowField.get(elem);
+                    float elemRow = (float) rowField.get(elem);
                     if (elemRow >= 11.0f) {
-                        vaRowField.set(elem, elemRow + 1.0f);
+                        rowField.set(elem, elemRow + 1.0f);
                     }
                 }
             }
 
-            Object pucchLabel = k2aRMethod.invoke(k2aObj, 11.0f, h, 0.0f, 27.0f);
+            Object pucchLabel = addLabel.invoke(builder, 11.0f, h, 0.0f, 27.0f);
             if (pucchLabel != null) {
-                veF.set(pucchLabel, "PUCCH TX");
-                veG.set(pucchLabel, 0);
-                veH.set(pucchLabel, 1);
+                labelText.set(pucchLabel, "PUCCH TX");
+                labelAlign.set(pucchLabel, 0);
+                labelSpan.set(pucchLabel, 1);
             }
-            injectTxBar(k2aObj, 11.0f, PUCCH_TX_KEY);
+            injectTxBar(builder, 11.0f, PUCCH_TX_KEY);
 
             final float insertRow = 20.0f;
             final float shiftAmount = 1.0f;
 
             if (list != null) {
                 for (Object elem : list) {
-                    float elemRow = (float) vaRowField.get(elem);
+                    float elemRow = (float) rowField.get(elem);
                     if (elemRow >= insertRow) {
-                        vaRowField.set(elem, elemRow + shiftAmount);
+                        rowField.set(elem, elemRow + shiftAmount);
                     }
                 }
             }
 
-            Object label = k2aRMethod.invoke(k2aObj, insertRow, h, 0.0f, 27.0f);
+            Object label = addLabel.invoke(builder, insertRow, h, 0.0f, 27.0f);
             if (label != null) {
-                veF.set(label, "QPSK Util.");
-                veG.set(label, 0);
-                veH.set(label, 1);
+                labelText.set(label, "QPSK Util.");
+                labelAlign.set(label, 0);
+                labelSpan.set(label, 1);
             }
 
-            Object bar = k2aSMethod.invoke(k2aObj, insertRow, h, 30.0f, 34.0f);
+            Object bar = addBar.invoke(builder, insertRow, h, 30.0f, 34.0f);
             if (bar != null) {
-                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, QPSK_KEY);
-                sysAFieldB.set(prop, "%.1f %%");
-                sysAFieldC.set(prop, -1);
-                vfF8120g.set(bar, prop);
-                vfFMethod.invoke(bar, deepBlueColor, 100.0f);
+                Object prop = unsafeAllocateInstance.invoke(unsafe, propClass);
+                attrKey.set(prop, QPSK_KEY);
+                attrFormat.set(prop, "%.1f %%");
+                attrIndex.set(prop, -1);
+                barBinding.set(bar, prop);
+                barFixedColor.invoke(bar, deepBlueColor, 100.0f);
             }
 
-            Object sCellBar = k2aSMethod.invoke(k2aObj, insertRow, h, 65.0f, 34.0f);
+            Object sCellBar = addBar.invoke(builder, insertRow, h, 65.0f, 34.0f);
             if (sCellBar != null) {
-                Object propSc = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(propSc, QPSK_SCELL_KEY);
-                sysAFieldB.set(propSc, "%.1f %%");
-                sysAFieldC.set(propSc, -1);
-                vfF8120g.set(sCellBar, propSc);
-                vfFMethod.invoke(sCellBar, deepBlueColor, 100.0f);
+                Object propSc = unsafeAllocateInstance.invoke(unsafe, propClass);
+                attrKey.set(propSc, QPSK_SCELL_KEY);
+                attrFormat.set(propSc, "%.1f %%");
+                attrIndex.set(propSc, -1);
+                barBinding.set(sCellBar, propSc);
+                barFixedColor.invoke(sCellBar, deepBlueColor, 100.0f);
             }
 
         } catch (Exception e) {

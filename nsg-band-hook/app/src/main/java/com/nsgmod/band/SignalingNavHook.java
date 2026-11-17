@@ -29,7 +29,8 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * detail popup (bottom-right), so the user can step through messages without
  * dismissing the popup and tapping the list row again.
  *
- * Hook: u7.a.onItemClick (after-hook) — the same entry point used by
+ * Hook: rp.onItemClick (after-hook; rp = synthetic click listener of the
+ * signaling fragment x80) — the same entry point used by
  * SignalingShareHook and SignalingSearchHook.
  *
  * Why this is filter-safe:
@@ -56,10 +57,13 @@ public class SignalingNavHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // --- u7.a reflection ---
-    private Field u7aFieldA;   // int selector: 0 = events, 1 = signaling
-    private Field u7aFieldB;   // fragment (u7.f / y80)
-    private Field u7fPopupField;
+    private static final String LISTENER_CLASS = "rp";   // synthetic OnItemClickListener
+    private static final String FRAGMENT_CLASS = "x80";  // signaling message list fragment
+
+    private java.lang.reflect.Method onItemClickMethod;  // rp.onItemClick(AdapterView, View, int, long)
+    private Field listenerSelector;  // rp.a (int): 0 = other list (tp), 1 = signaling
+    private Field listenerFragment;  // rp.b (id0): owning fragment (x80)
+    private Field fragmentPopup;     // x80.e0 (PopupWindow): detail popup
 
     private boolean reflectionReady = false;
 
@@ -116,41 +120,27 @@ public class SignalingNavHook {
 
     private void initReflection() {
         try {
-            Class<?> u7aClass = ClassMapping.loadClass("u7.a", loader);
-            Class<?> u7fClass = ClassMapping.loadClass("u7.f", loader);
-            if (u7aClass == null || u7fClass == null) {
-                Log.i(TAG, "SignalingNavHook: u7.a or u7.f missing, skipping");
+            Class<?> listenerClass = Nsg.load(loader, LISTENER_CLASS);
+            Class<?> fragmentClass = Nsg.load(loader, FRAGMENT_CLASS);
+            if (listenerClass == null || fragmentClass == null) {
+                Log.i(TAG, "SignalingNavHook: rp or x80 missing, skipping");
                 return;
             }
 
-            String fieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
-            String fieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
-            u7aFieldA = u7aClass.getDeclaredField(fieldAName);
-            u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField(fieldBName);
-            u7aFieldB.setAccessible(true);
+            onItemClickMethod = listenerClass.getMethod("onItemClick",
+                    AdapterView.class, View.class, int.class, long.class);
 
-            u7fPopupField = findFieldByType(u7fClass, PopupWindow.class);
-            if (u7fPopupField == null) {
-                throw new NoSuchFieldException("No PopupWindow field found in u7.f");
-            }
-            u7fPopupField.setAccessible(true);
+            listenerSelector = listenerClass.getDeclaredField("a");
+            listenerSelector.setAccessible(true);
+            listenerFragment = listenerClass.getDeclaredField("b");
+            listenerFragment.setAccessible(true);
+            fragmentPopup = fragmentClass.getDeclaredField("e0");
+            fragmentPopup.setAccessible(true);
 
             reflectionReady = true;
         } catch (Exception e) {
             Log.e(TAG, "SignalingNavHook: initReflection failed: " + e);
         }
-    }
-
-    private static Field findFieldByType(Class<?> clazz, Class<?> targetType) {
-        for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (Field f : c.getDeclaredFields()) {
-                if (f.getType() == targetType) {
-                    return f;
-                }
-            }
-        }
-        return null;
     }
 
     public void install() {
@@ -159,29 +149,21 @@ public class SignalingNavHook {
             return;
         }
         try {
-            java.lang.reflect.Method onItemClick =
-                    ClassMapping.loadClass("u7.a", loader)
-                            .getMethod("onItemClick",
-                                    android.widget.AdapterView.class,
-                                    android.view.View.class,
-                                    int.class,
-                                    long.class);
-
-            xposed.hook(onItemClick).intercept(new Hooker() {
+            xposed.hook(onItemClickMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
 
                     try {
                         Object listener = chain.getThisObject();
-                        if (((Number) u7aFieldA.get(listener)).intValue() == 0) {
-                            return result; // events page, not signaling
+                        if (((Number) listenerSelector.get(listener)).intValue() == 0) {
+                            return result; // other list (tp), not signaling
                         }
 
-                        Object fragment = u7aFieldB.get(listener);
+                        Object fragment = listenerFragment.get(listener);
                         if (fragment == null) return result;
 
-                        PopupWindow popup = (PopupWindow) u7fPopupField.get(fragment);
+                        PopupWindow popup = (PopupWindow) fragmentPopup.get(fragment);
                         if (popup == null) return result;
 
                         View contentView = popup.getContentView();

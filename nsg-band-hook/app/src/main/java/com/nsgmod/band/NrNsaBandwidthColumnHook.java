@@ -9,20 +9,19 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks a8.h$a (NRNSACellsFragment adapter) to inject a BW column after the Band column
+ * Hooks nc.getView for the NR-NSA table (nc.f == 6, fragment oa0) to inject a BW column after the Band column
  * already injected by BandColumnHook.
  *
  * Final column order: [Serving, ARFCN, PCI, BW, Beam, RSRP, RSRQ, SINR]
  * Final weights:      {0.03f,  0.18f, 0.10f, 0.09f, 0.10f, 0.17f, 0.17f, 0.16f}
  *
- * Data is read fresh on every getView() call using the adapter's own sample key (f5509c)
+ * Data is read fresh on every getView() call using the adapter's own sample key (q00.c)
  * as the queryTime anchor. This mirrors NSG's v6/f.java (QtGridValueBar.a()) pattern:
  *   Property.b(queryTime) → iter.value()
  * No persistent cache — avoids any stale-data risk.
@@ -55,21 +54,15 @@ public class NrNsaBandwidthColumnHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // Workspace / DataSource / Property reflection — resolved once.
-    private Field  wsSingleton;
-    private Field  wsModuleIndex;
-    private Field  wsDataSource;
+    private static final String NR_NSA_FRAGMENT = "oa0"; // NRNSACells fragment
+
+    // DataSource / Property reflection — resolved once.
     private Method dsGetProperty;
     private Method propIterMethod;
     private Method iterEndMethod;
     private Method iterKeyMethod;
     private Method iterValueMethod;
 
-    // Adapter reflection — h(position) and sources field.
-    private Field  eField;       // a8.b$b.e — Object[] sources array
-    private Method hMethod;      // a8.b$b.h(int) — returns Pair<source, intraRow>
-    private Field  f5509cField;  // k8.c.c — adapter's current data sample key
-    private Field  adapterTypeField;
     private static final int ADAPTER_TYPE_NR_NSA = 6;
 
     private boolean reflectionReady = false;
@@ -82,42 +75,19 @@ public class NrNsaBandwidthColumnHook {
 
     private void initReflection() {
         try {
-            Class<?> wsClass   = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
-            Class<?> dsClass   = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            Class<?> propClass = ClassMapping.loadClass("com.qtrun.sys.Property", loader);
-            Class<?> iterClass = ClassMapping.loadClass("com.qtrun.sys.Property$Iterator", loader);
-            Class<?> bbClass   = ClassMapping.loadClass("a8.b$b", loader);
-            Class<?> k8cClass  = ClassMapping.loadClass("k8.c", loader);
-            if (wsClass == null || dsClass == null || propClass == null || iterClass == null
-                    || bbClass == null || k8cClass == null) {
+            Class<?> dsClass   = Nsg.load(loader, Nsg.DATA_SOURCE);
+            Class<?> propClass = Nsg.load(loader, Nsg.PROPERTY);
+            Class<?> iterClass = Nsg.load(loader, Nsg.PROPERTY_ITER);
+            if (dsClass == null || propClass == null || iterClass == null) {
                 Log.i(TAG, "NrNsaBandwidthColumnHook: essential class missing, skipping");
                 return;
             }
-
-            String wsJName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            String wsAName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
-            String wsCName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "c", loader);
-            wsSingleton    = wsClass.getField(wsJName);
-            wsModuleIndex  = wsClass.getField(wsAName);
-            wsDataSource   = wsClass.getField(wsCName);
 
             dsGetProperty  = dsClass.getMethod("getProperty", String.class, int.class);
             propIterMethod = propClass.getMethod("b", long.class);
             iterEndMethod  = iterClass.getMethod("end");
             iterKeyMethod  = iterClass.getMethod("key");
             iterValueMethod = iterClass.getMethod("value");
-
-            String eFieldName = ClassMapping.runtimeFieldName("a8.b$b", "e", loader);
-            eField      = bbClass.getField(eFieldName);
-            hMethod     = ClassMapping.getMethod(bbClass, "a8.b$b", "h", loader, int.class);
-            String sampleKeyFieldName = ClassMapping.runtimeFieldName("k8.c", "c", loader);
-            f5509cField = k8cClass.getField(sampleKeyFieldName);
-
-            try {
-                adapterTypeField = bbClass.getDeclaredField("f");
-                adapterTypeField.setAccessible(true);
-            } catch (NoSuchFieldException ignored) {
-            }
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -133,7 +103,7 @@ public class NrNsaBandwidthColumnHook {
 
     /**
      * Read NR-NSA BW for the given row fresh from the DataSource.
-     * @param adsk adapter's current sample key (f5509c); used as queryTime anchor.
+     * @param adsk adapter's current sample key (q00.c); used as queryTime anchor.
      * @param intraRow 0 = PCell, 1..4 = SCell index (1-based).
      */
     private String readNrNsaBwFresh(Object ds, int modIdx, long adsk, int intraRow) {
@@ -220,8 +190,8 @@ public class NrNsaBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.h$a.getView — registered with the shared CellTableRowDispatcher
-    // (single interceptor per runtime getView method). Runs AFTER BandColumnHook's
+    // Hook: nc.getView (NR-NSA rows) — registered with the shared CellTableRowDispatcher.
+    // Runs AFTER BandColumnHook's
     // row processor (reverse registration order), so a fresh row has 7 children
     // by the time this runs — exactly as in the legacy interceptor chain.
     // -----------------------------------------------------------------------
@@ -231,7 +201,7 @@ public class NrNsaBandwidthColumnHook {
             return;
         }
         boolean registered =
-                CellTableRowDispatcher.register(xposed, loader, "a8.h$a", "NrNsaBandwidthColumnHook",
+                CellTableRowDispatcher.register(xposed, loader, "NrNsaBandwidthColumnHook",
                 new CellTableRowDispatcher.RowProcessor() {
                     @Override
                     public void afterProceed(CellTableRowDispatcher.RowContext ctx, Object result) {
@@ -332,16 +302,13 @@ public class NrNsaBandwidthColumnHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: a8.h.I — inject "BW" header label
+    // Hook: oa0.E (onCreateView) — inject "BW" header label
     // -----------------------------------------------------------------------
     private void hookOnCreateView() {
         try {
-            Class<?> fragClass = ClassMapping.loadClass("a8.h", loader);
-            if (fragClass == null) {
-                Log.i(TAG, "NrNsaBandwidthColumnHook: a8.h not available, skipping onCreateView hook");
-                return;
-            }
-            Method   iMethod   = ClassMapping.getMethod(fragClass, "a8.h", "I", loader,
+            Class<?> fragClass = Nsg.load(loader, NR_NSA_FRAGMENT);
+            if (fragClass == null) return;
+            Method   iMethod   = fragClass.getDeclaredMethod("E",
                     android.view.LayoutInflater.class, ViewGroup.class, android.os.Bundle.class);
 
             xposed.hook(iMethod).intercept(new Hooker() {

@@ -17,16 +17,16 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  * CA Matrix UL pages, aligning it with the injected PUCCH TX row.
  *
  * Affected fragments:
- *   NR-NSA CA Matrix UL: g8.b
- *   NR-SA CA Matrix UL:  h8.c
+ *   NR-NSA CA Matrix UL: ma0
+ *   NR-SA CA Matrix UL:  eb0
  *
- * Hook: AFTER l0(Context) on both fragments. The label is created by the
+ * Hook: AFTER h0(Context) on both fragments. The label is created by the
  * decompiled code as:
- *   v6.e eVarR10 = this.Y.r(8.0f, 1.0f, 0.0f, 27.0f);
- *   eVarR10.f8116f = "TxPower";
+ *   bh0 label = this.X.M(8.0f, 1.0f, 0.0f, 27.0f);
+ *   label.f = "TxPower";
  *
- * We only change the visible text field (CharSequence f / f8116f) from
- * "TxPower" to "PUSCH TX"; the underlying property key is untouched.
+ * We only change the visible text field (bh0.f) from "TxPower" to "PUSCH TX";
+ * the underlying property key is untouched.
  */
 public class RenamePuschTxLabelHook {
 
@@ -38,17 +38,15 @@ public class RenamePuschTxLabelHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // v6.b.Y field — k2.a builder on the fragment
-    private Field v6bYField;
+    // yg0.X field — r31 builder on the fragment
+    private Field pageBuilderField;
 
-    // k2.a internal ArrayList field d
-    private Field k2aListField;
+    // r31.b — ArrayList of grid elements (typed Object)
+    private Field builderListField;
 
-    // v6.e text field f (CharSequence)
-    private Field veTextField;
-
-    // v6.e class (to identify list entries without repeatedly resolving names)
-    private Class<?> veClass;
+    // bh0 label class and its text field f
+    private Class<?> labelClass;
+    private Field labelTextField;
 
     private boolean ready = false;
 
@@ -60,16 +58,16 @@ public class RenamePuschTxLabelHook {
 
     private void initReflection() {
         try {
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            veClass = ClassMapping.loadClass("v6.e", loader);
+            Class<?> pageClass = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> builderClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            labelClass = Nsg.load(loader, Nsg.GRID_LABEL);
 
-            v6bYField = v6bClass.getField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
+            pageBuilderField = pageClass.getField("X");
 
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
-            k2aListField.setAccessible(true);
+            builderListField = builderClass.getDeclaredField("b");
+            builderListField.setAccessible(true);
 
-            veTextField = veClass.getField("f");
+            labelTextField = labelClass.getField("f");
 
             ready = true;
         } catch (Exception e) {
@@ -82,22 +80,17 @@ public class RenamePuschTxLabelHook {
             Log.w(TAG, "RenamePuschTxLabelHook: skipping install — reflection not ready");
             return;
         }
-        installForClass("g8.b"); // NR-NSA CA Matrix UL
-        installForClass("h8.c"); // NR-SA CA Matrix UL
+        installForClass(Nsg.PAGE_NSA_CA_MATRIX_UL);
+        installForClass(Nsg.PAGE_SA_CA_MATRIX_UL);
         Log.i(TAG, "RenamePuschTxLabelHook: installed");
     }
 
     private void installForClass(String className) {
         try {
-            Class<?> targetClass = ClassMapping.loadClass(className, loader);
-            if (targetClass == null) {
-                Log.i(TAG, "RenamePuschTxLabelHook: " + className
-                        + " not available on this flavor, skipping");
-                return;
-            }
-            Method l0Method = ClassMapping.getMethod(targetClass, className, "l0", loader, Context.class);
+            Class<?> targetClass = Nsg.load(loader, className);
+            Method buildMethod = targetClass.getMethod("h0", Context.class);
 
-            xposed.hook(l0Method).intercept(new Hooker() {
+            xposed.hook(buildMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -114,35 +107,31 @@ public class RenamePuschTxLabelHook {
     }
 
     private void renameLabel(Object thiz, String className) {
-        int renamedCount = 0;
         try {
-            Object k2aObj = v6bYField.get(thiz);
-            if (k2aObj == null) {
-                Log.w(TAG, "RenamePuschTxLabelHook: " + className + ".Y is null after l0(), skipping");
+            Object builder = pageBuilderField.get(thiz);
+            if (builder == null) {
+                Log.w(TAG, "RenamePuschTxLabelHook: " + className + ".X is null after h0(), skipping");
                 return;
             }
 
-            ArrayList<?> list = (ArrayList<?>) k2aListField.get(k2aObj);
+            ArrayList<?> list = (ArrayList<?>) builderListField.get(builder);
             if (list == null) {
                 return;
             }
 
             for (Object elem : list) {
-                if (elem == null || !veClass.isInstance(elem)) {
+                if (elem == null || !labelClass.isInstance(elem)) {
                     continue;
                 }
-                Object textObj = veTextField.get(elem);
+                Object textObj = labelTextField.get(elem);
                 if (textObj == null) {
                     continue;
                 }
                 String text = textObj.toString();
                 if (TARGET_TEXT.equals(text)) {
-                    veTextField.set(elem, RENAMED_TEXT);
-                    renamedCount++;
+                    labelTextField.set(elem, RENAMED_TEXT);
                 }
             }
-
-
         } catch (Exception e) {
             Log.w(TAG, "RenamePuschTxLabelHook: renameLabel failed for " + className + ": " + e);
         }

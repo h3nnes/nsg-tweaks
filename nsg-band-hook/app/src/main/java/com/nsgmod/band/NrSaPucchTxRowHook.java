@@ -13,7 +13,7 @@ import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
  * Inserts a "Pwr Headr." row at position 8.0, an "SRS TX" row at position 9.0,
- * and a "PUCCH TX" row at position 10.0 on the NR-SA CA Matrix UL page (h8.c),
+ * and a "PUCCH TX" row at position 10.0 on the NR-SA CA Matrix UL page (eb0),
  * shifting the original row 8 (TxPower) and all subsequent rows up by +3.0.
  *
  * Row geometry:
@@ -25,19 +25,23 @@ import io.github.libxposed.api.XposedInterface.Hooker;
  *   SRS TX bar:     row=9.0, h=1.0, col=30.0, w=34.0
  *                   key="NR5G::Uplink_Measurements::NR_Power_Tx_SRS",
  *                   index=-1, format="%.1f dBm", LegendManager auto-coloring
- *                   (same approach as NSG's own PUSCH TX row in h8.c — no .f() call)
+ *                   (same approach as NSG's own PUSCH TX row in eb0 — no .f() call)
  *   PUCCH TX label: row=10.0, h=1.0, col=0.0, w=27.0, text="PUCCH TX", align=0, span=1
  *   PUCCH TX bar:   row=10.0, h=1.0, col=30.0, w=34.0
  *                   key="NR5G::Uplink_Measurements::NR_Power_Tx_PUCCH",
  *                   index=-1, format="%.1f dBm"
  *   SCell column (col=65) intentionally omitted — no SCell data for these in NSG.
  *
- * Hook: AFTER h8.c.l0(Context) — called once per fragment lifecycle (guarded by Y==null in v6.b.I()).
- * Hook: AFTER v6.f.a(long, DataSource, short) — dynamic color for the headroom bar.
+ * Hook: AFTER eb0.h0(Context) — called once per fragment lifecycle (guarded by X==null in yg0.E()).
+ * Hook: AFTER ch0.a(long, DataSource, short) — dynamic color for the headroom bar.
  */
 public class NrSaPucchTxRowHook {
 
     private static final String TAG = "NSGBandHook";
+
+    private static final String ATTR_BASE = "l8";   // attribute base: key a, format b, index c
+    private static final String ATTR_MAIN = "m8";   // attribute subclass (instantiated via Unsafe)
+    private static final String LEGEND_MANAGER = "com.qtrun.legend.LegendManager";
 
     private static final String HEADROOM_KEY = "NR5G::Uplink_Measurements::NR_Power_Headroom";
     private static final String SRS_TX_KEY = "NR5G::Uplink_Measurements::NR_Power_Tx_SRS";
@@ -50,48 +54,43 @@ public class NrSaPucchTxRowHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // k2.a builder methods
-    private Method k2aRMethod; // r(float row, float h, float col, float w) → v6.e  (label)
-    private Method k2aSMethod; // s(float row, float h, float col, float w) → v6.f  (bar)
+    // r31 grid builder methods
+    private Method builderLabelMethod; // M(float row, float h, float col, float w) → bh0 (label)
+    private Method builderBarMethod;   // N(float row, float h, float col, float w) → ch0 (bar)
 
-    // v6.e label fields (actual bytecode names)
-    private Field veF; // text   (JADX: f8116f)
-    private Field veG; // align  (JADX: f8117g)
-    private Field veH; // span
+    // bh0 label fields
+    private Field labelText;  // f
+    private Field labelAlign; // g
+    private Field labelSpan;  // h
 
-    // v6.f bar fields / methods
-    private Field vfF8120g; // g (JADX: f8120g) — data binding
-    private Field vfF8119f; // f (JADX: f8119f) — latest value object
-    private Field vfF8122j; // j (JADX: f8122j) — bar color int
-    private Field vfF8123k; // k (JADX: f8123k) — max value (float)
-    private Method vfFMethod; // f(int color, float max) → manual bar style
-    private Method vfAMethod; // a(long sampleKey, DataSource, short moduleIndex)
+    // ch0 bar fields / methods
+    private Field barBinding;   // g (m8) — data binding
+    private Field barValue;     // f — latest value object
+    private Field barColor;     // i — bar color int
+    private Method barStyleMethod; // f(int color, float max) → manual bar style
+    private Method barUpdateMethod; // a(long sampleKey, DataSource, short moduleIndex)
 
-    // com.qtrun.sys.b / a — property binding
-    private Class<?> sysBClass;
-    private Field sysAFieldA; // final String key
-    private Field sysAFieldB; // final String format
-    private Field sysAFieldC; // int index
+    // l8 / m8 — property binding
+    private Class<?> attrClass;
+    private Field attrKey;    // final String a
+    private Field attrFormat; // final String b
+    private Field attrIndex;  // int c
 
-    // com.qtrun.sys.DataSource (used for v6.f.a signature)
-    private Class<?> dataSourceClass;
-
-    // Unsafe for allocateInstance (com.qtrun.sys.b ctor stripped by ProGuard)
+    // Unsafe for allocateInstance (m8 ctor is not usable here)
     private Object unsafe;
     private Method unsafeAllocateInstance;
 
-    // k2.a list + v6.a row field
-    private Field k2aListField;
-    private Field vaRowField;
+    // r31 element list + xg0 row field
+    private Field builderListField;
+    private Field elementRowField;
 
-    // v6.b.Y field — k2.a instance on the fragment
-    private Field v6bYField;
+    // yg0.X field — r31 builder on the fragment
+    private Field pageBuilderField;
 
     // LegendManager — for SRS color redirect (SRS key not in attribute2legend_map.xml)
-    private Field  legendSingleton;
-    private Method legendMethodC; // c(b, double) -> float  (progress)
-    private Method legendMethodA; // a(b, double) -> Integer (color)
-    private Object puschLegendBVar; // com.qtrun.sys.b with PUSCH key for legend lookup
+    private Method legendMethodC; // b(m8, double) -> float  (progress)
+    private Method legendMethodA; // a(m8, double) -> Integer (color)
+    private Object puschLegendBVar; // m8 with PUSCH key for legend lookup
 
     private boolean ready = false;
 
@@ -103,44 +102,43 @@ public class NrSaPucchTxRowHook {
 
     private void initReflection() {
         try {
-            Class<?> k2aClass = ClassMapping.loadClass("k2.a", loader);
-            Class<?> veClass  = ClassMapping.loadClass("v6.e", loader);
-            Class<?> vfClass  = ClassMapping.loadClass("v6.f", loader);
-            Class<?> v6bClass = ClassMapping.loadClass("v6.b", loader);
+            Class<?> builderClass = Nsg.load(loader, Nsg.GRID_BUILDER);
+            Class<?> labelClass   = Nsg.load(loader, Nsg.GRID_LABEL);
+            Class<?> barClass     = Nsg.load(loader, Nsg.GRID_VALUE);
+            Class<?> pageClass    = Nsg.load(loader, Nsg.GRID_PAGE);
+            Class<?> elementClass = Nsg.load(loader, Nsg.GRID_ELEMENT);
+            Class<?> dataSourceClass = Nsg.load(loader, Nsg.DATA_SOURCE);
+            attrClass = Nsg.load(loader, ATTR_MAIN);
+            Class<?> attrBaseClass = Nsg.load(loader, ATTR_BASE);
 
-            k2aRMethod = ClassMapping.getMethod(k2aClass, "k2.a", "r", loader,
+            builderLabelMethod = builderClass.getMethod("M",
                     float.class, float.class, float.class, float.class);
-            k2aSMethod = ClassMapping.getMethod(k2aClass, "k2.a", "s", loader,
+            builderBarMethod = builderClass.getMethod("N",
                     float.class, float.class, float.class, float.class);
 
-            veF = veClass.getField("f");
-            veG = veClass.getField("g");
-            veH = veClass.getField("h");
+            labelText = labelClass.getField("f");
+            labelAlign = labelClass.getField("g");
+            labelSpan = labelClass.getField("h");
 
-            vfF8120g = vfClass.getDeclaredField("g");
-            vfF8120g.setAccessible(true);
-            vfF8119f = vfClass.getDeclaredField("f");
-            vfF8119f.setAccessible(true);
-            vfF8122j = vfClass.getDeclaredField(ClassMapping.runtimeFieldName("v6.f", "j", loader));
-            vfF8122j.setAccessible(true);
-            vfF8123k = vfClass.getDeclaredField(ClassMapping.runtimeFieldName("v6.f", "k", loader));
-            vfF8123k.setAccessible(true);
+            barBinding = barClass.getDeclaredField("g");
+            barBinding.setAccessible(true);
+            barValue = barClass.getDeclaredField("f");
+            barValue.setAccessible(true);
+            barColor = barClass.getDeclaredField("i");
+            barColor.setAccessible(true);
 
-            vfFMethod = vfClass.getMethod("f", int.class, float.class);
-            dataSourceClass = ClassMapping.loadClass("com.qtrun.sys.DataSource", loader);
-            vfAMethod = vfClass.getMethod("a", long.class, dataSourceClass, short.class);
+            barStyleMethod = barClass.getMethod("f", int.class, float.class);
+            barUpdateMethod = barClass.getMethod("a", long.class, dataSourceClass, short.class);
 
-            sysBClass = ClassMapping.loadClass("com.qtrun.sys.b", loader);
-            Class<?> sysAClass = ClassMapping.loadClass("com.qtrun.sys.a", loader);
-            sysAFieldA = sysAClass.getDeclaredField("a");
-            sysAFieldB = sysAClass.getDeclaredField("b");
-            sysAFieldC = sysAClass.getDeclaredField("c");
-            sysAFieldA.setAccessible(true);
-            sysAFieldB.setAccessible(true);
-            sysAFieldC.setAccessible(true);
+            attrKey = attrBaseClass.getDeclaredField("a");
+            attrFormat = attrBaseClass.getDeclaredField("b");
+            attrIndex = attrBaseClass.getDeclaredField("c");
+            attrKey.setAccessible(true);
+            attrFormat.setAccessible(true);
+            attrIndex.setAccessible(true);
 
             Class<?> unsafeClass = Class.forName("sun.misc.Unsafe");
-            java.lang.reflect.Field unsafeField;
+            Field unsafeField;
             try {
                 unsafeField = unsafeClass.getDeclaredField("THE_ONE"); // Android/Dalvik
             } catch (NoSuchFieldException e2) {
@@ -150,44 +148,28 @@ public class NrSaPucchTxRowHook {
             unsafe = unsafeField.get(null);
             unsafeAllocateInstance = unsafeClass.getMethod("allocateInstance", Class.class);
 
-            k2aListField = k2aClass.getDeclaredField(ClassMapping.runtimeFieldName("k2.a", "d", loader));
-            k2aListField.setAccessible(true);
-            Class<?> vaClass = ClassMapping.loadClass("v6.a", loader);
-            vaRowField = vaClass.getDeclaredField("b");
-            vaRowField.setAccessible(true);
+            builderListField = builderClass.getDeclaredField("b"); // ArrayList<xg0> (typed Object)
+            builderListField.setAccessible(true);
+            elementRowField = elementClass.getDeclaredField("b");
+            elementRowField.setAccessible(true);
 
-            v6bYField = v6bClass.getField(ClassMapping.runtimeFieldName("v6.b", "Y", loader));
+            pageBuilderField = pageClass.getField("X");
 
             // LegendManager for SRS color redirect.
             // NR_Power_Tx_SRS is not in attribute2legend_map.xml, so LegendManager
             // returns null for color and -1 for progress. We redirect the lookup to
             // the PUSCH key (which IS mapped to the NR_TxPower legend) so SRS uses
             // the exact same dynamic color thresholds as PUSCH/PUCCH TX.
-            Class<?> legendClass = ClassMapping.loadClass("com.qtrun.legend.LegendManager", loader);
-            if (legendClass != null) {
-                String singletonName = ClassMapping.runtimeFieldName(
-                        "com.qtrun.legend.LegendManager", "e", loader);
-                try {
-                    legendSingleton = legendClass.getDeclaredField(singletonName);
-                } catch (NoSuchFieldException nsfe) {
-                    legendSingleton = legendClass.getDeclaredField(ClassMapping.runtimeFieldName("com.qtrun.legend.LegendManager", "e", loader));
-                }
-                legendSingleton.setAccessible(true);
+            Class<?> legendClass = Nsg.load(loader, LEGEND_MANAGER);
+            legendMethodC = legendClass.getDeclaredMethod("b", attrClass, double.class);
+            legendMethodC.setAccessible(true);
+            legendMethodA = legendClass.getDeclaredMethod("a", attrClass, double.class);
+            legendMethodA.setAccessible(true);
 
-                legendMethodC = ClassMapping.getDeclaredMethod(
-                        legendClass, "com.qtrun.legend.LegendManager", "c", loader,
-                        sysBClass, double.class);
-                legendMethodC.setAccessible(true);
-                legendMethodA = ClassMapping.getDeclaredMethod(
-                        legendClass, "com.qtrun.legend.LegendManager", "a", loader,
-                        sysBClass, double.class);
-                legendMethodA.setAccessible(true);
-
-                puschLegendBVar = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(puschLegendBVar, PUSCH_TX_KEY);
-                sysAFieldB.set(puschLegendBVar, "%.1f dBm");
-                sysAFieldC.set(puschLegendBVar, -1);
-            }
+            puschLegendBVar = unsafeAllocateInstance.invoke(unsafe, attrClass);
+            attrKey.set(puschLegendBVar, PUSCH_TX_KEY);
+            attrFormat.set(puschLegendBVar, "%.1f dBm");
+            attrIndex.set(puschLegendBVar, -1);
 
             ready = true;
         } catch (Exception e) {
@@ -201,14 +183,10 @@ public class NrSaPucchTxRowHook {
             return;
         }
         try {
-            Class<?> h8cClass = ClassMapping.loadClass("h8.c", loader);
-            if (h8cClass == null) {
-                Log.i(TAG, "NrSaPucchTxRowHook: h8.c not available on this flavor, skipping");
-                return;
-            }
-            Method l0Method = ClassMapping.getMethod(h8cClass, "h8.c", "l0", loader, Context.class);
+            Class<?> pageClass = Nsg.load(loader, Nsg.PAGE_SA_CA_MATRIX_UL);
+            Method buildMethod = pageClass.getMethod("h0", Context.class);
 
-            xposed.hook(l0Method).intercept(new Hooker() {
+            xposed.hook(buildMethod).intercept(new Hooker() {
                 @Override
                 public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                     Object result = chain.proceed();
@@ -236,7 +214,7 @@ public class NrSaPucchTxRowHook {
             }
             headroomBarHookInstalled = true;
             try {
-                xposed.hook(vfAMethod).intercept(new Hooker() {
+                xposed.hook(barUpdateMethod).intercept(new Hooker() {
                     @Override
                     public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                         Object result = chain.proceed();
@@ -252,7 +230,7 @@ public class NrSaPucchTxRowHook {
     }
 
     /**
-     * Install LegendManager.a() and .c() hooks that redirect SRS key lookups
+     * Install LegendManager.a() and .b() hooks that redirect SRS key lookups
      * to the PUSCH key. Since NR_Power_Tx_SRS is not in attribute2legend_map.xml,
      * LegendManager cannot resolve its color/progress. By redirecting to the
      * PUSCH key (which IS mapped to the NR_TxPower legend), SRS gets the exact
@@ -263,10 +241,6 @@ public class NrSaPucchTxRowHook {
             if (srsColorRedirectInstalled) {
                 return;
             }
-            if (legendMethodA == null || legendMethodC == null || puschLegendBVar == null) {
-                Log.w(TAG, "NrSaPucchTxRowHook: SRS color redirect not available, skipping");
-                return;
-            }
             srsColorRedirectInstalled = true;
             try {
                 xposed.hook(legendMethodA).intercept(new Hooker() {
@@ -274,7 +248,7 @@ public class NrSaPucchTxRowHook {
                     public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                         Object bVar = chain.getArg(0);
                         if (bVar != null) {
-                            Object keyObj = sysAFieldA.get(bVar);
+                            Object keyObj = attrKey.get(bVar);
                             if (keyObj != null && SRS_TX_KEY.equals(keyObj.toString())) {
                                 return chain.proceed(new Object[]{puschLegendBVar, chain.getArg(1)});
                             }
@@ -288,7 +262,7 @@ public class NrSaPucchTxRowHook {
                     public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                         Object bVar = chain.getArg(0);
                         if (bVar != null) {
-                            Object keyObj = sysAFieldA.get(bVar);
+                            Object keyObj = attrKey.get(bVar);
                             if (keyObj != null && SRS_TX_KEY.equals(keyObj.toString())) {
                                 return chain.proceed(new Object[]{puschLegendBVar, chain.getArg(1)});
                             }
@@ -305,20 +279,20 @@ public class NrSaPucchTxRowHook {
     }
 
     private void updateHeadroomBarColor(Object bar) {
-        if (bar == null || vfF8120g == null || vfF8119f == null || vfF8122j == null) {
+        if (bar == null) {
             return;
         }
         try {
-            Object binding = vfF8120g.get(bar);
+            Object binding = barBinding.get(bar);
             if (binding == null) {
                 return;
             }
-            Object keyObj = sysAFieldA.get(binding);
+            Object keyObj = attrKey.get(binding);
             if (keyObj == null || !HEADROOM_KEY.equals(keyObj.toString())) {
                 return;
             }
 
-            Object valueObj = vfF8119f.get(bar);
+            Object valueObj = barValue.get(bar);
             if (!(valueObj instanceof Number)) {
                 return;
             }
@@ -339,7 +313,7 @@ public class NrSaPucchTxRowHook {
                 color = 0xFFF44336;
             }
 
-            vfF8122j.set(bar, color);
+            barColor.set(bar, color);
         } catch (Exception e) {
             Log.w(TAG, "NrSaPucchTxRowHook: updateHeadroomBarColor failed: " + e);
         }
@@ -347,19 +321,19 @@ public class NrSaPucchTxRowHook {
 
     private void injectPucchTxRow(Object thiz) {
         try {
-            Object k2aObj = v6bYField.get(thiz);
-            if (k2aObj == null) {
-                Log.w(TAG, "NrSaPucchTxRowHook: this.Y is null after l0(), skipping");
+            Object builder = pageBuilderField.get(thiz);
+            if (builder == null) {
+                Log.w(TAG, "NrSaPucchTxRowHook: this.X is null after h0(), skipping");
                 return;
             }
 
             // Step 1: shift all elements at row >= 8.0 by +3.0
-            java.util.ArrayList<?> list = (java.util.ArrayList<?>) k2aListField.get(k2aObj);
+            java.util.ArrayList<?> list = (java.util.ArrayList<?>) builderListField.get(builder);
             if (list != null) {
                 for (Object elem : list) {
-                    float elemRow = (float) vaRowField.get(elem);
+                    float elemRow = (float) elementRowField.get(elem);
                     if (elemRow >= 8.0f) {
-                        vaRowField.set(elem, elemRow + 3.0f);
+                        elementRowField.set(elem, elemRow + 3.0f);
                     }
                 }
             }
@@ -370,60 +344,60 @@ public class NrSaPucchTxRowHook {
             final float h = 1.0f;
 
             // Step 2: inject "Pwr Headr." label at row=8.0, h=1.0, col=0.0, w=27.0
-            Object headroomLabel = k2aRMethod.invoke(k2aObj, headroomRow, h, 0.0f, 27.0f);
+            Object headroomLabel = builderLabelMethod.invoke(builder, headroomRow, h, 0.0f, 27.0f);
             if (headroomLabel != null) {
-                veF.set(headroomLabel, "Pwr Headr.");
-                veG.set(headroomLabel, 0);
-                veH.set(headroomLabel, 1);
+                labelText.set(headroomLabel, "Pwr Headr.");
+                labelAlign.set(headroomLabel, 0);
+                labelSpan.set(headroomLabel, 1);
             }
 
             // Step 3: inject headroom bar at row=8.0, h=1.0, col=30.0, w=34.0 (PCell only)
-            Object headroomBar = k2aSMethod.invoke(k2aObj, headroomRow, h, 30.0f, 34.0f);
+            Object headroomBar = builderBarMethod.invoke(builder, headroomRow, h, 30.0f, 34.0f);
             if (headroomBar != null) {
-                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, HEADROOM_KEY);
-                sysAFieldB.set(prop, "%.0f dB");
-                sysAFieldC.set(prop, -1);
-                vfF8120g.set(headroomBar, prop);
-                vfFMethod.invoke(headroomBar, 0xFF2E7D32, 40.0f);
+                Object prop = unsafeAllocateInstance.invoke(unsafe, attrClass);
+                attrKey.set(prop, HEADROOM_KEY);
+                attrFormat.set(prop, "%.0f dB");
+                attrIndex.set(prop, -1);
+                barBinding.set(headroomBar, prop);
+                barStyleMethod.invoke(headroomBar, 0xFF2E7D32, 40.0f);
             }
 
             // Step 4: inject "SRS TX" label at row=9.0, h=1.0, col=0.0, w=27.0
-            Object srsLabel = k2aRMethod.invoke(k2aObj, srsRow, h, 0.0f, 27.0f);
+            Object srsLabel = builderLabelMethod.invoke(builder, srsRow, h, 0.0f, 27.0f);
             if (srsLabel != null) {
-                veF.set(srsLabel, "SRS TX");
-                veG.set(srsLabel, 0);
-                veH.set(srsLabel, 1);
+                labelText.set(srsLabel, "SRS TX");
+                labelAlign.set(srsLabel, 0);
+                labelSpan.set(srsLabel, 1);
             }
 
             // Step 5: inject SRS TX bar at row=9.0, h=1.0, col=30.0, w=34.0 (PCell only)
-            Object srsBar = k2aSMethod.invoke(k2aObj, srsRow, h, 30.0f, 34.0f);
+            Object srsBar = builderBarMethod.invoke(builder, srsRow, h, 30.0f, 34.0f);
             if (srsBar != null) {
-                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, SRS_TX_KEY);
-                sysAFieldB.set(prop, "%.1f dBm");
-                sysAFieldC.set(prop, -1);
-                vfF8120g.set(srsBar, prop);
+                Object prop = unsafeAllocateInstance.invoke(unsafe, attrClass);
+                attrKey.set(prop, SRS_TX_KEY);
+                attrFormat.set(prop, "%.1f dBm");
+                attrIndex.set(prop, -1);
+                barBinding.set(srsBar, prop);
                 // No .f(color, max) call — LegendManager auto-coloring, same as NSG's PUSCH TX row
             }
 
             // Step 6: inject "PUCCH TX" label at row=10.0, h=1.0, col=0.0, w=27.0
-            Object pucchLabel = k2aRMethod.invoke(k2aObj, pucchRow, h, 0.0f, 27.0f);
+            Object pucchLabel = builderLabelMethod.invoke(builder, pucchRow, h, 0.0f, 27.0f);
             if (pucchLabel != null) {
-                veF.set(pucchLabel, "PUCCH TX");
-                veG.set(pucchLabel, 0);
-                veH.set(pucchLabel, 1);
+                labelText.set(pucchLabel, "PUCCH TX");
+                labelAlign.set(pucchLabel, 0);
+                labelSpan.set(pucchLabel, 1);
             }
 
             // Step 7: inject PUCCH TX bar at row=10.0, h=1.0, col=30.0, w=34.0 (PCell only)
-            Object pucchBar = k2aSMethod.invoke(k2aObj, pucchRow, h, 30.0f, 34.0f);
+            Object pucchBar = builderBarMethod.invoke(builder, pucchRow, h, 30.0f, 34.0f);
             if (pucchBar != null) {
-                Object prop = unsafeAllocateInstance.invoke(unsafe, sysBClass);
-                sysAFieldA.set(prop, PUCCH_TX_KEY);
-                sysAFieldB.set(prop, "%.1f dBm");
-                sysAFieldC.set(prop, -1);
-                vfF8120g.set(pucchBar, prop);
-                // No .f(color, max) call — LegendManager auto-coloring via f8120g
+                Object prop = unsafeAllocateInstance.invoke(unsafe, attrClass);
+                attrKey.set(prop, PUCCH_TX_KEY);
+                attrFormat.set(prop, "%.1f dBm");
+                attrIndex.set(prop, -1);
+                barBinding.set(pucchBar, prop);
+                // No .f(color, max) call — LegendManager auto-coloring via the binding
             }
 
         } catch (Exception e) {

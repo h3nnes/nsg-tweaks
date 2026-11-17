@@ -17,6 +17,20 @@ import java.util.List;
 import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
+/**
+ * Per-SIM cell-ID format overrides.
+ *
+ * <p>v4.8.14 targets: {@code rr0.a(long,int)} (cell-ID formatter; hooked, arg 1 is the
+ * type index 0..7 = GSM_CellID, GSM_LAC, WCDMA_LAC, WCDMA_CellID, LTE_PCI, LTE_TAC,
+ * LTE_CellID, NR_CellID), {@code is.f0(String)} (format settings fragment
+ * onCreatePreferences; hooked), {@code if0.X} (PreferenceFragmentCompat's
+ * PreferenceManager), {@code Preference.B} (iconSpaceReserved) and
+ * DropDownPreference/ListPreference for the injected slot selector.
+ *
+ * <p>Overrides live per physical SIM slot in the "nsg_tweaks_per_sim_formats"
+ * SharedPreferences file; NSG's own format keys are rewritten from global/slot
+ * snapshots whenever the "Edit Formats For" selector changes.
+ */
 public class PerSimFormatHook {
 
     private static final String TAG = "NSGBandHook";
@@ -38,7 +52,7 @@ public class PerSimFormatHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    private Method sr0Method;
+    private Method cellIdFormatMethod;
     private Method formatFragmentMethod;
 
     private static volatile boolean suppressListener = false;
@@ -71,8 +85,8 @@ public class PerSimFormatHook {
                 Log.w(TAG, "PerSimFormatHook: format fragment not found");
             }
 
-            if (sr0Method != null) {
-                xposed.hook(sr0Method).intercept(new Hooker() {
+            if (cellIdFormatMethod != null) {
+                xposed.hook(cellIdFormatMethod).intercept(new Hooker() {
                     @Override
                     public Object intercept(@NonNull XposedInterface.Chain chain) throws Throwable {
                         Object result = chain.proceed();
@@ -99,7 +113,7 @@ public class PerSimFormatHook {
                     }
                 });
             } else {
-                Log.w(TAG, "PerSimFormatHook: sr0 method not found");
+                Log.w(TAG, "PerSimFormatHook: rr0 method not found");
             }
 
             Log.i(TAG, "PerSimFormatHook installed");
@@ -110,19 +124,19 @@ public class PerSimFormatHook {
 
     private void initReflection() {
         try {
-            Class<?> sr0Cls = ClassMapping.loadClass("sr0", loader);
-            if (sr0Cls != null) {
-                sr0Method = ClassMapping.getDeclaredMethod(sr0Cls, "sr0", "a", loader, long.class, int.class);
-                sr0Method.setAccessible(true);
+            Class<?> cellIdFormatCls = Nsg.load(loader, "rr0");
+            if (cellIdFormatCls != null) {
+                cellIdFormatMethod = cellIdFormatCls.getDeclaredMethod("a", long.class, int.class);
+                cellIdFormatMethod.setAccessible(true);
             }
         } catch (Throwable t) {
-            Log.w(TAG, "PerSimFormatHook: sr0 not found: " + t);
+            Log.w(TAG, "PerSimFormatHook: rr0 not found: " + t);
         }
 
         try {
-            Class<?> jsCls = ClassMapping.loadClass("js", loader);
-            if (jsCls != null) {
-                formatFragmentMethod = ClassMapping.getDeclaredMethod(jsCls, "js", "f0", loader, String.class);
+            Class<?> formatFragmentCls = Nsg.load(loader, "is");
+            if (formatFragmentCls != null) {
+                formatFragmentMethod = formatFragmentCls.getDeclaredMethod("f0", String.class);
                 formatFragmentMethod.setAccessible(true);
             }
         } catch (Throwable t) {
@@ -132,12 +146,12 @@ public class PerSimFormatHook {
 
     @SuppressWarnings("unchecked")
     private void injectSlotSelector(Object fragment) throws Throwable {
-        Class<?> baseCls = ClassMapping.loadClass("androidx.preference.c", loader);
-        Field yField = baseCls.getField(ClassMapping.runtimeFieldName("androidx.preference.c", "Y", loader));
+        Class<?> baseCls = Nsg.load(loader, "if0");
+        Field yField = baseCls.getField("X");
         Object prefManager = yField.get(fragment);
         if (prefManager == null) return;
 
-        Class<?> prefScreenCls = ClassMapping.loadClass("androidx.preference.PreferenceScreen", loader);
+        Class<?> prefScreenCls = Nsg.load(loader, "androidx.preference.PreferenceScreen");
         Class<?> prefMgrCls = prefManager.getClass();
 
         Field screenField = null;
@@ -158,7 +172,7 @@ public class PerSimFormatHook {
         Object prefScreen = screenField.get(prefManager);
         if (prefScreen == null) return;
 
-        Class<?> prefCls = ClassMapping.loadClass("androidx.preference.Preference", loader);
+        Class<?> prefCls = Nsg.load(loader, "androidx.preference.Preference");
         Method findPref = null;
         for (Method m : prefScreenCls.getMethods()) {
             Class<?>[] p = m.getParameterTypes();
@@ -181,7 +195,7 @@ public class PerSimFormatHook {
         if (reqCtx == null) return;
         Context ctx = (Context) reqCtx.invoke(fragment);
 
-        Class<?> ddCls = ClassMapping.loadClass("androidx.preference.DropDownPreference", loader);
+        Class<?> ddCls = Nsg.load(loader, "androidx.preference.DropDownPreference");
         Constructor<?> ddCtor = null;
         for (Constructor<?> c : ddCls.getDeclaredConstructors()) {
             Class<?>[] p = c.getParameterTypes();
@@ -210,7 +224,7 @@ public class PerSimFormatHook {
         if (keyField != null) keyField.setAccessible(true);
         for (Field f : csFields) f.setAccessible(true);
 
-        Class<?> listPrefCls = ClassMapping.loadClass("androidx.preference.ListPreference", loader);
+        Class<?> listPrefCls = Nsg.load(loader, "androidx.preference.ListPreference");
 
         Method setSummaryMethod = null;
         for (Method m : listPrefCls.getDeclaredMethods()) {
@@ -250,8 +264,7 @@ public class PerSimFormatHook {
 
         Field iconSpaceField = null;
         try {
-            String iconSpaceName = ClassMapping.runtimeFieldName("androidx.preference.Preference", "C", loader);
-            iconSpaceField = prefCls.getDeclaredField(iconSpaceName);
+            iconSpaceField = prefCls.getDeclaredField("B"); // iconSpaceReserved
             iconSpaceField.setAccessible(true);
         } catch (Throwable ignored) {}
 
@@ -323,7 +336,7 @@ public class PerSimFormatHook {
         }
         if (attachMethod != null) attachMethod.setAccessible(true);
 
-        Class<?> prefGroupCls = ClassMapping.loadClass("androidx.preference.PreferenceGroup", loader);
+        Class<?> prefGroupCls = Nsg.load(loader, "androidx.preference.PreferenceGroup");
         Field parentField = null;
         outer2:
         for (Class<?> c = prefCls; c != null && c != Object.class; c = c.getSuperclass()) {
@@ -453,8 +466,8 @@ public class PerSimFormatHook {
 
     private void refreshListPreferences(ArrayList<Object> categoryChildren, Method refreshMethod) {
         if (refreshMethod == null || categoryChildren == null) return;
-        Class<?> listPrefCls = ClassMapping.loadClass("androidx.preference.ListPreference", loader);
-        Class<?> prefCls = ClassMapping.loadClass("androidx.preference.Preference", loader);
+        Class<?> listPrefCls = Nsg.load(loader, "androidx.preference.ListPreference");
+        Class<?> prefCls = Nsg.load(loader, "androidx.preference.Preference");
         Field keyField = null;
         try {
             for (Field f : prefCls.getDeclaredFields()) {
@@ -561,15 +574,13 @@ public class PerSimFormatHook {
 
     private int getActiveSimSlot() {
         try {
-            Class<?> wsCls = ClassMapping.loadClass("com.qtrun.sys.Workspace", loader);
+            Class<?> wsCls = Nsg.load(loader, Nsg.WORKSPACE);
             if (wsCls == null) return -1;
-            String singletonName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "j", loader);
-            Field singletonField = wsCls.getDeclaredField(singletonName);
+            Field singletonField = wsCls.getDeclaredField("j");
             singletonField.setAccessible(true);
             Object wsInstance = singletonField.get(null);
             if (wsInstance == null) return -1;
-            String modName = ClassMapping.runtimeFieldName("com.qtrun.sys.Workspace", "a", loader);
-            Field modField = wsCls.getDeclaredField(modName);
+            Field modField = wsCls.getDeclaredField("a");
             modField.setAccessible(true);
             short moduleShort = modField.getShort(wsInstance);
             int nsgSlot = moduleShort >> 4;

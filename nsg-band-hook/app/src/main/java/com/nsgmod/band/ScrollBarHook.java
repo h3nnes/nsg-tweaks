@@ -18,11 +18,12 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks NSG 4.8.4 (com.qtrun.QuickTest) to add a draggable vertical SeekBar
+ * Hooks NSG v4.8.14 (com.qtrun.QuickTest) to add a draggable vertical SeekBar
  * overlay on the popup's FrameLayout, synced bidirectionally with the ScrollView
  * inside the signaling message detail popup.
  *
- * Hook: u7.a.onItemClick (after-hook)
+ * Hook: rp.onItemClick (after-hook; rp = synthetic click listener of the
+ * signaling fragment x80, popup in x80.e0)
  *   - Finds the ScrollView inside the popup's content FrameLayout.
  *   - Adds a rotated SeekBar on top (as last child of FrameLayout).
  *   - Syncs ScrollView ↔ SeekBar bidirectionally with a drag-flag guard.
@@ -36,13 +37,13 @@ public class ScrollBarHook {
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // --- u7.a reflection ---
-    private Method onItemClickMethod;   // u7.a.onItemClick(AdapterView, View, int, long)
-    private Field  u7aFieldA;           // u7.a.a (int)  — switch selector
-    private Field  u7aFieldB;           // u7.a.b (u6.a) — associated fragment
+    private static final String LISTENER_CLASS = "rp";   // synthetic OnItemClickListener
+    private static final String FRAGMENT_CLASS = "x80";  // signaling message list fragment
 
-    // --- u7.f reflection ---
-    private Field  u7fPopupField;       // u7.f.<PopupWindow field> — found by type scan
+    private Method onItemClickMethod;   // rp.onItemClick(AdapterView, View, int, long)
+    private Field  listenerSelector;    // rp.a (int): 0 = other list (tp), 1 = signaling
+    private Field  listenerFragment;    // rp.b (id0): owning fragment (x80)
+    private Field  fragmentPopup;       // x80.e0 (PopupWindow): detail popup
 
     private boolean reflectionReady = false;
 
@@ -58,54 +59,30 @@ public class ScrollBarHook {
 
     private void initReflection() {
         try {
-            Class<?> u7aClass = ClassMapping.loadClass("u7.a", loader);
-            Class<?> u7fClass = ClassMapping.loadClass("u7.f", loader);
-            if (u7aClass == null || u7fClass == null) {
-                Log.i(TAG, "ScrollBarHook: u7.a or u7.f missing, skipping");
+            Class<?> listenerClass = Nsg.load(loader, LISTENER_CLASS);
+            Class<?> fragmentClass = Nsg.load(loader, FRAGMENT_CLASS);
+            if (listenerClass == null || fragmentClass == null) {
+                Log.i(TAG, "ScrollBarHook: rp or x80 missing, skipping");
                 return;
             }
 
-            // u7.a.onItemClick
-            onItemClickMethod = u7aClass.getMethod("onItemClick",
+            onItemClickMethod = listenerClass.getMethod("onItemClick",
                     android.widget.AdapterView.class,
                     android.view.View.class,
                     int.class,
                     long.class);
 
-            // u7.a fields: dex names are "a"/"b" on qtrun, "b"/"c" on gplay d6.a
-            String u7aFieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
-            String u7aFieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
-            u7aFieldA = u7aClass.getDeclaredField(u7aFieldAName);
-            u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField(u7aFieldBName);
-            u7aFieldB.setAccessible(true);
-
-            // u7.f PopupWindow field — find by type scan (actual dex name unknown)
-            u7fPopupField = findFieldByType(u7fClass, PopupWindow.class);
-            if (u7fPopupField == null) {
-                throw new NoSuchFieldException("No PopupWindow field found in u7.f");
-            }
-            u7fPopupField.setAccessible(true);
+            listenerSelector = listenerClass.getDeclaredField("a");
+            listenerSelector.setAccessible(true);
+            listenerFragment = listenerClass.getDeclaredField("b");
+            listenerFragment.setAccessible(true);
+            fragmentPopup = fragmentClass.getDeclaredField("e0");
+            fragmentPopup.setAccessible(true);
 
             reflectionReady = true;
         } catch (Exception e) {
             Log.e(TAG, "ScrollBarHook: initReflection failed: " + e);
         }
-    }
-
-    /**
-     * Scans all declared fields of {@code clazz} (and its superclasses) for the
-     * first field whose type is exactly {@code targetType}.
-     */
-    private static Field findFieldByType(Class<?> clazz, Class<?> targetType) {
-        for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (Field f : c.getDeclaredFields()) {
-                if (f.getType() == targetType) {
-                    return f;
-                }
-            }
-        }
-        return null;
     }
 
     // -----------------------------------------------------------------------
@@ -117,7 +94,7 @@ public class ScrollBarHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: u7.a.onItemClick — after-hook
+    // Hook: rp.onItemClick — after-hook
     // Adds a draggable SeekBar overlay synced with the popup's ScrollView.
     // -----------------------------------------------------------------------
 
@@ -133,18 +110,18 @@ public class ScrollBarHook {
                     Object result = chain.proceed();
 
                     try {
-                        Object listener = chain.getThisObject(); // u7.a instance
+                        Object listener = chain.getThisObject(); // rp instance
 
-                        // Only handle the non-QQ case (a != 0)
-                        int selector = (int) u7aFieldA.get(listener);
+                        // Only the signaling fragment (a != 0)
+                        int selector = (int) listenerSelector.get(listener);
                         if (selector == 0) return result;
 
-                        // Get the fragment (u7.f) stored in field b
-                        Object fragment = u7aFieldB.get(listener); // typed u6.a, actually u7.f
+                        // Get the fragment (x80) stored in field b (typed id0)
+                        Object fragment = listenerFragment.get(listener);
                         if (fragment == null) return result;
 
                         // Get the PopupWindow from the fragment
-                        PopupWindow popup = (PopupWindow) u7fPopupField.get(fragment);
+                        PopupWindow popup = (PopupWindow) fragmentPopup.get(fragment);
                         if (popup == null) return result;
 
                         View contentView = popup.getContentView();

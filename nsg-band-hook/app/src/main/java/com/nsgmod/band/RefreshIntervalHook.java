@@ -18,17 +18,17 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks t7.g0.E() (start local test) to reschedule the UI refresh tick Runnable
+ * Hooks a40.E() (start local test, a40 extends TestService) to reschedule the UI refresh tick Runnable
  * with a shorter interval when the "NSGMod: Fast refresh" toggle is enabled.
  *
  * NSG's default refresh interval is 880 ms. When the toggle is ON this hook cancels
  * the default ScheduledFuture and creates a new one with 440 ms.
  *
  * Approach:
- *   1. After-hook on g0.E() — after the original method schedules the 880 ms tick,
+ *   1. After-hook on a40.E() — after the original method schedules the 880 ms tick,
  *      we cancel it and reschedule with the desired interval.
  *   2. SharedPreferences listener — when the toggle changes mid-test, we detect the
- *      active g0 instance via TestService.o() and reschedule again.
+ *      active a40 instance via TestService.o() (static) and reschedule again.
  *
  * All reflection is resolved once in initReflection() and stored in final fields.
  * The hook fails silently (logs a warning) and never crashes NSG.
@@ -44,13 +44,13 @@ public class RefreshIntervalHook {
     private final ClassLoader     loader;
 
     // Reflection cache
-    private Class<?> g0Class;
-    private Method   eMethod;          // g0.E()
-    private Field    f7773xField;      // g0: ScheduledFuture<?> field (found by type)
-    private Field    f3852jField;      // TestService: ScheduledExecutorService field (found by type)
-    private Class<?> e0Class;          // t7.e0 (Runnable tick handler)
-    private Constructor<?> e0Ctor;     // e0(g0, int)
-    private Field    e0CaseField;      // e0: int case-selector field (found by type)
+    private Class<?> g0Class;          // a40 (local test controller)
+    private Method   eMethod;          // a40.E()
+    private Field    f7773xField;      // a40.w: ScheduledFuture<?> field (found by type)
+    private Field    f3852jField;      // TestService.j: ScheduledExecutorService field (found by type)
+    private Class<?> e0Class;          // x30 (synthetic Runnable, case 1 = UI refresh tick)
+    private Constructor<?> e0Ctor;     // x30(a40, int)
+    private Field    e0CaseField;      // x30.a: int case-selector field (found by type)
 
     private boolean ready = false;
 
@@ -74,15 +74,12 @@ public class RefreshIntervalHook {
     /** Resolve all classes / fields / methods once at construction time. */
     private void initReflection() {
         try {
-            g0Class = ClassMapping.loadClass("t7.g0", loader);
-            if (g0Class == null) {
-                Log.i(TAG, "RefreshIntervalHook: t7.g0 not available, skipping");
-                return;
-            }
+            g0Class = Nsg.load(loader, "a40");
+            if (g0Class == null) return;
             eMethod = g0Class.getDeclaredMethod("E");
             eMethod.setAccessible(true);
 
-            // Find ScheduledFuture<?> field on t7.g0 by type (name varies between builds)
+            // Find ScheduledFuture<?> field on a40 by type
             for (Field f : g0Class.getDeclaredFields()) {
                 if (ScheduledFuture.class.isAssignableFrom(f.getType())) {
                     f.setAccessible(true);
@@ -91,11 +88,11 @@ public class RefreshIntervalHook {
                 }
             }
             if (f7773xField == null) {
-                throw new NoSuchFieldException("No ScheduledFuture field in t7.g0");
+                throw new NoSuchFieldException("No ScheduledFuture field in a40");
             }
 
             // Find ScheduledExecutorService field on TestService by type
-            Class<?> testServiceClass = ClassMapping.loadClass("com.qtrun.sys.TestService", loader);
+            Class<?> testServiceClass = Nsg.load(loader, "com.qtrun.sys.TestService");
             for (Field f : testServiceClass.getDeclaredFields()) {
                 if (ScheduledExecutorService.class.isAssignableFrom(f.getType())) {
                     f.setAccessible(true);
@@ -107,15 +104,12 @@ public class RefreshIntervalHook {
                 throw new NoSuchFieldException("No ScheduledExecutorService field in TestService");
             }
 
-            e0Class = ClassMapping.loadClass("t7.e0", loader);
-            if (e0Class == null) {
-                Log.i(TAG, "RefreshIntervalHook: t7.e0 not available, skipping");
-                return;
-            }
+            e0Class = Nsg.load(loader, "x30");
+            if (e0Class == null) return;
             e0Ctor = e0Class.getDeclaredConstructor(g0Class, int.class);
             e0Ctor.setAccessible(true);
 
-            // Find int case-selector field on t7.e0 by type
+            // Find int case-selector field on x30 by type
             for (Field f : e0Class.getDeclaredFields()) {
                 if (f.getType() == int.class) {
                     f.setAccessible(true);
@@ -124,7 +118,7 @@ public class RefreshIntervalHook {
                 }
             }
             if (e0CaseField == null) {
-                throw new NoSuchFieldException("No int field in t7.e0");
+                throw new NoSuchFieldException("No int field in x30");
             }
 
             ready = true;
@@ -144,7 +138,7 @@ public class RefreshIntervalHook {
         Log.i(TAG, "RefreshIntervalHook: installed");
     }
 
-    /** After-hook on g0.E() — reschedule tick Runnable after original scheduling. */
+    /** After-hook on a40.E() — reschedule tick Runnable after original scheduling. */
     private void installEHook() {
         xposed.hook(eMethod).intercept(new Hooker() {
             @Override
@@ -198,7 +192,7 @@ public class RefreshIntervalHook {
                     if (h == null) return;
                     try {
                         Class<?> testServiceCls =
-                                ClassMapping.loadClass("com.qtrun.sys.TestService", h.loader);
+                                Nsg.load(h.loader, "com.qtrun.sys.TestService");
                         Method oMethod = testServiceCls.getDeclaredMethod("o");
                         Object testService = oMethod.invoke(null);
                         if (testService != null && h.g0Class.isInstance(testService)) {
@@ -240,11 +234,11 @@ public class RefreshIntervalHook {
         ScheduledExecutorService executor =
                 (ScheduledExecutorService) f3852jField.get(g0Instance);
 
-        // Build new tick Runnable: e0(g0Instance, 1)  — case 1 is the UI refresh tick
+        // Build new tick Runnable: x30(g0Instance, 1)  — case 1 is the UI refresh tick
         Object tickRunnable = e0Ctor.newInstance(g0Instance, 1);
         int caseValue = e0CaseField.getInt(tickRunnable);
         if (caseValue != 1) {
-            Log.w(TAG, "Unexpected e0 case " + caseValue + " — aborting reschedule");
+            Log.w(TAG, "Unexpected x30 case " + caseValue + " — aborting reschedule");
             return;
         }
 

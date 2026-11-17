@@ -41,14 +41,15 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedInterface.Hooker;
 
 /**
- * Hooks NSG 4.8.4 (com.qtrun.QuickTest) to:
+ * Hooks NSG v4.8.14 (com.qtrun.QuickTest) to:
  * 1. Add a "Share" button to the LEFT of the existing "Copy" button on the
  *    signaling message detail popup.
  * 2. Enable text selection (highlighting + copy/share floating toolbar) on the
  *    message TextView, which NSG normally disables by setting
  *    ScrollingMovementMethod and BufferType.NORMAL.
  *
- * Hook: u7.a.onItemClick (after-hook)
+ * Hook: rp.onItemClick (after-hook; rp = synthetic OnItemClickListener of the
+ * signaling fragment x80, selector a != 0, fragment in field b)
  *   - Lets the original run untouched.
  *   - After: removes the Copy button from its original position, places it and
  *     a new Share button (with identical style) side-by-side in a horizontal
@@ -75,20 +76,20 @@ public class SignalingShareHook {
     /** Tag set on the popup contentView once the Share button has been injected. */
     private static final String SHARE_BTN_TAG = "nsg_share_btn_added";
 
-    private int idDetailCopy = 0x7f0900dd;
-    private int idDetailText = 0x7f0900dc;
+    private int idDetailCopy = 0x7f0900df; // R.id.detail_copy
+    private int idDetailText = 0x7f0900de; // R.id.detail
     private boolean resIdsResolved = false;
 
     private final XposedInterface xposed;
     private final ClassLoader loader;
 
-    // --- u7.a reflection ---
-    private Method onItemClickMethod;   // u7.a.onItemClick(AdapterView, View, int, long)
-    private Field  u7aFieldA;           // u7.a.a  (int)  — switch selector
-    private Field  u7aFieldB;           // u7.a.b  (u6.a) — associated fragment
+    private static final String LISTENER_CLASS = "rp";   // synthetic OnItemClickListener
+    private static final String FRAGMENT_CLASS = "x80";  // signaling message list fragment
 
-    // --- u7.f reflection ---
-    private Field  u7fPopupField;       // u7.f.<PopupWindow field> — found by type scan
+    private Method onItemClickMethod;   // rp.onItemClick(AdapterView, View, int, long)
+    private Field  listenerSelector;    // rp.a  (int)  — switch selector, 0 = other fragment (tp)
+    private Field  listenerFragment;    // rp.b  (id0)  — owning fragment (x80 when selector != 0)
+    private Field  fragmentPopup;       // x80.e0 (PopupWindow) — detail popup
 
     private boolean reflectionReady = false;
 
@@ -120,30 +121,22 @@ public class SignalingShareHook {
 
     private void initReflection() {
         try {
-            Class<?> u7aClass = ClassMapping.loadClass("u7.a", loader);
-            Class<?> u7fClass = ClassMapping.loadClass("u7.f", loader);
+            Class<?> listenerClass = Nsg.load(loader, LISTENER_CLASS);
+            Class<?> fragmentClass = Nsg.load(loader, FRAGMENT_CLASS);
 
-            // u7.a.onItemClick
-            onItemClickMethod = u7aClass.getMethod("onItemClick",
+            onItemClickMethod = listenerClass.getMethod("onItemClick",
                     android.widget.AdapterView.class,
                     android.view.View.class,
                     int.class,
                     long.class);
 
-            // u7.a fields: dex names are "a"/"b" on qtrun, "b"/"c" on gplay d6.a
-            String u7aFieldAName = ClassMapping.runtimeFieldName("u7.a", "a", loader);
-            String u7aFieldBName = ClassMapping.runtimeFieldName("u7.a", "b", loader);
-            u7aFieldA = u7aClass.getDeclaredField(u7aFieldAName);
-            u7aFieldA.setAccessible(true);
-            u7aFieldB = u7aClass.getDeclaredField(u7aFieldBName);
-            u7aFieldB.setAccessible(true);
+            listenerSelector = listenerClass.getDeclaredField("a");
+            listenerSelector.setAccessible(true);
+            listenerFragment = listenerClass.getDeclaredField("b");
+            listenerFragment.setAccessible(true);
 
-            // u7.f PopupWindow field — find by type scan (actual dex name unknown)
-            u7fPopupField = findFieldByType(u7fClass, PopupWindow.class);
-            if (u7fPopupField == null) {
-                throw new NoSuchFieldException("No PopupWindow field found in u7.f");
-            }
-            u7fPopupField.setAccessible(true);
+            fragmentPopup = fragmentClass.getDeclaredField("e0");
+            fragmentPopup.setAccessible(true);
 
             reflectionReady = true;
         } catch (Exception e) {
@@ -166,21 +159,6 @@ public class SignalingShareHook {
         }
     }
 
-    /**
-     * Scans all declared fields of {@code clazz} (and its superclasses) for the
-     * first field whose type is exactly {@code targetType}.
-     */
-    private static Field findFieldByType(Class<?> clazz, Class<?> targetType) {
-        for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (Field f : c.getDeclaredFields()) {
-                if (f.getType() == targetType) {
-                    return f;
-                }
-            }
-        }
-        return null;
-    }
-
     // -----------------------------------------------------------------------
     // Public entry point
     // -----------------------------------------------------------------------
@@ -196,7 +174,7 @@ public class SignalingShareHook {
     }
 
     // -----------------------------------------------------------------------
-    // Hook: u7.a.onItemClick — after-hook
+    // Hook: rp.onItemClick — after-hook
     // Injects Share button to the LEFT of Copy button inside a LinearLayout
     // anchored to end|top of the popup FrameLayout. Also polls for the async
     // text-set and forces text selection enablement.
@@ -214,18 +192,18 @@ public class SignalingShareHook {
                     Object result = chain.proceed();
 
                     try {
-                        Object listener = chain.getThisObject(); // u7.a instance
+                        Object listener = chain.getThisObject(); // rp instance
 
-                        // Only handle the non-QQ case (a != 0)
-                        int selector = (int) u7aFieldA.get(listener);
+                        // Only the signaling fragment (a != 0); a == 0 is the other list (tp)
+                        int selector = (int) listenerSelector.get(listener);
                         if (selector == 0) return result;
 
-                        // Get the fragment (u7.f) stored in field b
-                        Object fragment = u7aFieldB.get(listener); // typed u6.a, actually u7.f
+                        // Get the fragment (x80) stored in field b (typed id0)
+                        Object fragment = listenerFragment.get(listener);
                         if (fragment == null) return result;
 
                         // Get the PopupWindow from the fragment
-                        PopupWindow popup = (PopupWindow) u7fPopupField.get(fragment);
+                        PopupWindow popup = (PopupWindow) fragmentPopup.get(fragment);
                         if (popup == null) return result;
 
                         View contentView = popup.getContentView();
@@ -463,8 +441,9 @@ public class SignalingShareHook {
                                              OutputStreamWriter w = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
                                             w.write(messageText);
                                         }
-                                        Class<?> fpClass = ClassMapping.loadClass(
-                                                "androidx.core.content.FileProvider", cl);
+                                        // FileProvider.c(Context,String) -> xq (path strategy)
+                                        Class<?> fpClass = Nsg.load(cl,
+                                                "androidx.core.content.FileProvider");
                                         if (fpClass == null) {
                                             Log.w(TAG, "SignalingShareHook: FileProvider not available, cannot share file");
                                             return;
@@ -473,12 +452,7 @@ public class SignalingShareHook {
                                                 Context.class, String.class);
                                         Object strategy = fpC.invoke(null, ctx,
                                                 "com.qtrun.QuickTest.fileprovider");
-                                        try {
-                                            Method fpB = strategy.getClass().getMethod("b", File.class);
-                                            fileUri = (Uri) fpB.invoke(strategy, tmpFile);
-                                        } catch (NoSuchMethodException nsme) {
-                                            fileUri = buildFileProviderUri(strategy, tmpFile);
-                                        }
+                                        fileUri = buildFileProviderUri(strategy, tmpFile);
                                     }
                                 } catch (Exception e) {
                                     Log.w(TAG, "SignalingShareHook: share failed to write/get URI: " + e);
@@ -518,6 +492,7 @@ public class SignalingShareHook {
         }
     }
 
+    /** Mirrors the path strategy xq: field a = authority (String), b = name -> root (HashMap). */
     @SuppressWarnings("unchecked")
     private Uri buildFileProviderUri(Object strategy, File file) throws Exception {
         Class<?> sc = strategy.getClass();
@@ -559,7 +534,7 @@ public class SignalingShareHook {
 
     // -----------------------------------------------------------------------
     // Hook: TextView.setMovementMethod — after-hook
-    // NSG's async callback (u7.a line 76-78) calls
+    // NSG's async callback (w80.f in rp) calls
     // setMovementMethod(ScrollingMovementMethod) AFTER our hookOnItemClick runs,
     // overwriting the ArrowKeyMovementMethod that setTextIsSelectable(true)
     // installs. This hook re-applies ArrowKeyMovementMethod whenever
@@ -601,7 +576,7 @@ public class SignalingShareHook {
 
     // -----------------------------------------------------------------------
     // Hook: PopupWindow.setFocusable — after-hook
-    // NSG sets setFocusable(true) on the signaling detail PopupWindow (u7.f line 106).
+    // NSG sets setFocusable(true) on the signaling detail PopupWindow (x80.E).
     // We keep focusable=true so the TextView can get focus for text selection,
     // but also call setTouchModal(false) via reflection (API 24+) so the popup
     // is NOT touch-modal. This allows selection handle windows (separate windows
